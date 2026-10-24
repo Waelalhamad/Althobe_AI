@@ -76,6 +76,23 @@ export const config = {
 
   databasePath: optional("DATABASE_PATH", "data/agent.db"),
 
+  // Files: downloaded photos/voice notes (DATA_DIR/media) and product photos (DATA_DIR/catalog).
+  // On Railway: DATA_DIR=/data (the volume).
+  dataDir: optional("DATA_DIR", "data"),
+
+  // Public address of this server; WhatsApp downloads the product photos we send from here.
+  publicUrl: (
+    process.env.PUBLIC_URL?.trim() ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
+  ).replace(/\/+$/, ""),
+
+  media: {
+    // Speech-to-text for voice notes.
+    transcribeModel: optional("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"),
+    // How many of the customer's latest photos the AI looks at when replying.
+    maxImagesPerReply: Number(optional("MAX_IMAGES_PER_REPLY", "3")),
+  },
+
   // Folder with the knowledge files the AI answers from (editable in the dashboard).
   knowledgeDir: optional("KNOWLEDGE_DIR", "knowledge"),
 

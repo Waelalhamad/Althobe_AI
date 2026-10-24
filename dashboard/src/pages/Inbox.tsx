@@ -3,7 +3,7 @@ import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { ArrowRight, Bot, History, Inbox as InboxIcon, Pause, Play, Search, Send, User, UserRound } from "lucide-react";
-import { api, type ConversationFilter, type ConversationSummary, type Message } from "../api";
+import { api, mediaUrl, type ConversationFilter, type ConversationSummary, type Message } from "../api";
 import { Badge, Button, Empty, ErrorNote } from "../components/ui";
 import { ago, country, pauseLabel, phone, time, until } from "../format";
 
@@ -227,6 +227,39 @@ function Thread({ customer }: { customer: string }) {
   );
 }
 
+// The text without the "[sent a photo]" label when the photo itself is shown.
+function caption(m: Message) {
+  if (!m.mediaFile) return m.text;
+  if (m.mediaType === "audio") return m.text.replace(/^\[voice note\]\s*/, "");
+  return m.text.replace(/^\[(sent a photo|sent a sticker|sent a video|sent product photo: [^\]]*)\]\s*/, "");
+}
+
+function Media({ m }: { m: Message }) {
+  if (!m.mediaFile) return null;
+  const url = mediaUrl(m.mediaFile);
+  if (m.mediaType === "image" || m.mediaType === "sticker") {
+    return (
+      <a href={url} target="_blank" rel="noreferrer" className="mb-1 block">
+        <img src={url} alt="" loading="lazy" className="max-h-72 rounded-xl object-contain" />
+      </a>
+    );
+  }
+  if (m.mediaType === "audio") {
+    return (
+      <div className="mb-1 flex flex-col gap-1">
+        <audio controls preload="none" src={url} className="h-9 max-w-64" />
+        <span className="text-[11px] text-muted">النص يلي سمعو المساعد:</span>
+      </div>
+    );
+  }
+  if (m.mediaType === "video") return <video controls preload="none" src={url} className="mb-1 max-h-72 rounded-xl" />;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="mb-1 block text-primary underline">
+      فتح الملف
+    </a>
+  );
+}
+
 function Bubble({ m, showHistoryDivider }: { m: Message; showHistoryDivider: boolean }) {
   const mine = m.role === "business";
   return (
@@ -246,7 +279,8 @@ function Bubble({ m, showHistoryDivider }: { m: Message; showHistoryDivider: boo
             m.history === 1 && "opacity-75",
           )}
         >
-          <p className="whitespace-pre-wrap break-words">{m.text}</p>
+          <Media m={m} />
+          {caption(m) && <p className="whitespace-pre-wrap break-words">{caption(m)}</p>}
           <div className="mt-1 flex items-center justify-end gap-1.5 text-[11px] text-muted">
             {m.history === 1 && <History size={11} />}
             {m.source === "ai" && (

@@ -1,7 +1,18 @@
 // WhatsApp Cloud API through Dualhook or 360dialog. Webhooks use Meta's Cloud API format.
 import { config } from "../config.js";
-import { decideReply } from "../agent.js";
-import { getHistory, isAiPaused, pauseAi, recordAiCall, saveHistory, saveMessage, setSetting } from "../store.js";
+import { decideReply, type ChatTurn } from "../agent.js";
+import { listCatalog, publicPhotoUrl } from "../catalog.js";
+import { downloadWhatsAppMedia, fileAsDataUrl, saveFile, transcribe } from "../media.js";
+import {
+  attachMedia,
+  getHistory,
+  isAiPaused,
+  pauseAi,
+  recordAiCall,
+  saveHistory,
+  saveMessage,
+  setSetting,
+} from "../store.js";
 import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
 
@@ -18,10 +29,16 @@ type WaMessage = {
   text?: { body?: string };
   button?: { text?: string };
   interactive?: { button_reply?: { title?: string }; list_reply?: { title?: string } };
-  image?: { caption?: string };
-  video?: { caption?: string };
-  document?: { caption?: string };
+  image?: WaMedia;
+  video?: WaMedia;
+  document?: WaMedia & { filename?: string };
+  audio?: WaMedia & { voice?: boolean };
+  sticker?: WaMedia;
 };
+
+type WaMedia = { id?: string; mime_type?: string; caption?: string };
+
+const MEDIA_TYPES = ["image", "audio", "video", "document", "sticker"] as const;
 
 // Coexistence history sync: past chats from the WhatsApp Business app, sent once after connecting.
 type HistoryChunk = {
@@ -83,6 +100,7 @@ function onCustomerMessage(message: WaMessage) {
     createdAt: toMs(message.timestamp),
   });
   if (!isNew) return; // duplicate webhook delivery
+  trackMedia(customer, message);
 
   const blocked = aiBlockedReason(customer);
   if (blocked) {
@@ -101,7 +119,7 @@ function onStaffMessage(echo: WaMessage) {
   const customer = echo.to;
   if (!customer || echo.type === "revoke" || echo.type === "edit") return;
 
-  saveMessage({
+  const isNew = saveMessage({
     customer,
     role: "business",
     source: "staff",
@@ -109,6 +127,7 @@ function onStaffMessage(echo: WaMessage) {
     wamid: echo.id,
     createdAt: toMs(echo.timestamp),
   });
+  if (isNew) trackMedia(customer, echo); // so the dashboard shows the photos the team sent
   pauseAi(customer, "team replied from the WhatsApp Business app");
   log(`wa:${customer}`, `team replied from the app; AI paused for ${config.whatsapp.humanPauseHours}h`);
 }
@@ -148,13 +167,57 @@ function onHistoryChunk(chunk: HistoryChunk) {
   );
 }
 
+// --- Photos and voice notes ------------------------------------------------------
+
+// Downloads still running per customer; a reply waits for them so the AI sees the photo / hears the voice note.
+const pendingMedia = new Map<string, Set<Promise<void>>>();
+
+function trackMedia(customer: string, message: WaMessage) {
+  const type = MEDIA_TYPES.find((t) => t === message.type);
+  const media = type && message[type];
+  if (!type || !media?.id || !config.whatsapp.enabled) return;
+  const job = processMedia(customer, message.id, type, media).finally(() => pending.delete(job));
+  const pending = pendingMedia.get(customer) ?? new Set();
+  pending.add(job);
+  pendingMedia.set(customer, pending);
+}
+
+async function processMedia(customer: string, wamid: string, type: (typeof MEDIA_TYPES)[number], media: WaMedia) {
+  try {
+    const { data, mime } = await downloadWhatsAppMedia(media.id!);
+    const file = saveFile("media", wamid, data, media.mime_type ?? mime);
+    let text = describeMedia(type, media);
+    if (type === "audio") {
+      const heard = await transcribe(data, media.mime_type ?? mime);
+      text = heard ? `[voice note] ${heard}` : "[voice note, could not understand it]";
+    }
+    attachMedia(wamid, text, { type, file, mime: media.mime_type ?? mime });
+  } catch (error) {
+    log(`wa:${customer}`, `could not process the ${type}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function waitForMedia(customer: string) {
+  const pending = pendingMedia.get(customer);
+  if (pending?.size) await Promise.allSettled([...pending]);
+}
+
+// History for the AI, with the customer's recent photos attached.
+function historyForAi(customer: string): ChatTurn[] {
+  return getHistory(customer).map(({ imageFile, ...turn }) => {
+    const image = imageFile ? fileAsDataUrl(imageFile) : undefined;
+    return image ? { ...turn, image } : turn;
+  });
+}
+
 async function respond(customer: string) {
   // The team may have taken over while we were waiting.
   if (isAiPaused(customer)) return;
 
   const key = `wa:${customer}`;
   try {
-    const decision = await decideReply(getHistory(customer));
+    await waitForMedia(customer);
+    const decision = await decideReply(historyForAi(customer));
     recordAiCall({
       customer,
       channel: "whatsapp",
@@ -169,9 +232,13 @@ async function respond(customer: string) {
     }
 
     if (decision.action === "reply") {
-      const wamid = await sendText(customer, decision.text);
-      saveMessage({ customer, role: "business", source: "ai", text: decision.text, wamid });
-      log(key, "replied");
+      // Photos first, then the text under them (like "here are the colors, which one do you like?").
+      await sendPhotos(customer, decision.photos);
+      if (decision.text) {
+        const wamid = await sendText(customer, decision.text);
+        saveMessage({ customer, role: "business", source: "ai", text: decision.text, wamid });
+      }
+      log(key, decision.photos.length ? `replied with ${decision.photos.length} photo(s)` : "replied");
     } else {
       const text = decision.messageToCustomer || DEFAULT_HANDOFF_MESSAGE;
       const wamid = await sendText(customer, text);
@@ -209,18 +276,33 @@ function sendEndpoint(): { url: string; headers: Record<string, string> } {
   };
 }
 
-async function sendText(to: string, body: string): Promise<string | undefined> {
+async function sendPhotos(customer: string, ids: string[]) {
+  const catalog = listCatalog();
+  for (const id of ids) {
+    const item = catalog.find((i) => i.id === id);
+    if (!item) continue;
+    const wamid = await sendMessage(customer, { type: "image", image: { link: publicPhotoUrl(item) } });
+    saveMessage({
+      customer,
+      role: "business",
+      source: "ai",
+      text: `[sent product photo: ${item.name}]`,
+      wamid,
+      media: { type: "image", file: item.file, mime: item.mime },
+    });
+  }
+}
+
+function sendText(to: string, body: string) {
+  return sendMessage(to, { type: "text", text: { body, preview_url: false } });
+}
+
+async function sendMessage(to: string, content: Record<string, unknown>): Promise<string | undefined> {
   const { url, headers } = sendEndpoint();
   const res = await fetch(url, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      recipient_type: "individual",
-      to,
-      type: "text",
-      text: { body, preview_url: false },
-    }),
+    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to, ...content }),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
@@ -242,15 +324,21 @@ function describe(m: WaMessage): string {
       return m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? "[interactive reply]";
     case "image":
     case "video":
-    case "document": {
-      const caption = m[m.type]?.caption?.trim();
-      return `[sent a ${m.type}]${caption ? ` ${caption}` : ""}`;
-    }
+    case "document":
+    case "audio":
+    case "sticker":
+      return describeMedia(m.type, m[m.type] ?? {});
     case "media_placeholder": // history sync leaves out media contents
       return "[sent a media file]";
     default:
       return `[sent a ${m.type} message]`;
   }
+}
+
+function describeMedia(type: string, media: WaMedia): string {
+  const caption = media.caption?.trim();
+  const label = type === "audio" ? "[voice note]" : `[sent ${type === "image" ? "a photo" : `a ${type}`}]`;
+  return caption ? `${label} ${caption}` : label;
 }
 
 function errorText(error: unknown): string {

@@ -61,15 +61,23 @@ db.exec(`
   );
 `);
 
-// Added later: 1 = imported from the WhatsApp Business app's chat history (Coexistence history sync).
+// Columns added later.
 const columns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
-if (!columns.some((c) => c.name === "history")) {
-  db.exec("ALTER TABLE messages ADD COLUMN history INTEGER NOT NULL DEFAULT 0");
+for (const [name, type] of [
+  ["history", "INTEGER NOT NULL DEFAULT 0"], // 1 = imported from the WhatsApp Business app's chat history
+  ["media_type", "TEXT"], // 'image' | 'audio' | 'video' | 'document' | 'sticker'
+  ["media_file", "TEXT"], // path inside DATA_DIR, e.g. media/wamid.jpg or catalog/abc.jpg
+  ["media_mime", "TEXT"],
+]) {
+  if (!columns.some((c) => c.name === name)) db.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
 }
 
 const insertMessage = db.prepare(
-  "INSERT OR IGNORE INTO messages (customer, role, source, text, wamid, created_at, history) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  `INSERT OR IGNORE INTO messages (customer, role, source, text, wamid, created_at, history, media_type, media_file, media_mime)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 );
+
+export type StoredMedia = { type: string; file: string; mime: string };
 
 type StoredMessage = {
   customer: string;
@@ -78,6 +86,7 @@ type StoredMessage = {
   text: string;
   wamid?: string;
   createdAt?: number;
+  media?: StoredMedia;
 };
 
 // Returns false if this WhatsApp message id was already stored (duplicate delivery).
@@ -90,8 +99,20 @@ export function saveMessage(m: StoredMessage, fromHistory = false): boolean {
     m.wamid ?? null,
     m.createdAt ?? Date.now(),
     fromHistory ? 1 : 0,
+    m.media?.type ?? null,
+    m.media?.file ?? null,
+    m.media?.mime ?? null,
   );
   return result.changes > 0;
+}
+
+// Fills in a message after its photo/voice note was downloaded (and transcribed).
+const updateMedia = db.prepare(
+  "UPDATE messages SET text = ?, media_type = ?, media_file = ?, media_mime = ? WHERE wamid = ?",
+);
+
+export function attachMedia(wamid: string, text: string, media: StoredMedia) {
+  updateMedia.run(text, media.type, media.file, media.mime, wamid);
 }
 
 // Stores one chunk of imported chat history in a single transaction. Returns how many were new.
@@ -111,13 +132,26 @@ export function saveHistory(messages: StoredMessage[]): number {
 // Newest first. Imported history is older than every live message, but arrives in any order,
 // so it sorts by its WhatsApp timestamp; live messages sort by arrival (id).
 const selectHistory = db.prepare(
-  `SELECT role, text FROM messages WHERE customer = ?
+  `SELECT role, text, media_type, media_file FROM messages WHERE customer = ?
    ORDER BY history ASC, CASE WHEN history = 1 THEN created_at ELSE id END DESC, id DESC LIMIT ?`,
 );
 
-export function getHistory(customer: string): ChatTurn[] {
-  const rows = selectHistory.all(customer, config.historyLimit) as { role: ChatTurn["role"]; text: string }[];
-  return rows.reverse();
+// The customer's photos are given to the AI as files (only the most recent few, to keep cost down).
+export function getHistory(customer: string): (ChatTurn & { imageFile?: string })[] {
+  const rows = selectHistory.all(customer, config.historyLimit) as {
+    role: ChatTurn["role"];
+    text: string;
+    media_type: string | null;
+    media_file: string | null;
+  }[];
+  let images = 0;
+  return rows
+    .map((r) => {
+      const isImage = r.role === "customer" && r.media_type === "image" && r.media_file && images < config.media.maxImagesPerReply;
+      if (isImage) images++;
+      return { role: r.role, text: r.text, ...(isImage ? { imageFile: r.media_file! } : {}) };
+    })
+    .reverse();
 }
 
 const upsertPause = db.prepare(

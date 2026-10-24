@@ -6,6 +6,7 @@ import { config } from "./config.js";
 import { handleWhatsAppWebhook } from "./channels/whatsapp.js";
 import { handleChatwootEvent } from "./channels/chatwoot.js";
 import { dashboardApi } from "./dashboard/api.js";
+import { dataPath } from "./media.js";
 
 const app = express();
 app.set("trust proxy", 1); // Railway's proxy: real client IP for the login limit
@@ -65,6 +66,17 @@ app.get(["/dashboard", "/dashboard/{*page}"], (_req, res) => {
   else res.status(404).type("text/plain").send("Dashboard not built. Run: npm run build");
 });
 app.get("/", (_req, res) => res.redirect("/dashboard"));
+
+// Product photos, public so WhatsApp can download the ones the AI sends. File names are random.
+app.get("/catalog/:file", (req, res) => {
+  const file = req.params.file;
+  const full = /^[\w-]+\.(jpg|png|webp)$/.test(file) ? dataPath(`catalog/${file}`) : undefined;
+  if (!full || !fs.existsSync(full)) {
+    res.status(404).end();
+    return;
+  }
+  res.sendFile(full, { maxAge: "7d" });
+});
 
 // Checks the secret token in the URL and parses the raw body. Sends the error response itself.
 function readJson(req: express.Request, res: express.Response) {

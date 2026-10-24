@@ -74,7 +74,21 @@ export type ConversationSummary = {
   pauseReason: string | null;
 };
 
-export type Message = { id: number; role: "customer" | "business"; source: "customer" | "ai" | "staff"; text: string; at: number; history: number };
+export type Message = {
+  id: number;
+  role: "customer" | "business";
+  source: "customer" | "ai" | "staff";
+  text: string;
+  at: number;
+  history: number;
+  mediaType: "image" | "audio" | "video" | "document" | "sticker" | null;
+  mediaFile: string | null; // "media/x.jpg" or "catalog/x.jpg"
+};
+
+export type CatalogItem = { id: string; name: string; description: string; file: string; mime: string; createdAt: number };
+
+// URL of a stored photo/voice note (needs the login cookie).
+export const mediaUrl = (file: string) => `${BASE}/media/${file}`;
 
 export type ConversationDetail = {
   customer: string;
@@ -100,9 +114,9 @@ export type Settings = {
 
 export type KnowledgeFile = { name: string; size: number; updatedAt: number };
 export type EventRow = { id: number; conversation: string; message: string; at: number };
-export type ChatTurn = { role: "customer" | "business"; text: string };
+export type ChatTurn = { role: "customer" | "business"; text: string; image?: string };
 export type Decision =
-  | ({ action: "reply"; text: string } | { action: "handoff"; reason: string; messageToCustomer: string }) & {
+  | ({ action: "reply"; text: string; photos: string[] } | { action: "handoff"; reason: string; messageToCustomer: string }) & {
       usage?: { model: string; promptTokens: number; cachedTokens: number; completionTokens: number; reasoningTokens: number; latencyMs: number };
     };
 
@@ -129,4 +143,9 @@ export const api = {
     request(`/knowledge/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ body }) }),
   deleteKnowledge: (name: string) => request(`/knowledge/${encodeURIComponent(name)}`, { method: "DELETE" }),
   playground: (messages: ChatTurn[]) => post<Decision>("/playground", { messages }),
+  catalog: () => request<CatalogItem[]>("/catalog"),
+  addPhoto: (photo: { name: string; description: string; mime: string; data: string }) => post<CatalogItem>("/catalog", photo),
+  updatePhoto: (id: string, patch: { name?: string; description?: string }) =>
+    request<CatalogItem>(`/catalog/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deletePhoto: (id: string) => request(`/catalog/${id}`, { method: "DELETE" }),
 };

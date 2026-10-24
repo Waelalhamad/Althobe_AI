@@ -236,10 +236,20 @@ export function conversation(customer: string) {
   const messages = (
     db
       .prepare(
-        `SELECT id, role, source, text, created_at AS at, history FROM messages WHERE customer = ?
+        `SELECT id, role, source, text, created_at AS at, history, media_type AS mediaType, media_file AS mediaFile
+         FROM messages WHERE customer = ?
          ORDER BY history ASC, CASE WHEN history = 1 THEN created_at ELSE id END DESC, id DESC LIMIT 500`,
       )
-      .all(customer) as { id: number; role: string; source: string; text: string; at: number; history: number }[]
+      .all(customer) as {
+        id: number;
+        role: string;
+        source: string;
+        text: string;
+        at: number;
+        history: number;
+        mediaType: string | null;
+        mediaFile: string | null;
+      }[]
   ).reverse();
   const aiCalls = db
     .prepare(

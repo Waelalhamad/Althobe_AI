@@ -2,7 +2,10 @@
 import crypto from "node:crypto";
 import express from "express";
 import { config } from "../config.js";
+import fs from "node:fs";
 import { decideReply, type ChatTurn } from "../agent.js";
+import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } from "../catalog.js";
+import { dataPath } from "../media.js";
 import { sendTeamMessage } from "../channels/whatsapp.js";
 import {
   deleteKnowledgeFile,
@@ -17,7 +20,12 @@ import { getSetting, pauseAi, resumeAi } from "../store.js";
 import * as queries from "./queries.js";
 
 export const dashboardApi = express.Router();
-dashboardApi.use(express.json({ limit: "1mb" }));
+// Photo uploads and test photos (base64 JSON) need a bigger body than everything else.
+const smallJson = express.json({ limit: "1mb" });
+const uploadJson = express.json({ limit: "12mb" });
+dashboardApi.use((req, res, next) =>
+  (req.method === "POST" && (req.path === "/catalog" || req.path === "/playground") ? uploadJson : smallJson)(req, res, next),
+);
 
 // --- Login: a signed cookie that expires; changing DASHBOARD_PASSWORD logs everyone out. ---
 
@@ -166,6 +174,62 @@ dashboardApi.get("/events", (req, res) => {
   res.json(queries.events({ q, limit: intParam(req.query.limit, 200, 1000) }));
 });
 
+// Photos and voice notes of a chat (and catalog photos), for the inbox.
+dashboardApi.get("/media/:folder/:file", (req, res) => {
+  const full = dataPath(`${req.params.folder}/${req.params.file}`);
+  if (!full || !fs.existsSync(full)) {
+    res.status(404).end();
+    return;
+  }
+  res.sendFile(full, { maxAge: "1d" });
+});
+
+// --- Product photos -------------------------------------------------------------------
+
+const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+dashboardApi.get("/catalog", (_req, res) => {
+  res.json(listCatalog());
+});
+
+dashboardApi.post("/catalog", (req, res) => {
+  const { name, description, mime, data } = req.body ?? {};
+  const bytes = typeof data === "string" ? Buffer.from(data, "base64") : undefined;
+  if (typeof name !== "string" || !name.trim() || !PHOTO_TYPES.includes(mime) || !bytes?.length) {
+    res.status(400).json({ error: "Name and a JPG/PNG/WebP photo are required" });
+    return;
+  }
+  // WhatsApp's limit for images is 5 MB.
+  if (bytes.length > 5 * 1024 * 1024) {
+    res.status(400).json({ error: "Photo must be under 5 MB" });
+    return;
+  }
+  const item = addCatalogItem({ name: name.trim(), description: String(description ?? "").trim(), data: bytes, mime });
+  log("dashboard", `product photo added: ${item.id} ${item.name}`);
+  res.json(item);
+});
+
+dashboardApi.patch("/catalog/:id", (req, res) => {
+  const item = updateCatalogItem(req.params.id, {
+    name: typeof req.body?.name === "string" ? req.body.name.trim() : undefined,
+    description: typeof req.body?.description === "string" ? req.body.description.trim() : undefined,
+  });
+  if (!item) {
+    res.status(404).json({ error: "Photo not found" });
+    return;
+  }
+  res.json(item);
+});
+
+dashboardApi.delete("/catalog/:id", (req, res) => {
+  if (!deleteCatalogItem(req.params.id)) {
+    res.status(404).json({ error: "Photo not found" });
+    return;
+  }
+  log("dashboard", `product photo deleted: ${req.params.id}`);
+  res.json({ ok: true });
+});
+
 // --- Settings ----------------------------------------------------------------------
 
 function settingsView() {
@@ -253,9 +317,16 @@ dashboardApi.post("/playground", async (req, res) => {
   const turns = Array.isArray(req.body?.messages) ? (req.body.messages as unknown[]) : [];
   const history: ChatTurn[] = turns
     .slice(-config.historyLimit)
-    .map((t) => t as { role?: unknown; text?: unknown })
-    .filter((t) => (t.role === "customer" || t.role === "business") && typeof t.text === "string" && t.text.trim())
-    .map((t) => ({ role: t.role as ChatTurn["role"], text: String(t.text).slice(0, 4000) }));
+    .map((t) => t as { role?: unknown; text?: unknown; image?: unknown })
+    .filter((t) => (t.role === "customer" || t.role === "business") && typeof t.text === "string")
+    .map((t) => {
+      const turn: ChatTurn = { role: t.role as ChatTurn["role"], text: String(t.text).slice(0, 4000) || "[sent a photo]" };
+      // A test photo, as a data URL, only on customer turns.
+      if (t.role === "customer" && typeof t.image === "string" && /^data:image\/(jpeg|png|webp);base64,/.test(t.image)) {
+        turn.image = t.image;
+      }
+      return turn;
+    });
   if (!history.length || history.at(-1)?.role !== "customer") {
     res.status(400).json({ error: "The last message must be from the customer" });
     return;

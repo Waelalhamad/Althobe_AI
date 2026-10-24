@@ -9,6 +9,7 @@ import { Overview } from "./pages/Overview";
 import { Inbox } from "./pages/Inbox";
 import { Handoffs } from "./pages/Handoffs";
 import { Knowledge } from "./pages/Knowledge";
+import { Catalog } from "./pages/Catalog";
 import { Playground } from "./pages/Playground";
 import { SettingsPage } from "./pages/Settings";
 import { Activity } from "./pages/Activity";
@@ -41,6 +42,7 @@ function App() {
           <Route path="/inbox/:customer?" component={Inbox} />
           <Route path="/handoffs" component={Handoffs} />
           <Route path="/knowledge" component={Knowledge} />
+          <Route path="/catalog" component={Catalog} />
           <Route path="/playground" component={Playground} />
           <Route path="/settings" component={SettingsPage} />
           <Route path="/activity" component={Activity} />
