@@ -1,7 +1,8 @@
 // WhatsApp Cloud API through Dualhook or 360dialog. Webhooks use Meta's Cloud API format.
 import { config } from "../config.js";
 import { decideReply } from "../agent.js";
-import { getHistory, isAiPaused, pauseAi, saveHistory, saveMessage } from "../store.js";
+import { getHistory, isAiPaused, pauseAi, recordAiCall, saveHistory, saveMessage, setSetting } from "../store.js";
+import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
 
 const DEFAULT_HANDOFF_MESSAGE = "شكراً لتواصلك! واحد من فريقنا رح يرد عليك بأقرب وقت 🙏";
@@ -83,8 +84,9 @@ function onCustomerMessage(message: WaMessage) {
   });
   if (!isNew) return; // duplicate webhook delivery
 
-  if (!config.aiReplies) {
-    log(`wa:${customer}`, "customer wrote; listen-only mode (AI_REPLIES=off), not replying");
+  const blocked = aiBlockedReason(customer);
+  if (blocked) {
+    log(`wa:${customer}`, `customer wrote; ${blocked}, not replying`);
     return;
   }
   if (isAiPaused(customer)) {
@@ -115,6 +117,7 @@ function onStaffMessage(echo: WaMessage) {
 function onHistoryChunk(chunk: HistoryChunk) {
   for (const error of chunk.errors ?? []) {
     log("wa:history", `not shared (${error.code}): ${error.title}`);
+    setSetting("history_sync", JSON.stringify({ error: error.title ?? `code ${error.code}`, at: Date.now() }));
   }
   const messages = [];
   for (const thread of chunk.threads ?? []) {
@@ -136,6 +139,9 @@ function onHistoryChunk(chunk: HistoryChunk) {
   }
   const added = saveHistory(messages);
   const { phase, chunk_order, progress } = chunk.metadata ?? {};
+  if (!chunk.errors?.length) {
+    setSetting("history_sync", JSON.stringify({ phase, chunk: chunk_order, progress, at: Date.now() }));
+  }
   log(
     "wa:history",
     `phase ${phase} chunk ${chunk_order}: ${chunk.threads?.length ?? 0} chats, ${added} new messages stored (sync ${progress}%)`,
@@ -149,6 +155,13 @@ async function respond(customer: string) {
   const key = `wa:${customer}`;
   try {
     const decision = await decideReply(getHistory(customer));
+    recordAiCall({
+      customer,
+      channel: "whatsapp",
+      action: decision.action,
+      reason: decision.action === "handoff" ? decision.reason : undefined,
+      usage: decision.usage,
+    });
 
     if (isAiPaused(customer)) {
       log(key, "team replied while the AI was thinking; AI reply dropped");
@@ -169,8 +182,17 @@ async function respond(customer: string) {
   } catch (error) {
     // Never leave the customer stuck with the bot: stop the AI so the team answers in the app.
     pauseAi(customer, "AI error");
-    log(key, `error, AI paused for this customer: ${error instanceof Error ? error.message : String(error)}`);
+    recordAiCall({ customer, channel: "whatsapp", action: "error", reason: errorText(error) });
+    log(key, `error, AI paused for this customer: ${errorText(error)}`);
   }
+}
+
+// A team member replied from the dashboard: send it and keep the AI out of this chat.
+export async function sendTeamMessage(customer: string, text: string) {
+  const wamid = await sendText(customer, text);
+  saveMessage({ customer, role: "business", source: "staff", text, wamid });
+  pauseAi(customer, "team replied from the dashboard");
+  log(`wa:${customer}`, `team replied from the dashboard; AI paused for ${config.whatsapp.humanPauseHours}h`);
 }
 
 // --- Sending (Dualhook or 360dialog; both take Meta's Cloud API message body) ---
@@ -229,6 +251,10 @@ function describe(m: WaMessage): string {
     default:
       return `[sent a ${m.type} message]`;
   }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function toMs(timestamp?: string): number {

@@ -3,6 +3,8 @@ import { config } from "../config.js";
 import { decideReply } from "../agent.js";
 import { addPrivateNote, getHistory, handOffToHuman, sendReply } from "../chatwoot.js";
 import { log, scheduleReply } from "../scheduler.js";
+import { recordAiCall } from "../store.js";
+import { aiBlockedReason } from "../settings.js";
 
 // Shape of the Chatwoot Agent Bot "message_created" event (only the fields we use).
 export type MessageCreatedEvent = {
@@ -19,7 +21,7 @@ const DEFAULT_HANDOFF_MESSAGE = "شكراً لتواصلك! واحد من فري
 const seenMessageIds = new Map<number, number>(); // message id -> time seen
 
 export function handleChatwootEvent(event: MessageCreatedEvent) {
-  if (event.event !== "message_created" || !config.aiReplies) return;
+  if (event.event !== "message_created" || aiBlockedReason()) return;
   if (event.message_type !== "incoming" || event.private) return; // ignore our own and team messages
   const accountId = event.account?.id;
   const conversation = event.conversation;
@@ -39,6 +41,13 @@ async function respond(accountId: number, conversationId: number) {
   try {
     const history = await getHistory(accountId, conversationId);
     const decision = await decideReply(history);
+    recordAiCall({
+      customer: key,
+      channel: "chatwoot",
+      action: decision.action,
+      reason: decision.action === "handoff" ? decision.reason : undefined,
+      usage: decision.usage,
+    });
 
     if (decision.action === "reply") {
       await sendReply(accountId, conversationId, decision.text);
@@ -51,7 +60,9 @@ async function respond(accountId: number, conversationId: number) {
     }
   } catch (error) {
     // If anything fails, never leave the customer unanswered: give the chat to a human.
-    log(key, `error: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    recordAiCall({ customer: key, channel: "chatwoot", action: "error", reason: message });
+    log(key, `error: ${message}`);
     try {
       await addPrivateNote(accountId, conversationId, "🤖 AI error, please answer this customer.");
       await handOffToHuman(accountId, conversationId);

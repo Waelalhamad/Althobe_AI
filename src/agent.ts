@@ -1,15 +1,17 @@
 import OpenAI from "openai";
 import { config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
+import type { AiUsage } from "./store.js";
 
 // Created on first use, so the server can start (e.g. in listen-only mode) before OPENAI_API_KEY is set.
 let client: OpenAI | undefined;
 
 export type ChatTurn = { role: "customer" | "business"; text: string };
 
-export type AgentDecision =
+export type AgentDecision = (
   | { action: "reply"; text: string }
-  | { action: "handoff"; reason: string; messageToCustomer: string };
+  | { action: "handoff"; reason: string; messageToCustomer: string }
+) & { usage?: AiUsage };
 
 const INSTRUCTIONS = `You are the customer support assistant of "الثوب العربي" (Al Thobe Alarabi), a clothing brand. You chat with customers on WhatsApp, Instagram and Facebook Messenger. Most of them are in Libya and arrive from our ads.
 
@@ -66,6 +68,7 @@ export async function decideReply(history: ChatTurn[]): Promise<AgentDecision> {
   ];
 
   client ??= new OpenAI();
+  const startedAt = Date.now();
   const completion = await client.chat.completions.create({
     model: config.openai.model,
     reasoning_effort: config.openai.reasoningEffort,
@@ -73,8 +76,18 @@ export async function decideReply(history: ChatTurn[]): Promise<AgentDecision> {
     tools: [HANDOFF_TOOL],
     tool_choice: "auto",
   });
+  const usage: AiUsage = {
+    model: completion.model,
+    promptTokens: completion.usage?.prompt_tokens ?? 0,
+    cachedTokens: completion.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+    completionTokens: completion.usage?.completion_tokens ?? 0,
+    reasoningTokens: completion.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+    latencyMs: Date.now() - startedAt,
+  };
+  return { ...readDecision(completion.choices[0]?.message), usage };
+}
 
-  const message = completion.choices[0]?.message;
+function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | undefined): AgentDecision {
   if (!message) {
     return handoff("AI returned no answer");
   }

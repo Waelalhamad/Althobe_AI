@@ -2,7 +2,7 @@
   "name": "althobe-ai-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "AI customer support agent for WhatsApp, Instagram and Messenger via Chatwoot",
+  "description": "AI customer support agent for WhatsApp, Instagram and Messenger, with an admin dashboard",
   "type": "module",
   "engines": {
     "node": "22.x"
@@ -10,6 +10,8 @@
   "scripts": {
     "dev": "tsx watch --env-file=.env src/server.ts",
     "start": "tsx --env-file-if-exists=.env src/server.ts",
+    "build": "npm ci --prefix dashboard --include=dev && npm run build --prefix dashboard",
+    "dashboard": "npm run dev --prefix dashboard",
     "chat": "tsx --env-file=.env scripts/chat.ts",
     "typecheck": "tsc --noEmit",
     "set-webhook": "tsx --env-file=.env scripts/set-webhook.ts"

@@ -76,6 +76,22 @@ export const config = {
 
   databasePath: optional("DATABASE_PATH", "data/agent.db"),
 
+  // Folder with the knowledge files the AI answers from (editable in the dashboard).
+  knowledgeDir: optional("KNOWLEDGE_DIR", "knowledge"),
+
+  dashboard: {
+    // Password for /dashboard. The dashboard stays locked while this is not set.
+    password: process.env.DASHBOARD_PASSWORD?.trim() || undefined,
+    // Clock used for "today" and the daily charts. Libya is UTC+2 all year.
+    timezoneOffsetHours: Number(optional("DASHBOARD_TZ_OFFSET_HOURS", "2")),
+    // OpenAI prices in US$ per 1M tokens, for the cost estimate (gpt-5-mini by default).
+    price: {
+      input: Number(optional("OPENAI_PRICE_INPUT", "0.25")),
+      cachedInput: Number(optional("OPENAI_PRICE_CACHED_INPUT", "0.025")),
+      output: Number(optional("OPENAI_PRICE_OUTPUT", "2")),
+    },
+  },
+
   // Wait this long after the customer's last message before replying,
   // so several quick messages ("hi" / "price?" / "size M") get one answer.
   debounceMs: Number(optional("REPLY_DEBOUNCE_MS", "4000")),

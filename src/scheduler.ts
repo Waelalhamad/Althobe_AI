@@ -1,3 +1,5 @@
+import { recordEvent } from "./store.js";
+
 // Per-conversation reply scheduling shared by all channels:
 // - debounce: wait for the customer to finish typing several quick messages;
 // - one reply at a time per conversation.
@@ -30,6 +32,12 @@ async function runExclusive(key: string, run: () => Promise<void>) {
   }
 }
 
+// Console log, plus the dashboard's activity log.
 export function log(conversation: string, message: string) {
   console.log(`${new Date().toISOString()} [${conversation}] ${message}`);
+  try {
+    recordEvent(conversation, message);
+  } catch (error) {
+    console.error("Could not store event:", error);
+  }
 }

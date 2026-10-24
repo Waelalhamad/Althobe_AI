@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/* Wael's palette: deep dark + teal #5DB1A1 */
+@theme {
+  --color-bg: hsl(224 20% 6%);
+  --color-fg: hsl(210 20% 94%);
+  --color-card: hsl(224 18% 9%);
+  --color-card-2: hsl(224 16% 12%);
+  --color-line: hsl(224 16% 15%);
+  --color-muted: hsl(220 10% 55%);
+  --color-primary: hsl(171 36% 52%);
+  --color-primary-soft: hsl(171 36% 52% / 0.14);
+  --color-ok: hsl(152 55% 52%);
+  --color-warn: hsl(38 90% 60%);
+  --color-bad: hsl(0 70% 62%);
+  --color-info: hsl(212 75% 66%);
+  --font-sans: "IBM Plex Sans Arabic", Tahoma, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+.glass {
+  background: hsl(224 18% 9% / 0.72);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--color-line);
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 8px;
+}

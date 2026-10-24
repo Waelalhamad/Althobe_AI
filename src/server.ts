@@ -1,10 +1,14 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import express from "express";
 import { config } from "./config.js";
 import { handleWhatsAppWebhook } from "./channels/whatsapp.js";
 import { handleChatwootEvent } from "./channels/chatwoot.js";
+import { dashboardApi } from "./dashboard/api.js";
 
 const app = express();
+app.set("trust proxy", 1); // Railway's proxy: real client IP for the login limit
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, whatsapp: config.whatsapp.enabled, chatwoot: config.chatwoot.enabled });
@@ -50,6 +54,17 @@ app.post("/webhook/:token", express.raw({ type: "*/*", limit: "1mb" }), (req, re
   res.status(200).json({ received: true });
   handleChatwootEvent(event);
 });
+
+// Dashboard: JSON API + the built React app (npm run build → dashboard/dist).
+app.use("/dashboard/api", dashboardApi);
+const DASHBOARD_DIST = path.resolve("dashboard/dist");
+app.use("/dashboard", express.static(DASHBOARD_DIST, { index: false }));
+app.get(["/dashboard", "/dashboard/{*page}"], (_req, res) => {
+  const index = path.join(DASHBOARD_DIST, "index.html");
+  if (fs.existsSync(index)) res.sendFile(index);
+  else res.status(404).type("text/plain").send("Dashboard not built. Run: npm run build");
+});
+app.get("/", (_req, res) => res.redirect("/dashboard"));
 
 // Checks the secret token in the URL and parses the raw body. Sends the error response itself.
 function readJson(req: express.Request, res: express.Response) {
