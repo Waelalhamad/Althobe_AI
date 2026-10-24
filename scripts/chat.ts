@@ -21,8 +21,13 @@ while (true) {
   const decision = await decideReply(history);
 
   if (decision.action === "reply") {
+    if (decision.photos.length) console.log(`AI → sends photos: ${decision.photos.join(", ")}`);
     console.log(`AI: ${decision.text}\n`);
     history.push({ role: "business", text: decision.text });
+  } else if (decision.action === "order") {
+    console.log(`AI → ORDER (not saved in this test): ${JSON.stringify(decision.order, null, 2)}`);
+    console.log(`AI: ${decision.messageToCustomer}\n`);
+    history.push({ role: "business", text: decision.messageToCustomer });
   } else {
     console.log(`AI → HANDOFF to human (${decision.reason})`);
     console.log(`AI: ${decision.messageToCustomer}\n`);

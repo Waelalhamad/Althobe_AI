@@ -3,7 +3,8 @@ import { config } from "../config.js";
 import { decideReply } from "../agent.js";
 import { addPrivateNote, getHistory, handOffToHuman, sendReply } from "../chatwoot.js";
 import { log, scheduleReply } from "../scheduler.js";
-import { recordAiCall } from "../store.js";
+import { recordAiCall, saveOrder } from "../store.js";
+import { orderNote, orderOneLine } from "../orders.js";
 import { aiBlockedReason } from "../settings.js";
 
 // Shape of the Chatwoot Agent Bot "message_created" event (only the fields we use).
@@ -17,6 +18,7 @@ export type MessageCreatedEvent = {
 };
 
 const DEFAULT_HANDOFF_MESSAGE = "شكراً لتواصلك! واحد من فريقنا رح يرد عليك بأقرب وقت 🙏";
+const DEFAULT_ORDER_MESSAGE = "تمام، تسجّل طلبك 🙏 فريقنا بيتواصل معاك قريب لتأكيد الحجز.";
 
 const seenMessageIds = new Map<number, number>(); // message id -> time seen
 
@@ -45,13 +47,24 @@ async function respond(accountId: number, conversationId: number) {
       customer: key,
       channel: "chatwoot",
       action: decision.action,
-      reason: decision.action === "handoff" ? decision.reason : undefined,
+      reason:
+        decision.action === "handoff"
+          ? decision.reason
+          : decision.action === "order"
+            ? orderOneLine(decision.order)
+            : undefined,
       usage: decision.usage,
     });
 
     if (decision.action === "reply") {
       await sendReply(accountId, conversationId, decision.text);
       log(key, "replied");
+    } else if (decision.action === "order") {
+      const id = saveOrder({ customer: key, channel: "chatwoot", ...decision.order });
+      await sendReply(accountId, conversationId, decision.messageToCustomer || DEFAULT_ORDER_MESSAGE);
+      await addPrivateNote(accountId, conversationId, orderNote(id, decision.order));
+      await handOffToHuman(accountId, conversationId);
+      log(key, `order #${id} collected, team must confirm: ${orderOneLine(decision.order)}`);
     } else {
       await sendReply(accountId, conversationId, decision.messageToCustomer || DEFAULT_HANDOFF_MESSAGE);
       await addPrivateNote(accountId, conversationId, `🤖 Handed off by AI: ${decision.reason}`);

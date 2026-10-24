@@ -25,7 +25,7 @@ export function Playground() {
       const reply =
         decision.action === "reply"
           ? decision.text || "(صور بس)"
-          : decision.messageToCustomer || "(رسالة التحويل الافتراضية)";
+          : decision.messageToCustomer || (decision.action === "order" ? "(رسالة الطلب الافتراضية)" : "(رسالة التحويل الافتراضية)");
       setTurns((t) => [...t, { role: "business", text: reply, meta: decision }]);
     },
   });
@@ -70,7 +70,13 @@ export function Playground() {
                 <div
                   className={clsx(
                     "max-w-[80%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm",
-                    t.role === "customer" ? "bg-card-2" : t.meta?.action === "handoff" ? "bg-warn/12" : "bg-primary-soft",
+                    t.role === "customer"
+                      ? "bg-card-2"
+                      : t.meta?.action === "handoff"
+                        ? "bg-warn/12"
+                        : t.meta?.action === "order"
+                          ? "bg-ok/12"
+                          : "bg-primary-soft",
                   )}
                 >
                   {t.image && <img src={t.image} alt="" className="mb-1 max-h-48 rounded-xl" />}
@@ -147,6 +153,13 @@ function Meta({ d }: { d: Decision }) {
   const cost = u ? ((u.promptTokens - u.cachedTokens) * 0.25 + u.cachedTokens * 0.025 + u.completionTokens * 2) / 1e6 : 0;
   return (
     <div className="mt-1 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[11px] text-muted">
+      {d.action === "order" && (
+        <span className="flex flex-wrap items-center gap-1 text-ok">
+          طلب (ما بينحفظ بالتجربة): {d.order.name} · <span className="ltr">{d.order.phone}</span> · {d.order.city} {d.order.address} ·{" "}
+          {d.order.items.map((i) => `${i.quantity}× ${i.color} ${i.size}`).join("، ")} · {d.order.total}
+          {d.order.notes && ` · ${d.order.notes}`}
+        </span>
+      )}
       {d.action === "handoff" && (
         <span className="flex items-center gap-1 text-warn">
           <Hand size={12} /> تحويل للفريق: <span className="ltr">{d.reason}</span>

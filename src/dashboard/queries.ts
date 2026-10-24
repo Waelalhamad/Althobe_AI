@@ -23,6 +23,7 @@ type Totals = {
   staffMessages: number;
   aiReplies: number;
   handoffs: number;
+  orders: number;
   errors: number;
   aiConversations: number;
   aiOnlyConversations: number;
@@ -59,21 +60,22 @@ function totals(since: number): Totals {
     .prepare(
       `SELECT
          SUM(action = 'reply') AS replies, SUM(action = 'handoff') AS handoffs, SUM(action = 'error') AS errors,
-         COUNT(DISTINCT customer) AS conversations,
+         SUM(action = 'order') AS orders, COUNT(DISTINCT customer) AS conversations,
          SUM(prompt_tokens) AS prompt, SUM(cached_tokens) AS cached,
          SUM(completion_tokens) AS completion, SUM(reasoning_tokens) AS reasoning
        FROM ai_calls WHERE created_at >= ?`,
     )
     .get(since) as Record<string, number | null>;
 
-  // Conversations the AI handled with no handoff, no error and no team message in the period.
+  // Conversations the AI handled with no handoff and no error, and either took an order
+  // (the team only confirms it) or needed no team message at all.
   const aiOnly = db
     .prepare(
       `SELECT COUNT(*) AS n FROM (
-         SELECT customer FROM ai_calls WHERE created_at >= ? GROUP BY customer
-         HAVING SUM(action != 'reply') = 0
+         SELECT customer, SUM(action = 'order') AS orders FROM ai_calls WHERE created_at >= ? GROUP BY customer
+         HAVING SUM(action IN ('handoff', 'error')) = 0
        ) a
-       WHERE NOT EXISTS (
+       WHERE a.orders > 0 OR NOT EXISTS (
          SELECT 1 FROM messages m
          WHERE m.customer = a.customer AND m.source = 'staff' AND m.history = 0 AND m.created_at >= ?
        )`,
@@ -97,6 +99,7 @@ function totals(since: number): Totals {
     staffMessages: msg.staffMessages ?? 0,
     aiReplies: ai.replies ?? 0,
     handoffs: ai.handoffs ?? 0,
+    orders: ai.orders ?? 0,
     errors: ai.errors ?? 0,
     aiConversations: ai.conversations ?? 0,
     aiOnlyConversations: aiOnly.n,
@@ -118,7 +121,7 @@ export function overview(days: number) {
   const daily = new Map<string, Record<string, number>>();
   for (let i = days - 1; i >= 0; i--) {
     daily.set(localDay(localDayStart(i)), {
-      conversations: 0, customerMessages: 0, staffMessages: 0, aiReplies: 0, handoffs: 0, errors: 0, costUsd: 0,
+      conversations: 0, customerMessages: 0, staffMessages: 0, aiReplies: 0, handoffs: 0, orders: 0, errors: 0, costUsd: 0,
     });
   }
   const msgRows = db
@@ -135,15 +138,26 @@ export function overview(days: number) {
     .prepare(
       `SELECT strftime('%Y-%m-%d', created_at / 1000 + ${offsetSec}, 'unixepoch') AS day,
          SUM(action = 'reply') AS aiReplies, SUM(action = 'handoff') AS handoffs, SUM(action = 'error') AS errors,
+         SUM(action = 'order') AS orders,
          SUM(prompt_tokens) AS prompt, SUM(cached_tokens) AS cached, SUM(completion_tokens) AS completion
        FROM ai_calls WHERE created_at >= ? GROUP BY day`,
     )
-    .all(since) as { day: string; aiReplies: number; handoffs: number; errors: number; prompt: number; cached: number; completion: number }[];
+    .all(since) as {
+    day: string;
+    aiReplies: number;
+    handoffs: number;
+    orders: number;
+    errors: number;
+    prompt: number;
+    cached: number;
+    completion: number;
+  }[];
   for (const r of aiRows) {
     const row = daily.get(r.day);
     if (!row) continue;
     row.aiReplies = r.aiReplies;
     row.handoffs = r.handoffs;
+    row.orders = r.orders;
     row.errors = r.errors;
     row.costUsd = costUsd(r.prompt, r.cached, r.completion);
   }
@@ -161,7 +175,7 @@ export function overview(days: number) {
   const recentHandoffs = db
     .prepare(
       `SELECT customer, channel, action, reason, created_at AS at FROM ai_calls
-       WHERE action != 'reply' AND created_at >= ? ORDER BY id DESC LIMIT 15`,
+       WHERE action IN ('handoff', 'error') AND created_at >= ? ORDER BY id DESC LIMIT 15`,
     )
     .all(since);
 
@@ -293,8 +307,25 @@ export function handoffs(days: number) {
       .prepare(
         `SELECT a.id, a.customer, a.channel, a.action, a.reason, a.created_at AS at, p.until AS paused_until
          FROM ai_calls a LEFT JOIN pauses p ON p.customer = a.customer
-         WHERE a.action != 'reply' AND a.created_at >= ? ORDER BY a.id DESC LIMIT 500`,
+         WHERE a.action IN ('handoff', 'error') AND a.created_at >= ? ORDER BY a.id DESC LIMIT 500`,
       )
       .all(localDayStart(days - 1)) as { id: number; customer: string; channel: string; action: string; reason: string | null; at: number; paused_until: number | null }[]
   ).map(({ paused_until, ...h }) => ({ ...h, stillWithTeam: Boolean(paused_until && paused_until > now) }));
+}
+
+// Orders the AI collected, newest first, with how many there are per status.
+export function orders(opts: { status: string | undefined; limit: number }) {
+  const rows = db
+    .prepare(
+      `SELECT id, customer, channel, name, phone, city, address, items, total, notes, status,
+         created_at AS createdAt, updated_at AS updatedAt
+       FROM orders ${opts.status ? "WHERE status = ?" : ""} ORDER BY id DESC LIMIT ?`,
+    )
+    .all(...(opts.status ? [opts.status, opts.limit] : [opts.limit])) as (Record<string, unknown> & { items: string })[];
+  const counts = Object.fromEntries(
+    (db.prepare("SELECT status, COUNT(*) AS n FROM orders GROUP BY status").all() as { status: string; n: number }[]).map(
+      (r) => [r.status, r.n],
+    ),
+  );
+  return { counts, orders: rows.map((r) => ({ ...r, items: JSON.parse(r.items) as unknown })) };
 }

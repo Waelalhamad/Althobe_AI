@@ -10,6 +10,7 @@ import { Inbox } from "./pages/Inbox";
 import { Handoffs } from "./pages/Handoffs";
 import { Knowledge } from "./pages/Knowledge";
 import { Catalog } from "./pages/Catalog";
+import { Orders } from "./pages/Orders";
 import { Playground } from "./pages/Playground";
 import { SettingsPage } from "./pages/Settings";
 import { Activity } from "./pages/Activity";
@@ -40,6 +41,7 @@ function App() {
         <Switch>
           <Route path="/" component={Overview} />
           <Route path="/inbox/:customer?" component={Inbox} />
+          <Route path="/orders" component={Orders} />
           <Route path="/handoffs" component={Handoffs} />
           <Route path="/knowledge" component={Knowledge} />
           <Route path="/catalog" component={Catalog} />

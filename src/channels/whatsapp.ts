@@ -11,12 +11,15 @@ import {
   recordAiCall,
   saveHistory,
   saveMessage,
+  saveOrder,
   setSetting,
 } from "../store.js";
 import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
+import { orderOneLine } from "../orders.js";
 
 const DEFAULT_HANDOFF_MESSAGE = "شكراً لتواصلك! واحد من فريقنا رح يرد عليك بأقرب وقت 🙏";
+const DEFAULT_ORDER_MESSAGE = "تمام، تسجّل طلبك 🙏 فريقنا بيتواصل معاك قريب لتأكيد الحجز.";
 
 // --- Webhook payload (Meta Cloud API format, only the fields we use) ---
 
@@ -217,12 +220,17 @@ async function respond(customer: string) {
   const key = `wa:${customer}`;
   try {
     await waitForMedia(customer);
-    const decision = await decideReply(historyForAi(customer));
+    const decision = await decideReply(historyForAi(customer), { customerPhone: localPhone(customer) });
     recordAiCall({
       customer,
       channel: "whatsapp",
       action: decision.action,
-      reason: decision.action === "handoff" ? decision.reason : undefined,
+      reason:
+        decision.action === "handoff"
+          ? decision.reason
+          : decision.action === "order"
+            ? orderOneLine(decision.order)
+            : undefined,
       usage: decision.usage,
     });
 
@@ -239,6 +247,16 @@ async function respond(customer: string) {
         saveMessage({ customer, role: "business", source: "ai", text: decision.text, wamid });
       }
       log(key, decision.photos.length ? `replied with ${decision.photos.length} photo(s)` : "replied");
+    } else if (decision.action === "order") {
+      // The customer confirmed: save the order, thank them, and let the team confirm it.
+      // "Same number" answers come through as text; fall back to the WhatsApp number.
+      if (!/\d{6,}/.test(decision.order.phone)) decision.order.phone = localPhone(customer);
+      const id = saveOrder({ customer, channel: "whatsapp", ...decision.order });
+      const text = decision.messageToCustomer || DEFAULT_ORDER_MESSAGE;
+      const wamid = await sendText(customer, text);
+      saveMessage({ customer, role: "business", source: "ai", text, wamid });
+      pauseAi(customer, `AI order #${id}: waiting for the team to confirm`);
+      log(key, `order #${id} collected, team must confirm: ${orderOneLine(decision.order)}`);
     } else {
       const text = decision.messageToCustomer || DEFAULT_HANDOFF_MESSAGE;
       const wamid = await sendText(customer, text);
@@ -333,6 +351,11 @@ function describe(m: WaMessage): string {
     default:
       return `[sent a ${m.type} message]`;
   }
+}
+
+// 218912345678 → 0912345678 (how Libyan customers write their number); other countries: +<number>.
+function localPhone(waNumber: string): string {
+  return waNumber.startsWith("218") ? `0${waNumber.slice(3)}` : `+${waNumber}`;
 }
 
 function describeMedia(type: string, media: WaMedia): string {

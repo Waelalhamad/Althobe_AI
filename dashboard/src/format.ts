@@ -42,6 +42,7 @@ export const time = (ms: number) =>
 // Short Arabic label for why the AI is paused in a chat.
 export function pauseLabel(reason: string | null) {
   if (!reason) return "";
+  if (reason.startsWith("AI order")) return "طلب جديد بدو تأكيد";
   if (reason.startsWith("AI handoff")) return "حوّلها المساعد للفريق";
   if (reason === "AI error") return "خطأ بالمساعد";
   if (reason.includes("dashboard")) return "الفريق من اللوحة";

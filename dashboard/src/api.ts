@@ -32,6 +32,7 @@ export type Totals = {
   staffMessages: number;
   aiReplies: number;
   handoffs: number;
+  orders: number;
   errors: number;
   aiConversations: number;
   aiOnlyConversations: number;
@@ -47,6 +48,7 @@ export type DailyRow = {
   staffMessages: number;
   aiReplies: number;
   handoffs: number;
+  orders: number;
   errors: number;
   costUsd: number;
 };
@@ -85,6 +87,24 @@ export type Message = {
   mediaFile: string | null; // "media/x.jpg" or "catalog/x.jpg"
 };
 
+export type OrderStatus = "new" | "confirmed" | "delivered" | "cancelled";
+export type OrderItem = { color: string; size: string; quantity: number };
+export type Order = {
+  id: number;
+  customer: string;
+  channel: "whatsapp" | "chatwoot";
+  name: string;
+  phone: string;
+  city: string;
+  address: string;
+  items: OrderItem[];
+  total: string;
+  notes: string;
+  status: OrderStatus;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type CatalogItem = { id: string; name: string; description: string; file: string; mime: string; createdAt: number };
 
 // URL of a stored photo/voice note (needs the login cookie).
@@ -116,7 +136,15 @@ export type KnowledgeFile = { name: string; size: number; updatedAt: number };
 export type EventRow = { id: number; conversation: string; message: string; at: number };
 export type ChatTurn = { role: "customer" | "business"; text: string; image?: string };
 export type Decision =
-  | ({ action: "reply"; text: string; photos: string[] } | { action: "handoff"; reason: string; messageToCustomer: string }) & {
+  | (
+      | { action: "reply"; text: string; photos: string[] }
+      | { action: "handoff"; reason: string; messageToCustomer: string }
+      | {
+          action: "order";
+          order: { name: string; phone: string; city: string; address: string; items: OrderItem[]; total: string; notes: string };
+          messageToCustomer: string;
+        }
+    ) & {
       usage?: { model: string; promptTokens: number; cachedTokens: number; completionTokens: number; reasoningTokens: number; latencyMs: number };
     };
 
@@ -143,6 +171,10 @@ export const api = {
     request(`/knowledge/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ body }) }),
   deleteKnowledge: (name: string) => request(`/knowledge/${encodeURIComponent(name)}`, { method: "DELETE" }),
   playground: (messages: ChatTurn[]) => post<Decision>("/playground", { messages }),
+  orders: (status?: OrderStatus) =>
+    request<{ counts: Partial<Record<OrderStatus, number>>; orders: Order[] }>(`/orders${status ? `?status=${status}` : ""}`),
+  setOrderStatus: (id: number, status: OrderStatus) =>
+    request(`/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   catalog: () => request<CatalogItem[]>("/catalog"),
   addPhoto: (photo: { name: string; description: string; mime: string; data: string }) => post<CatalogItem>("/catalog", photo),
   updatePhoto: (id: string, patch: { name?: string; description?: string }) =>

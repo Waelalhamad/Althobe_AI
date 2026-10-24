@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Bot, CircleDollarSign, Gauge, Hand, MessageCircle, ShieldCheck, Timer, UserPlus, Users, TriangleAlert } from "lucide-react";
+import { Bot, CircleDollarSign, Gauge, Hand, MessageCircle, ShieldCheck, ShoppingBag, Timer, UserPlus, Users, TriangleAlert } from "lucide-react";
 import { api, type Totals } from "../api";
 import { Badge, Card, Empty, ErrorNote, PageHeader, Stat } from "../components/ui";
 import { ago, num, pct, phone, secs, usd } from "../format";
@@ -18,6 +18,7 @@ const C = {
   info: "hsl(212 75% 66%)",
   warn: "hsl(38 90% 60%)",
   bad: "hsl(0 70% 62%)",
+  ok: "hsl(152 55% 52%)",
   grid: "hsl(224 16% 15%)",
   muted: "hsl(220 10% 55%)",
 };
@@ -52,9 +53,16 @@ export function Overview() {
 
       {t && d && (
         <div className="flex flex-col gap-6">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
             <Stat icon={Users} label="محادثات" value={num(t.conversations)} hint={`${num(t.customerMessages)} رسالة من الزباين`} />
             <Stat icon={UserPlus} label="زباين جدد" value={num(t.newCustomers)} hint="أول مرة بيكتبولنا" tone="info" />
+            <Stat
+              icon={ShoppingBag}
+              label="طلبات جمعها المساعد"
+              value={<Link href="/orders">{num(t.orders)}</Link>}
+              hint={t.conversations ? `${pct(t.orders, t.conversations)} من المحادثات` : "بدها تأكيد الفريق"}
+              tone="ok"
+            />
             <Stat icon={Bot} label="ردود المساعد" value={num(t.aiReplies)} hint={`${num(t.staffMessages)} رد من الفريق`} tone="ok" />
             <Stat
               icon={Hand}
@@ -70,12 +78,12 @@ export function Overview() {
               icon={ShieldCheck}
               label="حلّها المساعد لحالو"
               value={pct(t.aiOnlyConversations, t.aiConversations)}
-              hint={`${num(t.aiOnlyConversations)} من ${num(t.aiConversations)} محادثة رد فيها المساعد، بلا تحويل ولا تدخل الفريق`}
+              hint={`${num(t.aiOnlyConversations)} من ${num(t.aiConversations)} محادثة رد فيها المساعد، بلا تحويل (الطلبات محسوبة نجاح)`}
             />
             <Stat
               icon={Gauge}
               label="نسبة التحويل"
-              value={pct(t.handoffs + t.errors, t.aiReplies + t.handoffs + t.errors)}
+              value={pct(t.handoffs + t.errors, t.aiReplies + t.handoffs + t.orders + t.errors)}
               hint="من كل قرارات المساعد"
               tone="warn"
             />
@@ -91,8 +99,8 @@ export function Overview() {
               label="تكلفة OpenAI"
               value={usd(t.costUsd)}
               hint={
-                t.aiReplies + t.handoffs
-                  ? `${usd(t.costUsd / (t.aiReplies + t.handoffs))} للرد · ${num(t.tokens.prompt + t.tokens.completion)} توكن`
+                t.aiReplies + t.handoffs + t.orders
+                  ? `${usd(t.costUsd / (t.aiReplies + t.handoffs + t.orders))} للرد · ${num(t.tokens.prompt + t.tokens.completion)} توكن`
                   : "تقدير حسب أسعار gpt-5-mini"
               }
               tone="ok"
@@ -120,6 +128,7 @@ export function Overview() {
                     <Area type="monotone" dataKey="aiReplies" name="ردود المساعد" stroke={C.info} fill="transparent" strokeWidth={2} />
                     <Area type="monotone" dataKey="staffMessages" name="ردود الفريق" stroke={C.muted} fill="transparent" strokeWidth={2} strokeDasharray="4 4" />
                     <Area type="monotone" dataKey="handoffs" name="تحويلات" stroke={C.warn} fill="transparent" strokeWidth={2} />
+                    <Area type="monotone" dataKey="orders" name="طلبات" stroke={C.ok} fill="transparent" strokeWidth={2} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>

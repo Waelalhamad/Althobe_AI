@@ -33,7 +33,7 @@ db.exec(`
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     customer          TEXT    NOT NULL,    -- WhatsApp number, or "cw:<conversation id>" for Chatwoot
     channel           TEXT    NOT NULL,    -- 'whatsapp' | 'chatwoot'
-    action            TEXT    NOT NULL,    -- 'reply' | 'handoff' | 'error'
+    action            TEXT    NOT NULL,    -- 'reply' | 'handoff' | 'order' | 'error'
     reason            TEXT,
     model             TEXT,
     prompt_tokens     INTEGER NOT NULL DEFAULT 0,
@@ -195,7 +195,7 @@ const insertAiCall = db.prepare(
 export function recordAiCall(call: {
   customer: string;
   channel: "whatsapp" | "chatwoot";
-  action: "reply" | "handoff" | "error";
+  action: "reply" | "handoff" | "order" | "error";
   reason?: string;
   usage?: AiUsage;
 }) {
@@ -241,4 +241,59 @@ export function getSetting(key: string): string | undefined {
 
 export function setSetting(key: string, value: string) {
   upsertSetting.run(key, value);
+}
+
+// --- Orders the AI collected (the team confirms them) --------------------------------
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS orders (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer    TEXT    NOT NULL,          -- WhatsApp number, or "cw:<conversation id>"
+    channel     TEXT    NOT NULL,          -- 'whatsapp' | 'chatwoot'
+    name        TEXT    NOT NULL,
+    phone       TEXT    NOT NULL,
+    city        TEXT    NOT NULL,
+    address     TEXT    NOT NULL,
+    items       TEXT    NOT NULL,          -- JSON: [{ color, size, quantity }]
+    total       TEXT    NOT NULL,          -- as the AI stated it, e.g. "385 دينار"
+    notes       TEXT    NOT NULL DEFAULT '',
+    status      TEXT    NOT NULL DEFAULT 'new', -- 'new' | 'confirmed' | 'delivered' | 'cancelled'
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS orders_created ON orders (created_at);
+`);
+
+export type OrderItem = { color: string; size: string; quantity: number };
+
+export type NewOrder = {
+  customer: string;
+  channel: "whatsapp" | "chatwoot";
+  name: string;
+  phone: string;
+  city: string;
+  address: string;
+  items: OrderItem[];
+  total: string;
+  notes: string;
+};
+
+const insertOrder = db.prepare(
+  `INSERT INTO orders (customer, channel, name, phone, city, address, items, total, notes, created_at, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+);
+
+export function saveOrder(o: NewOrder): number {
+  const now = Date.now();
+  const result = insertOrder.run(
+    o.customer, o.channel, o.name, o.phone, o.city, o.address, JSON.stringify(o.items), o.total, o.notes, now, now,
+  );
+  return Number(result.lastInsertRowid);
+}
+
+export const ORDER_STATUSES = ["new", "confirmed", "delivered", "cancelled"] as const;
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+export function setOrderStatus(id: number, status: OrderStatus): boolean {
+  return db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(status, Date.now(), id).changes > 0;
 }

@@ -16,7 +16,7 @@ import {
 } from "../knowledge.js";
 import { log } from "../scheduler.js";
 import { aiRepliesEnabled, setAiReplies, setTestNumbers, testNumbers } from "../settings.js";
-import { getSetting, pauseAi, resumeAi } from "../store.js";
+import { getSetting, ORDER_STATUSES, pauseAi, resumeAi, setOrderStatus, type OrderStatus } from "../store.js";
 import * as queries from "./queries.js";
 
 export const dashboardApi = express.Router();
@@ -167,6 +167,21 @@ dashboardApi.post("/conversations/:customer/send", async (req, res) => {
 
 dashboardApi.get("/handoffs", (req, res) => {
   res.json(queries.handoffs(intParam(req.query.days, 7, 90)));
+});
+
+dashboardApi.get("/orders", (req, res) => {
+  const status = ORDER_STATUSES.find((s) => s === req.query.status);
+  res.json(queries.orders({ status, limit: intParam(req.query.limit, 200, 1000) }));
+});
+
+dashboardApi.patch("/orders/:id", (req, res) => {
+  const status = ORDER_STATUSES.find((s) => s === req.body?.status) as OrderStatus | undefined;
+  if (!status || !setOrderStatus(Number(req.params.id), status)) {
+    res.status(400).json({ error: "Unknown order or status" });
+    return;
+  }
+  log("dashboard", `order #${req.params.id} marked ${status}`);
+  res.json({ ok: true });
 });
 
 dashboardApi.get("/events", (req, res) => {
