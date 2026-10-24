@@ -1,7 +1,7 @@
 // WhatsApp Cloud API through Dualhook or 360dialog. Webhooks use Meta's Cloud API format.
 import { config } from "../config.js";
 import { decideReply } from "../agent.js";
-import { getHistory, isAiPaused, pauseAi, saveMessage } from "../store.js";
+import { getHistory, isAiPaused, pauseAi, saveHistory, saveMessage } from "../store.js";
 import { log, scheduleReply } from "../scheduler.js";
 
 const DEFAULT_HANDOFF_MESSAGE = "شكراً لتواصلك! واحد من فريقنا رح يرد عليك بأقرب وقت 🙏";
@@ -22,6 +22,13 @@ type WaMessage = {
   document?: { caption?: string };
 };
 
+// Coexistence history sync: past chats from the WhatsApp Business app, sent once after connecting.
+type HistoryChunk = {
+  metadata?: { phase?: number; chunk_order?: number; progress?: number };
+  threads?: { id?: string; messages?: WaMessage[] }[];
+  errors?: { code?: number; title?: string }[];
+};
+
 type WebhookPayload = {
   object?: string;
   entry?: {
@@ -31,6 +38,7 @@ type WebhookPayload = {
         metadata?: { phone_number_id?: string };
         messages?: WaMessage[];
         message_echoes?: WaMessage[];
+        history?: HistoryChunk[];
       };
     }[];
   }[];
@@ -52,8 +60,10 @@ export function handleWhatsAppWebhook(payload: WebhookPayload) {
       } else if (change.field === "smb_message_echoes") {
         // A team member replied from the WhatsApp Business app on the phone.
         for (const echo of value.message_echoes ?? []) onStaffMessage(echo);
+      } else if (change.field === "history") {
+        for (const chunk of value.history ?? []) onHistoryChunk(chunk);
       }
-      // Other fields (statuses, history, smb_app_state_sync, ...) are ignored.
+      // Other fields (statuses, smb_app_state_sync, ...) are ignored.
     }
   }
 }
@@ -99,6 +109,37 @@ function onStaffMessage(echo: WaMessage) {
   });
   pauseAi(customer, "team replied from the WhatsApp Business app");
   log(`wa:${customer}`, `team replied from the app; AI paused for ${config.whatsapp.humanPauseHours}h`);
+}
+
+// Stores past chats so the AI knows what was already said. Never replies or pauses the AI.
+function onHistoryChunk(chunk: HistoryChunk) {
+  for (const error of chunk.errors ?? []) {
+    log("wa:history", `not shared (${error.code}): ${error.title}`);
+  }
+  const messages = [];
+  for (const thread of chunk.threads ?? []) {
+    const customer = thread.id;
+    if (!customer) continue;
+    for (const message of thread.messages ?? []) {
+      if (message.type === "reaction" || message.type === "unsupported" || message.type === "revoke") continue;
+      // The customer's own messages have from = their number; anything else was sent by the business.
+      const fromCustomer = message.from === customer;
+      messages.push({
+        customer,
+        role: fromCustomer ? ("customer" as const) : ("business" as const),
+        source: fromCustomer ? ("customer" as const) : ("staff" as const),
+        text: describe(message),
+        wamid: message.id,
+        createdAt: toMs(message.timestamp),
+      });
+    }
+  }
+  const added = saveHistory(messages);
+  const { phase, chunk_order, progress } = chunk.metadata ?? {};
+  log(
+    "wa:history",
+    `phase ${phase} chunk ${chunk_order}: ${chunk.threads?.length ?? 0} chats, ${added} new messages stored (sync ${progress}%)`,
+  );
 }
 
 async function respond(customer: string) {
@@ -183,6 +224,8 @@ function describe(m: WaMessage): string {
       const caption = m[m.type]?.caption?.trim();
       return `[sent a ${m.type}]${caption ? ` ${caption}` : ""}`;
     }
+    case "media_placeholder": // history sync leaves out media contents
+      return "[sent a media file]";
     default:
       return `[sent a ${m.type} message]`;
   }

@@ -28,19 +28,27 @@ db.exec(`
   );
 `);
 
+// Added later: 1 = imported from the WhatsApp Business app's chat history (Coexistence history sync).
+const columns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
+if (!columns.some((c) => c.name === "history")) {
+  db.exec("ALTER TABLE messages ADD COLUMN history INTEGER NOT NULL DEFAULT 0");
+}
+
 const insertMessage = db.prepare(
-  "INSERT OR IGNORE INTO messages (customer, role, source, text, wamid, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  "INSERT OR IGNORE INTO messages (customer, role, source, text, wamid, created_at, history) VALUES (?, ?, ?, ?, ?, ?, ?)",
 );
 
-// Returns false if this WhatsApp message id was already stored (duplicate delivery).
-export function saveMessage(m: {
+type StoredMessage = {
   customer: string;
   role: ChatTurn["role"];
   source: "customer" | "ai" | "staff";
   text: string;
   wamid?: string;
   createdAt?: number;
-}): boolean {
+};
+
+// Returns false if this WhatsApp message id was already stored (duplicate delivery).
+export function saveMessage(m: StoredMessage, fromHistory = false): boolean {
   const result = insertMessage.run(
     m.customer,
     m.role,
@@ -48,12 +56,30 @@ export function saveMessage(m: {
     m.text,
     m.wamid ?? null,
     m.createdAt ?? Date.now(),
+    fromHistory ? 1 : 0,
   );
   return result.changes > 0;
 }
 
+// Stores one chunk of imported chat history in a single transaction. Returns how many were new.
+export function saveHistory(messages: StoredMessage[]): number {
+  let added = 0;
+  db.exec("BEGIN");
+  try {
+    for (const m of messages) if (saveMessage(m, true)) added++;
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return added;
+}
+
+// Newest first. Imported history is older than every live message, but arrives in any order,
+// so it sorts by its WhatsApp timestamp; live messages sort by arrival (id).
 const selectHistory = db.prepare(
-  "SELECT role, text FROM messages WHERE customer = ? ORDER BY id DESC LIMIT ?",
+  `SELECT role, text FROM messages WHERE customer = ?
+   ORDER BY history ASC, CASE WHEN history = 1 THEN created_at ELSE id END DESC, id DESC LIMIT ?`,
 );
 
 export function getHistory(customer: string): ChatTurn[] {

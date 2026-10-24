@@ -26,7 +26,8 @@ app.get("/whatsapp/:token", (req, res) => {
 });
 
 // WhatsApp messages. Providers need a 200 within seconds, so we answer first and work after.
-app.post("/whatsapp/:token", express.raw({ type: "*/*", limit: "2mb" }), (req, res) => {
+// The limit is high because one history-sync chunk can hold thousands of messages.
+app.post("/whatsapp/:token", express.raw({ type: "*/*", limit: "50mb" }), (req, res) => {
   const payload = readJson(req, res);
   if (payload === undefined) return;
   res.status(200).json({ received: true });
