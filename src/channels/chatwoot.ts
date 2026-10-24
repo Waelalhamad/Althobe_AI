@@ -4,7 +4,8 @@ import { decideReply } from "../agent.js";
 import { addPrivateNote, getHistory, handOffToHuman, sendReply } from "../chatwoot.js";
 import { log, scheduleReply } from "../scheduler.js";
 import { recordAiCall, saveOrder } from "../store.js";
-import { orderNote, orderOneLine } from "../orders.js";
+import { notifyHandoff, notifyOrder, orderNote, orderOneLine } from "../orders.js";
+import { notifyError } from "../telegram.js";
 import { aiBlockedReason } from "../settings.js";
 
 // Shape of the Chatwoot Agent Bot "message_created" event (only the fields we use).
@@ -65,17 +66,20 @@ async function respond(accountId: number, conversationId: number) {
       await addPrivateNote(accountId, conversationId, orderNote(id, decision.order));
       await handOffToHuman(accountId, conversationId);
       log(key, `order #${id} collected, team must confirm: ${orderOneLine(decision.order)}`);
+      notifyOrder(id, key, decision.order);
     } else {
       await sendReply(accountId, conversationId, decision.messageToCustomer || DEFAULT_HANDOFF_MESSAGE);
       await addPrivateNote(accountId, conversationId, `🤖 Handed off by AI: ${decision.reason}`);
       await handOffToHuman(accountId, conversationId);
       log(key, `handed off: ${decision.reason}`);
+      notifyHandoff(key, decision.reason);
     }
   } catch (error) {
     // If anything fails, never leave the customer unanswered: give the chat to a human.
     const message = error instanceof Error ? error.message : String(error);
     recordAiCall({ customer: key, channel: "chatwoot", action: "error", reason: message });
     log(key, `error: ${message}`);
+    notifyError(`المساعد ما قدر يرد على Instagram/Messenger #${conversationId}`, message);
     try {
       await addPrivateNote(accountId, conversationId, "🤖 AI error, please answer this customer.");
       await handOffToHuman(accountId, conversationId);

@@ -18,6 +18,8 @@ import { log } from "../scheduler.js";
 import { aiRepliesEnabled, setAiReplies, setTestNumbers, testNumbers } from "../settings.js";
 import { getSetting, ORDER_STATUSES, pauseAi, resumeAi, setOrderStatus, type OrderStatus } from "../store.js";
 import * as queries from "./queries.js";
+import { findGroups, sendTest, setMutedKinds, setTelegramChat, setTelegramToken, telegramStatus } from "../telegram.js";
+import { generateReport, resolveAlert, runChecks, runReviews, saveSupervisorSettings, supervisorView } from "../supervisor.js";
 
 export const dashboardApi = express.Router();
 // Photo uploads and test photos (base64 JSON) need a bigger body than everything else.
@@ -289,6 +291,88 @@ dashboardApi.put("/settings", (req, res) => {
     log("dashboard", numbers.length ? `test mode on for ${numbers.length} number(s)` : "test mode off");
   }
   res.json(settingsView());
+});
+
+// --- Telegram notifications ------------------------------------------------------------------
+
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+dashboardApi.get("/telegram", async (_req, res) => {
+  res.json(await telegramStatus());
+});
+
+dashboardApi.put("/telegram", async (req, res) => {
+  const body = req.body ?? {};
+  try {
+    if (typeof body.token === "string" && body.token.trim()) {
+      const bot = await setTelegramToken(body.token.trim());
+      log("dashboard", `Telegram bot set: @${bot.username}`);
+    }
+    if (typeof body.chatId === "string" || typeof body.chatId === "number") {
+      const chatId = String(body.chatId).trim();
+      if (!/^-?\d{3,20}$|^@\w{4,}$/.test(chatId)) {
+        res.status(400).json({ error: "Group id looks wrong" });
+        return;
+      }
+      setTelegramChat(chatId);
+      log("dashboard", `Telegram group set: ${chatId}`);
+    }
+    if (Array.isArray(body.muted)) setMutedKinds(body.muted.map(String));
+    res.json(await telegramStatus());
+  } catch (error) {
+    res.status(400).json({ error: `Telegram: ${errorMessage(error)}` });
+  }
+});
+
+dashboardApi.get("/telegram/groups", async (_req, res) => {
+  try {
+    res.json(await findGroups());
+  } catch (error) {
+    res.status(400).json({ error: `Telegram: ${errorMessage(error)}` });
+  }
+});
+
+dashboardApi.post("/telegram/test", async (_req, res) => {
+  try {
+    await sendTest();
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ error: `Telegram: ${errorMessage(error)}` });
+  }
+});
+
+// --- Supervisor ------------------------------------------------------------------------------------
+
+dashboardApi.get("/supervisor", (req, res) => {
+  res.json(supervisorView(intParam(req.query.days, 7, 90)));
+});
+
+dashboardApi.put("/supervisor/settings", (req, res) => {
+  const settings = saveSupervisorSettings(req.body ?? {});
+  log("dashboard", "supervisor settings changed");
+  res.json(settings);
+});
+
+// Review the latest chats now (instead of waiting for the next half hour).
+dashboardApi.post("/supervisor/run", async (_req, res) => {
+  try {
+    runChecks();
+    res.json({ reviewed: await runReviews({ force: true, max: 20 }) });
+  } catch (error) {
+    res.status(502).json({ error: errorMessage(error) });
+  }
+});
+
+dashboardApi.post("/supervisor/report", async (_req, res) => {
+  try {
+    res.json({ id: await generateReport() });
+  } catch (error) {
+    res.status(502).json({ error: errorMessage(error) });
+  }
+});
+
+dashboardApi.post("/supervisor/alerts/:id/resolve", (req, res) => {
+  res.json({ ok: resolveAlert(Number(req.params.id)) });
 });
 
 // --- Knowledge files --------------------------------------------------------------------

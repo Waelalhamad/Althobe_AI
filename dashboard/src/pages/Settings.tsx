@@ -4,6 +4,7 @@ import { CheckCircle2, CircleSlash, FlaskConical, Power } from "lucide-react";
 import { api, type Settings } from "../api";
 import { Badge, Button, Card, ErrorNote, PageHeader, Toggle } from "../components/ui";
 import { ago } from "../format";
+import { SupervisorCard, TelegramCard } from "./SettingsAlerts";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -81,6 +82,9 @@ export function SettingsPage() {
           <span className="text-xs text-muted">الرقم مع رمز الدولة، بدون + ولا مسافات.</span>
         </div>
       </Card>
+
+      <TelegramCard />
+      <SupervisorCard />
 
       <Card>
         <h2 className="mb-4 font-semibold">الربط</h2>

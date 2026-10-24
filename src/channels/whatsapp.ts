@@ -16,7 +16,8 @@ import {
 } from "../store.js";
 import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
-import { orderOneLine } from "../orders.js";
+import { notifyHandoff, notifyOrder, orderOneLine } from "../orders.js";
+import { notifyError } from "../telegram.js";
 
 const DEFAULT_HANDOFF_MESSAGE = "شكراً لتواصلك! واحد من فريقنا رح يرد عليك بأقرب وقت 🙏";
 const DEFAULT_ORDER_MESSAGE = "تمام، تسجّل طلبك 🙏 فريقنا بيتواصل معاك قريب لتأكيد الحجز.";
@@ -140,6 +141,7 @@ function onHistoryChunk(chunk: HistoryChunk) {
   for (const error of chunk.errors ?? []) {
     log("wa:history", `not shared (${error.code}): ${error.title}`);
     setSetting("history_sync", JSON.stringify({ error: error.title ?? `code ${error.code}`, at: Date.now() }));
+    notifyError("استيراد المحادثات القديمة من واتساب", `${error.code}: ${error.title}`);
   }
   const messages = [];
   for (const thread of chunk.threads ?? []) {
@@ -257,18 +259,21 @@ async function respond(customer: string) {
       saveMessage({ customer, role: "business", source: "ai", text, wamid });
       pauseAi(customer, `AI order #${id}: waiting for the team to confirm`);
       log(key, `order #${id} collected, team must confirm: ${orderOneLine(decision.order)}`);
+      notifyOrder(id, customer, decision.order);
     } else {
       const text = decision.messageToCustomer || DEFAULT_HANDOFF_MESSAGE;
       const wamid = await sendText(customer, text);
       saveMessage({ customer, role: "business", source: "ai", text, wamid });
       pauseAi(customer, `AI handoff: ${decision.reason}`);
       log(key, `handed off to team: ${decision.reason}`);
+      notifyHandoff(customer, decision.reason);
     }
   } catch (error) {
     // Never leave the customer stuck with the bot: stop the AI so the team answers in the app.
     pauseAi(customer, "AI error");
     recordAiCall({ customer, channel: "whatsapp", action: "error", reason: errorText(error) });
     log(key, `error, AI paused for this customer: ${errorText(error)}`);
+    notifyError(`المساعد ما قدر يرد على +${customer} (توقف بهالمحادثة، ردو انتو)`, errorText(error));
   }
 }
 

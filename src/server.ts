@@ -7,6 +7,7 @@ import { handleWhatsAppWebhook } from "./channels/whatsapp.js";
 import { handleChatwootEvent } from "./channels/chatwoot.js";
 import { dashboardApi } from "./dashboard/api.js";
 import { dataPath } from "./media.js";
+import { startSupervisor } from "./supervisor.js";
 
 const app = express();
 app.set("trust proxy", 1); // Railway's proxy: real client IP for the login limit
@@ -115,6 +116,7 @@ function validChatwootSignature(req: express.Request, secret: string): boolean {
 
 app.listen(config.port, () => {
   void config.webhookToken; // fail at startup if missing
+  startSupervisor();
   const channels = [config.whatsapp.enabled && `WhatsApp (${config.whatsapp.provider})`, config.chatwoot.enabled && "Chatwoot"]
     .filter(Boolean)
     .join(" + ");

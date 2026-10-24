@@ -7,12 +7,12 @@ const DAY = 24 * HOUR;
 const tzMs = () => config.dashboard.timezoneOffsetHours * HOUR;
 
 // Start of the local day (dashboard timezone), `daysAgo` days back.
-function localDayStart(daysAgo: number): number {
+export function localDayStart(daysAgo: number): number {
   const now = Date.now() + tzMs();
   return now - (now % DAY) - daysAgo * DAY - tzMs();
 }
 
-function localDay(ms: number): string {
+export function localDay(ms: number): string {
   return new Date(ms + tzMs()).toISOString().slice(0, 10);
 }
 
@@ -32,12 +32,12 @@ type Totals = {
   latency: { avgMs: number; p50Ms: number; p90Ms: number };
 };
 
-function costUsd(prompt: number, cached: number, completion: number): number {
+export function costUsd(prompt: number, cached: number, completion: number): number {
   const p = config.dashboard.price;
   return ((prompt - cached) * p.input + cached * p.cachedInput + completion * p.output) / 1_000_000;
 }
 
-function totals(since: number): Totals {
+export function totals(since: number): Totals {
   const msg = db
     .prepare(
       `SELECT

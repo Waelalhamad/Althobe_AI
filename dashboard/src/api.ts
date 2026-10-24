@@ -180,4 +180,116 @@ export const api = {
   updatePhoto: (id: string, patch: { name?: string; description?: string }) =>
     request<CatalogItem>(`/catalog/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deletePhoto: (id: string) => request(`/catalog/${id}`, { method: "DELETE" }),
+  telegram: () => request<TelegramStatus>("/telegram"),
+  saveTelegram: (patch: { token?: string; chatId?: string; muted?: NotifyKind[] }) =>
+    request<TelegramStatus>("/telegram", { method: "PUT", body: JSON.stringify(patch) }),
+  telegramGroups: () => request<TelegramChat[]>("/telegram/groups"),
+  telegramTest: () => post<{ ok: true }>("/telegram/test"),
+  supervisor: (days: number) => request<SupervisorView>(`/supervisor?days=${days}`),
+  saveSupervisor: (patch: Partial<SupervisorSettings>) =>
+    request<SupervisorSettings>("/supervisor/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  runSupervisor: () => post<{ reviewed: number }>("/supervisor/run"),
+  supervisorReport: () => post<{ id: number }>("/supervisor/report"),
+  resolveAlert: (id: number) => post(`/supervisor/alerts/${id}/resolve`),
+};
+
+// --- Telegram + supervisor -----------------------------------------------------------------
+
+export type NotifyKind = "order" | "handoff" | "error" | "supervisor" | "report";
+export type TelegramChat = { id: number; title?: string; type: string; username?: string };
+export type TelegramStatus = {
+  tokenSet: boolean;
+  tokenHint: string | null;
+  bot: { id: number; username: string; first_name: string } | null;
+  chatId: string | null;
+  chat: TelegramChat | null;
+  error: string | null;
+  muted: NotifyKind[];
+  last: { ok: boolean; error?: string; at: number } | null;
+};
+
+export type SupervisorSettings = {
+  enabled: boolean;
+  reviews: boolean;
+  unansweredMinutes: number;
+  escalateMinutes: number;
+  orderConfirmHours: number;
+  workStart: number;
+  workEnd: number;
+  reportHour: number;
+  dailyReviewCap: number;
+};
+
+export type IssueType =
+  | "slow_reply"
+  | "unanswered_question"
+  | "irrelevant_reply"
+  | "rude_or_cold"
+  | "wrong_info"
+  | "missed_sale"
+  | "no_follow_up"
+  | "order_not_handled"
+  | "unclear_message"
+  | "other";
+
+export type ReviewIssue = {
+  who: "team" | "ai";
+  type: IssueType;
+  severity: "low" | "medium" | "high";
+  quote: string;
+  problem: string;
+  advice: string;
+};
+
+export type Review = {
+  id: number;
+  customer: string;
+  score: number;
+  outcome: "ordered" | "interested" | "lost" | "no_reply_needed" | "support";
+  summary: string;
+  praise: string;
+  issues: ReviewIssue[];
+  at: number;
+};
+
+export type SupervisorAlert = {
+  id: number;
+  kind: "unanswered" | "order_unconfirmed" | "review" | "silence";
+  customer: string | null;
+  severity: "low" | "medium" | "high";
+  title: string;
+  detail: string;
+  at: number;
+  resolvedAt: number | null;
+};
+
+export type ResponseStats = { replies: number; p50Min: number; p90Min: number; slow: number; team: number; ai: number };
+
+export type DayReport = {
+  id: number;
+  day: string;
+  text: string;
+  at: number;
+  stats: {
+    conversations: number;
+    orders: number;
+    teamMessages: number;
+    reviews: number;
+    avgScore: number | null;
+    waitingNow: number;
+    response: ResponseStats;
+  };
+};
+
+export type SupervisorView = {
+  settings: SupervisorSettings;
+  waiting: { customer: string; since: number; minutes: number; lastText: string; messages: number }[];
+  response: ResponseStats;
+  reviews: Review[];
+  issues: Partial<Record<IssueType, { team: number; ai: number }>>;
+  avgScore: number | null;
+  alerts: SupervisorAlert[];
+  reports: DayReport[];
+  unconfirmedOrders: number;
+  costUsd: number;
 };

@@ -1,5 +1,6 @@
 // Text forms of an order the AI collected, for the team (logs, Chatwoot notes).
 import type { CollectedOrder } from "./agent.js";
+import { customerLabel, dashboardLink, esc, notify } from "./telegram.js";
 
 export function orderItemsText(order: CollectedOrder): string {
   return order.items.map((i) => `${i.quantity} × ${i.color} مقاس ${i.size}`).join("، ");
@@ -21,4 +22,28 @@ export function orderNote(id: number, order: CollectedOrder): string {
     `الاجمالي: ${order.total}`,
     ...(order.notes ? [`ملاحظات: ${order.notes}`] : []),
   ].join("\n");
+}
+
+// Telegram: new order for the team to confirm.
+export function notifyOrder(id: number, customer: string, order: CollectedOrder) {
+  const link = customer.startsWith("cw:") ? "" : dashboardLink(`/inbox/${customer}`, "فتح المحادثة");
+  notify(
+    "order",
+    [
+      `🛍 <b>طلب جديد #${id}</b> (جمعه المساعد، بدو تأكيد)`,
+      `الاسم: ${esc(order.name)}`,
+      `الرقم: <code>${esc(order.phone)}</code>`,
+      `العنوان: ${esc(order.city)} - ${esc(order.address)}`,
+      `الطلب: ${esc(orderItemsText(order))}`,
+      `الاجمالي: <b>${esc(order.total)}</b>`,
+      ...(order.notes ? [`ملاحظات: ${esc(order.notes)}`] : []),
+      `${esc(customerLabel(customer))} ${link}`,
+    ].join("\n"),
+  );
+}
+
+// Telegram: the AI didn't know the answer (or the customer needs a person).
+export function notifyHandoff(customer: string, reason: string) {
+  const link = customer.startsWith("cw:") ? "" : dashboardLink(`/inbox/${customer}`, "فتح المحادثة");
+  notify("handoff", `🙋 <b>زبون بدو حدا من الفريق</b>\n${esc(customerLabel(customer))}\nالسبب: ${esc(reason)}\n${link}`);
 }

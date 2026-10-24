@@ -13,6 +13,7 @@ import {
   Menu,
   MessagesSquare,
   Settings,
+  ShieldCheck,
   ShoppingBag,
   X,
 } from "lucide-react";
@@ -22,6 +23,7 @@ const NAV = [
   { href: "/", label: "نظرة عامة", icon: LayoutDashboard },
   { href: "/inbox", label: "المحادثات", icon: MessagesSquare },
   { href: "/orders", label: "الطلبات", icon: ShoppingBag },
+  { href: "/supervisor", label: "المشرف العام", icon: ShieldCheck },
   { href: "/handoffs", label: "التحويلات للفريق", icon: Hand },
   { href: "/knowledge", label: "معلومات المساعد", icon: BookOpen },
   { href: "/catalog", label: "صور المنتجات", icon: Images },
