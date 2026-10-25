@@ -117,7 +117,7 @@ export function saveSupervisorSettings(patch: Record<string, unknown>): Supervis
 
 const localHour = (ms: number) => new Date(ms + config.dashboard.timezoneOffsetHours * HOUR).getUTCHours();
 
-function inWorkingHours(ms: number, s = supervisorSettings()): boolean {
+export function inWorkingHours(ms: number, s = supervisorSettings()): boolean {
   const h = localHour(ms);
   return s.workStart <= s.workEnd ? h >= s.workStart && h < s.workEnd : h >= s.workStart || h < s.workEnd;
 }

@@ -53,13 +53,13 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 
 # How to sell
 - How to open depends on who wrote and why (see "This customer" at the end):
-  - Ad lead: the message starts with "[from the ad: ...]", or is the ad's ready-made text ("مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟"), or asks the price, or is a screenshot of a product. Use the product's opening from its knowledge document. If it has none: greet, then ONE message with what they get and the price (value first, then the number, e.g. what's included, quality, free delivery, then the price), send its photos with send_product_photos, then an easy choice question (e.g. "أي لون عجبك؟"). Never send the price alone as a dead end: always photos and a question with it.
+  - Ad lead: the message starts with "[from the ad: ...]", or is the ad's ready-made text ("مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟"), or asks the price, or is a screenshot of a product. Use the product's opening from its knowledge document. If it has none: one message with a short greeting and what they get (what's included, quality), then one with the price, saying free delivery plainly in it if delivery is free (e.g. "والتوصيل مجاني لباب بيتك"), not hidden inside a long sentence, send its photos with send_product_photos, then an easy choice question (e.g. "أي لون عجبك؟"). Never send the price alone as a dead end: always photos and a question with it.
   - Just a greeting ("مرحبا", "السلام عليكم") with no ad and no product mentioned: answer as the "how we talk" document says for a plain greeting. Don't pitch or give the price before they say what they want, unless that document says to.
   - A returning customer (they wrote to us before, or have an order): don't pitch from scratch. Greet them as someone we know and help with what they write. Only mention an order if "This customer" lists one ("Has order #..."); never assume a previous order otherwise. Questions about an existing order are handed off.
 - End almost every reply with ONE easy question that moves to the next step: the product's choices (color, size...) → name, phone and area → confirm. Never ask more than two things at once.
 - Assume the sale in a friendly way: "نحجزلك الفضي مقاس 58؟" is better than "هل تريد الطلب؟".
 - Size: if the customer doesn't know it, ask what the product's size guide needs (often weight and height). If there is no size guide, write their answers in the order notes, tell them naturally the team will confirm the right size, and keep going with the order.
-- Price objection ("غالي"): don't drop the price; show the value in one or two short lines from the knowledge (what's included, quality, free delivery). If the price is fixed, say it kindly.
+- Price objection ("غالي", "في أرخص", "اعملي خصم"): stay warm and firm. Never offer, hint at or promise a discount, gift, free extra or "let me ask" about the price unless the knowledge says so, even if they push or haggle several times. Show the value in one or two short lines from the knowledge (what's included, quality, free delivery). If the price is fixed, say it kindly once (e.g. "السعر ثابت، وشامل التوصيل لباب بيتك") and move on to the next choice.
 - "نفكر" / "نشوف" / "بعدين": no pressure. One helpful line (photos, size help) and leave the door open ("على راحتك، اي وقت تبي تحجز احنا هنا 😊").
 - Trust worries ("مضمون؟", "نخاف"): reassure only with facts from the knowledge (delivery to the door, payment options).
 - Don't repeat what you already said, and don't ask again for anything the customer already gave (a photo they sent can tell you the color).
@@ -183,19 +183,17 @@ const HANDOFF_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
   },
 };
 
-// customerPhone: the customer's WhatsApp number in local form (e.g. 0912345678), when known.
-// background: what we know about the customer before this chat (new / wrote before / their orders).
-export async function decideReply(
-  history: ChatTurn[],
-  context: { customerPhone?: string; background?: string } = {},
-): Promise<AgentDecision> {
+type CustomerContext = { customerPhone?: string; background?: string };
+
+// The instructions, product photos, knowledge and what we know about the customer, then the chat.
+function chatMessages(history: ChatTurn[], context: CustomerContext): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   const facts = [
     context.customerPhone &&
       `WhatsApp number: ${context.customerPhone} (use it as the order phone if the customer says to use this number).`,
     context.background,
   ].filter(Boolean);
   const aboutCustomer = facts.length ? `\n\n# This customer\n${facts.join("\n")}` : "";
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+  return [
     {
       role: "developer",
       content: `${INSTRUCTIONS}${catalogForPrompt()}\n\n# Knowledge documents\n\n${loadKnowledge()}${aboutCustomer}`,
@@ -213,17 +211,29 @@ export async function decideReply(
       };
     }),
   ];
+}
+
+function emptyUsage(): AiUsage {
+  return { model: config.openai.model, promptTokens: 0, cachedTokens: 0, completionTokens: 0, reasoningTokens: 0, latencyMs: 0 };
+}
+
+function addUsage(usage: AiUsage, completion: OpenAI.Chat.Completions.ChatCompletion, startedAt: number) {
+  usage.model = completion.model;
+  usage.promptTokens += completion.usage?.prompt_tokens ?? 0;
+  usage.cachedTokens += completion.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+  usage.completionTokens += completion.usage?.completion_tokens ?? 0;
+  usage.reasoningTokens += completion.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+  usage.latencyMs = Date.now() - startedAt;
+}
+
+// customerPhone: the customer's WhatsApp number in local form (e.g. 0912345678), when known.
+// background: what we know about the customer before this chat (new / wrote before / their orders).
+export async function decideReply(history: ChatTurn[], context: CustomerContext = {}): Promise<AgentDecision> {
+  const messages = chatMessages(history, context);
 
   client ??= new OpenAI();
   const startedAt = Date.now();
-  const usage: AiUsage = {
-    model: config.openai.model,
-    promptTokens: 0,
-    cachedTokens: 0,
-    completionTokens: 0,
-    reasoningTokens: 0,
-    latencyMs: 0,
-  };
+  const usage = emptyUsage();
   const knownPhotos = new Set(listCatalog().map((p) => p.id));
   const photos: string[] = [];
 
@@ -237,12 +247,7 @@ export async function decideReply(
       // Once photos are queued, the next step is the text that goes with them.
       tool_choice: photos.length ? "none" : "auto",
     });
-    usage.model = completion.model;
-    usage.promptTokens += completion.usage?.prompt_tokens ?? 0;
-    usage.cachedTokens += completion.usage?.prompt_tokens_details?.cached_tokens ?? 0;
-    usage.completionTokens += completion.usage?.completion_tokens ?? 0;
-    usage.reasoningTokens += completion.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
-    usage.latencyMs = Date.now() - startedAt;
+    addUsage(usage, completion, startedAt);
 
     const message = completion.choices[0]?.message;
     const photoCalls = (message?.tool_calls ?? []).filter(
@@ -280,6 +285,56 @@ export async function decideReply(
   }
   return { ...handoff("AI kept calling tools without answering"), usage };
 }
+
+// One gentle message to a customer who went quiet after our last reply (see followup.ts).
+// text is undefined when a follow-up would be pushy or pointless. The AI first says where the chat stands
+// (a free-text "SKIP" was not reliable), and only a customer who was still choosing gets a message.
+export async function writeFollowUp(
+  history: ChatTurn[],
+  context: CustomerContext & { silentHours: number },
+): Promise<{ text?: string; stage?: string; usage: AiUsage }> {
+  const messages = chatMessages(history, context);
+  messages.push({
+    role: "developer",
+    content: `The customer hasn't answered our last message for about ${context.silentHours} hours. Decide whether to send ONE short follow-up, like a friendly seller checking in once.
+First, "stage": where the chat stands, judged by the customer's LAST message and what we answered:
+- "choosing": they were in the middle of buying (asked the price or about the product, picked a color/size, were giving their details) and our last message asked them something;
+- "later": they said they'll think, come back later, ask someone, or similar ("نفكر", "نشوف", "بعدين", "نرجعلك", "نشاور");
+- "declined": not interested, too expensive and dropped it, or they said no;
+- "closed": they thanked us or ended the chat;
+- "upset": a complaint, a problem, or they are angry;
+- "with_team": they have an order, or the chat was handed to the team;
+- "nothing_asked": our last message didn't ask them anything.
+Then "message": only for "choosing" (otherwise empty). Follow the "follow-up" part of the "how we talk" document if there is one. Pick up exactly where it stopped (e.g. the color or size they were choosing, or one helpful line); never ask about a choice that never came up. End with one easy question. No pressure, no fake urgency, no discount or anything not in the knowledge; don't repeat the price or the photos; don't greet again or apologize for writing. Same style and dialect rules as all your messages (the words to avoid too).`,
+  });
+  client ??= new OpenAI();
+  const startedAt = Date.now();
+  const usage = emptyUsage();
+  const completion = await client.chat.completions.create({
+    model: config.openai.model,
+    reasoning_effort: config.openai.reasoningEffort,
+    messages,
+    response_format: { type: "json_schema", json_schema: { name: "follow_up", strict: true, schema: FOLLOW_UP_SCHEMA } },
+  });
+  addUsage(usage, completion, startedAt);
+  try {
+    const answer = JSON.parse(completion.choices[0]?.message?.content ?? "{}") as { stage?: string; message?: string };
+    const text = answer.message?.trim();
+    return answer.stage === "choosing" && text ? { text, stage: answer.stage, usage } : { stage: answer.stage, usage };
+  } catch {
+    return { usage };
+  }
+}
+
+const FOLLOW_UP_SCHEMA = {
+  type: "object",
+  properties: {
+    stage: { type: "string", enum: ["choosing", "later", "declined", "closed", "upset", "with_team", "nothing_asked"] },
+    message: { type: "string" },
+  },
+  required: ["stage", "message"],
+  additionalProperties: false,
+};
 
 const EMPTY = "AI returned an empty reply";
 

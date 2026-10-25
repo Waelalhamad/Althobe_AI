@@ -7,6 +7,7 @@ import {
   attachMedia,
   getHistory,
   isAiPaused,
+  lastCustomerMessageId,
   lastCustomerWamid,
   customerBackground,
   pauseAi,
@@ -213,7 +214,7 @@ async function waitForMedia(customer: string) {
 }
 
 // History for the AI, with the customer's recent photos attached.
-function historyForAi(customer: string): ChatTurn[] {
+export function historyForAi(customer: string): ChatTurn[] {
   return getHistory(customer).map(({ imageFile, ...turn }) => {
     const image = imageFile ? fileAsDataUrl(imageFile) : undefined;
     return image ? { ...turn, image } : turn;
@@ -298,6 +299,21 @@ async function respond(customer: string) {
     log(key, `error, AI paused for this customer: ${errorText(error)}`);
     notifyError(`المساعد ما قدر يرد على +${customer} (توقف بهالمحادثة، ردو انتو)`, errorText(error));
   }
+}
+
+// The automatic follow-up (followup.ts). Sent only if the customer hasn't written since afterId
+// and the team hasn't taken over meanwhile. Returns whether anything was sent.
+export async function sendFollowUp(customer: string, text: string, afterId: number): Promise<boolean> {
+  const stillQuiet = () => !isAiPaused(customer) && lastCustomerMessageId(customer) === afterId;
+  let sent = 0;
+  for (const part of splitMessages(text)) {
+    if (sent > 0) await typingPause(part);
+    if (!stillQuiet()) break;
+    const wamid = await sendText(customer, part);
+    saveMessage({ customer, role: "business", source: "ai", text: part, wamid });
+    sent++;
+  }
+  return sent > 0;
 }
 
 // A team member replied from the dashboard: send it and keep the AI out of this chat.
@@ -415,7 +431,7 @@ function describeContent(m: WaMessage): string {
 }
 
 // 218912345678 → 0912345678 (how Libyan customers write their number); other countries: +<number>.
-function localPhone(waNumber: string): string {
+export function localPhone(waNumber: string): string {
   return waNumber.startsWith("218") ? `0${waNumber.slice(3)}` : `+${waNumber}`;
 }
 

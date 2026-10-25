@@ -33,7 +33,7 @@ db.exec(`
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     customer          TEXT    NOT NULL,    -- WhatsApp number, or "cw:<conversation id>" for Chatwoot
     channel           TEXT    NOT NULL,    -- 'whatsapp' | 'chatwoot'
-    action            TEXT    NOT NULL,    -- 'reply' | 'handoff' | 'order' | 'error'
+    action            TEXT    NOT NULL,    -- 'reply' | 'handoff' | 'order' | 'error' | 'followup'
     reason            TEXT,
     model             TEXT,
     prompt_tokens     INTEGER NOT NULL DEFAULT 0,
@@ -195,7 +195,7 @@ const insertAiCall = db.prepare(
 export function recordAiCall(call: {
   customer: string;
   channel: "whatsapp" | "chatwoot";
-  action: "reply" | "handoff" | "order" | "error";
+  action: "reply" | "handoff" | "order" | "error" | "followup";
   reason?: string;
   usage?: AiUsage;
 }) {
@@ -324,4 +324,12 @@ export function customerBackground(customer: string): string {
     ...orders.map((o) => `Has order #${o.id} (status: ${o.status}, ${daysAgo(o.created_at)} days ago).`),
   ];
   return lines.join("\n");
+}
+
+// messages.id of the customer's latest live message (to tell whether they wrote since).
+export function lastCustomerMessageId(customer: string): number | undefined {
+  const row = db
+    .prepare("SELECT MAX(id) AS id FROM messages WHERE customer = ? AND role = 'customer' AND history = 0")
+    .get(customer) as { id: number | null };
+  return row.id ?? undefined;
 }

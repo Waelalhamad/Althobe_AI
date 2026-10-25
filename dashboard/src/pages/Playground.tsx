@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bot, Hand, ImagePlus, RotateCcw, Send, X } from "lucide-react";
+import { Bot, Clock, Hand, ImagePlus, RotateCcw, Send, X } from "lucide-react";
 import { api, mediaUrl, type ChatTurn, type Decision } from "../api";
 import { prepareImage } from "../image";
 import { Button, Card, ErrorNote, PageHeader } from "../components/ui";
 import { num, secs, usd } from "../format";
 
-type Turn = ChatTurn & { meta?: Decision };
+// skipped: the follow-up test decided not to write (shown as a note, not sent to the AI).
+type Turn = ChatTurn & { meta?: Decision; followUp?: boolean; skipped?: boolean };
 
 const EXAMPLES = [
   "مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟",
@@ -42,15 +43,32 @@ export function Playground() {
     },
   });
 
+  // What the automatic follow-up would send if the customer went quiet now.
+  const followUp = useMutation({
+    mutationFn: (history: Turn[]) =>
+      api.playgroundFollowUp(
+        history.filter((t) => !t.skipped).map(({ role, text, image }) => ({ role, text, image })),
+        customerType,
+      ),
+    onSuccess: ({ text, usage }) =>
+      setTurns((t) => [
+        ...t,
+        text
+          ? { role: "business", text, followUp: true, meta: { action: "reply", text, photos: [], usage } }
+          : { role: "business", text: "ما رح يبعت متابعة هون (ما بتناسب المحادثة)", skipped: true },
+      ]),
+  });
+  const busy = ask.isPending || followUp.isPending;
+
   // Braces: the effect must not return what scrollIntoView returns (React would call it as a cleanup).
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
-  }, [turns.length, ask.isPending]);
+  }, [turns.length, busy]);
 
   const submit = (value: string) => {
     const v = value.trim();
-    if ((!v && !image) || ask.isPending) return;
-    const next: Turn[] = [...turns, { role: "customer", text: v || "[sent a photo]", image }];
+    if ((!v && !image) || busy) return;
+    const next: Turn[] = [...turns.filter((t) => !t.skipped), { role: "customer", text: v || "[sent a photo]", image }];
     setTurns(next);
     setText("");
     setImage(undefined);
@@ -76,6 +94,14 @@ export function Playground() {
                 </option>
               ))}
             </select>
+            <Button
+              variant="ghost"
+              onClick={() => followUp.mutate(turns)}
+              disabled={busy || turns[turns.length - 1]?.role !== "business" || Boolean(turns[turns.length - 1]?.skipped)}
+              title="شو رح يبعت إذا الزبون سكت بعد آخر رد"
+            >
+              <Clock size={16} /> جرّب رسالة المتابعة
+            </Button>
             <Button variant="ghost" onClick={() => setTurns([])} disabled={!turns.length}>
               <RotateCcw size={16} /> محادثة جديدة
             </Button>
@@ -101,6 +127,8 @@ export function Playground() {
                     "max-w-[80%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm",
                     t.role === "customer"
                       ? "bg-card-2"
+                      : t.skipped
+                        ? "border border-dashed border-line text-muted"
                       : t.meta?.action === "handoff"
                         ? "bg-warn/12"
                         : t.meta?.action === "order"
@@ -121,10 +149,11 @@ export function Playground() {
                     })}
                   </div>
                 )}
+                {t.followUp && <span className="mt-1 text-[11px] text-info">رسالة متابعة تلقائية</span>}
                 {t.meta && <Meta d={t.meta} />}
               </div>
             ))}
-            {ask.isPending && (
+            {busy && (
               <div className="flex items-center justify-end gap-2 text-sm text-muted">
                 <Bot size={16} className="animate-pulse" /> عم يفكر…
               </div>
@@ -132,7 +161,7 @@ export function Playground() {
             <div ref={bottom} />
           </div>
         </div>
-        <ErrorNote error={ask.error} />
+        <ErrorNote error={ask.error ?? followUp.error} />
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -168,7 +197,7 @@ export function Playground() {
             placeholder="اكتب متل الزبون…"
             className="flex-1 rounded-xl border border-line bg-card-2 px-3 py-2.5 text-sm outline-none focus:border-primary"
           />
-          <Button disabled={(!text.trim() && !image) || ask.isPending} aria-label="إرسال">
+          <Button disabled={(!text.trim() && !image) || busy} aria-label="إرسال">
             <Send size={16} />
           </Button>
         </form>

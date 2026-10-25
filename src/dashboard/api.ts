@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import express from "express";
 import { config } from "../config.js";
 import fs from "node:fs";
-import { decideReply, type ChatTurn } from "../agent.js";
+import { decideReply, writeFollowUp, type ChatTurn } from "../agent.js";
 import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } from "../catalog.js";
 import { dataPath } from "../media.js";
 import { sendTeamMessage } from "../channels/whatsapp.js";
@@ -19,6 +19,7 @@ import { aiRepliesEnabled, setAiReplies, setTestNumbers, testNumbers } from "../
 import { getSetting, ORDER_STATUSES, pauseAi, resumeAi, setOrderStatus, type OrderStatus } from "../store.js";
 import * as queries from "./queries.js";
 import { findGroups, sendTest, setMutedKinds, setTelegramChat, setTelegramToken, telegramStatus } from "../telegram.js";
+import { followUpSettings, followUpStats, saveFollowUpSettings } from "../followup.js";
 import { generateReport, resolveAlert, runChecks, runReviews, saveSupervisorSettings, supervisorView } from "../supervisor.js";
 
 export const dashboardApi = express.Router();
@@ -26,7 +27,7 @@ export const dashboardApi = express.Router();
 const smallJson = express.json({ limit: "1mb" });
 const uploadJson = express.json({ limit: "12mb" });
 dashboardApi.use((req, res, next) =>
-  (req.method === "POST" && (req.path === "/catalog" || req.path === "/playground") ? uploadJson : smallJson)(req, res, next),
+  (req.method === "POST" && (req.path === "/catalog" || req.path.startsWith("/playground")) ? uploadJson : smallJson)(req, res, next),
 );
 
 // --- Login: a signed cookie that expires; changing DASHBOARD_PASSWORD logs everyone out. ---
@@ -376,6 +377,18 @@ dashboardApi.post("/supervisor/alerts/:id/resolve", (req, res) => {
   res.json({ ok: resolveAlert(Number(req.params.id)) });
 });
 
+// --- Automatic follow-up ---------------------------------------------------------------------------
+
+dashboardApi.get("/followup", (_req, res) => {
+  res.json({ settings: followUpSettings(), stats: followUpStats(7) });
+});
+
+dashboardApi.put("/followup", (req, res) => {
+  const settings = saveFollowUpSettings(req.body ?? {});
+  log("dashboard", "follow-up settings changed");
+  res.json({ settings, stats: followUpStats(7) });
+});
+
 // --- Knowledge files --------------------------------------------------------------------
 
 dashboardApi.get("/knowledge", (_req, res) => {
@@ -413,9 +426,11 @@ dashboardApi.delete("/knowledge/:name", (req, res) => {
 
 // --- Playground: try the AI with the current knowledge; nothing is sent or counted. ---
 
-dashboardApi.post("/playground", async (req, res) => {
-  const turns = Array.isArray(req.body?.messages) ? (req.body.messages as unknown[]) : [];
-  const history: ChatTurn[] = turns
+// The test chat from the dashboard: customer and business turns, with test photos only on customer turns.
+function playgroundHistory(body: unknown): ChatTurn[] {
+  const raw = (body as { messages?: unknown } | undefined)?.messages;
+  const turns = Array.isArray(raw) ? raw : [];
+  return turns
     .slice(-config.historyLimit)
     .map((t) => t as { role?: unknown; text?: unknown; image?: unknown })
     .filter((t) => (t.role === "customer" || t.role === "business") && typeof t.text === "string")
@@ -427,18 +442,42 @@ dashboardApi.post("/playground", async (req, res) => {
       }
       return turn;
     });
+}
+
+// Pretend to be a new customer, a returning one, or one with an order (for testing the opening).
+function playgroundBackground(customerType: unknown): string {
+  return (
+    {
+      new: "New customer: first time writing to us (today).",
+      returning: "Returning customer: wrote to us before (12 earlier messages, first 20 days ago).",
+      order: "Returning customer: wrote to us before (15 earlier messages, first 5 days ago).\nHas order #1 (status: confirmed, 3 days ago).",
+    }[String(customerType)] ?? "New customer: first time writing to us (today)."
+  );
+}
+
+dashboardApi.post("/playground", async (req, res) => {
+  const history = playgroundHistory(req.body);
   if (!history.length || history.at(-1)?.role !== "customer") {
     res.status(400).json({ error: "The last message must be from the customer" });
     return;
   }
   try {
-    // Pretend to be a new customer, a returning one, or one with an order (for testing the opening).
-    const background = {
-      new: "New customer: first time writing to us (today).",
-      returning: "Returning customer: wrote to us before (12 earlier messages, first 20 days ago).",
-      order: "Returning customer: wrote to us before (15 earlier messages, first 5 days ago).\nHas order #1 (status: confirmed, 3 days ago).",
-    }[String(req.body?.customerType)] ?? "New customer: first time writing to us (today).";
-    res.json(await decideReply(history, { background }));
+    res.json(await decideReply(history, { background: playgroundBackground(req.body?.customerType) }));
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// What the automatic follow-up would send if the customer went quiet now (text is missing when it would skip).
+dashboardApi.post("/playground/followup", async (req, res) => {
+  const history = playgroundHistory(req.body);
+  if (!history.length || history.at(-1)?.role !== "business") {
+    res.status(400).json({ error: "The last message must be ours" });
+    return;
+  }
+  try {
+    const silentHours = Math.max(1, Math.round(followUpSettings().afterMinutes / 60));
+    res.json(await writeFollowUp(history, { background: playgroundBackground(req.body?.customerType), silentHours }));
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
   }

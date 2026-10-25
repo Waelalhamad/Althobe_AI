@@ -202,6 +202,17 @@ export const api = {
   runSupervisor: () => post<{ reviewed: number }>("/supervisor/run"),
   supervisorReport: () => post<{ id: number }>("/supervisor/report"),
   resolveAlert: (id: number) => post(`/supervisor/alerts/${id}/resolve`),
+  followUp: () => request<FollowUpView>("/followup"),
+  saveFollowUp: (patch: Partial<FollowUpSettings>) =>
+    request<FollowUpView>("/followup", { method: "PUT", body: JSON.stringify(patch) }),
+  playgroundFollowUp: (messages: ChatTurn[], customerType: "new" | "returning" | "order" = "new") =>
+    post<{ text?: string; usage?: NonNullable<Decision["usage"]> }>("/playground/followup", { messages, customerType }),
+};
+
+export type FollowUpSettings = { enabled: boolean; afterMinutes: number };
+export type FollowUpView = {
+  settings: FollowUpSettings;
+  stats: { days: number; sent: number; replied: number; skipped: number };
 };
 
 // --- Telegram + supervisor -----------------------------------------------------------------

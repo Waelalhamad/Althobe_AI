@@ -4,7 +4,7 @@ import { CheckCircle2, CircleSlash, FlaskConical, Power } from "lucide-react";
 import { api, type Settings } from "../api";
 import { Badge, Button, Card, ErrorNote, PageHeader, Toggle } from "../components/ui";
 import { ago } from "../format";
-import { SupervisorCard, TelegramCard } from "./SettingsAlerts";
+import { FollowUpCard, SupervisorCard, TelegramCard } from "./SettingsAlerts";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -84,6 +84,7 @@ export function SettingsPage() {
       </Card>
 
       <TelegramCard />
+      <FollowUpCard />
       <SupervisorCard />
 
       <Card>

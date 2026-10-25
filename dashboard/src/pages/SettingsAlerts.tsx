@@ -1,7 +1,7 @@
 // Settings cards for the Telegram notifications and the supervisor.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Send, ShieldCheck } from "lucide-react";
+import { MessageCircleMore, Search, Send, ShieldCheck } from "lucide-react";
 import { api, type NotifyKind, type SupervisorSettings } from "../api";
 import { Badge, Button, Card, ErrorNote, Toggle } from "../components/ui";
 import { ago } from "../format";
@@ -225,6 +225,69 @@ export function SupervisorCard() {
         <span className="text-xs text-muted">الساعات بتوقيت ليبيا. نهاية الدوام 24 = نص الليل.</span>
         <ErrorNote error={save.error} />
       </div>
+    </Card>
+  );
+}
+
+export function FollowUpCard() {
+  const queryClient = useQueryClient();
+  const q = useQuery({ queryKey: ["followup"], queryFn: api.followUp });
+  const [minutes, setMinutes] = useState<number>();
+  const save = useMutation({
+    mutationFn: api.saveFollowUp,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["followup"], data);
+      setMinutes(undefined);
+    },
+  });
+  const f = q.data;
+  if (!f) return <ErrorNote error={q.error} />;
+  const { settings: s, stats } = f;
+
+  return (
+    <Card className="flex flex-col gap-4">
+      <div className="flex items-start gap-4">
+        <span className={`grid size-11 shrink-0 place-items-center rounded-xl ${s.enabled ? "bg-ok/12 text-ok" : "bg-card-2 text-muted"}`}>
+          <MessageCircleMore size={20} />
+        </span>
+        <div className="flex-1">
+          <h2 className="font-semibold">رسالة المتابعة التلقائية</h2>
+          <p className="mt-1 text-sm text-muted">
+            إذا الزبون سكت بعد رد المساعد، بيبعتلو رسالة وحدة لطيفة بس (بلا ضغط)، بوقت الدوام وجوّا الـ 24 ساعة تبع واتساب. إذا قال
+            «بفكر» أو شكر أو اشتكى أو عندو طلب، ما بيبعت شي. ما بتشتغل إلا إذا ردود المساعد شغّالة. أسلوبها بيتعدل من ملف «طريقة
+            الكلام».
+          </p>
+        </div>
+        <Toggle checked={s.enabled} onChange={(on) => save.mutate({ enabled: on })} disabled={save.isPending} />
+      </div>
+      <div className="flex flex-wrap items-center gap-3 rounded-xl bg-card-2 p-3 text-sm">
+        <span className="text-muted">بيبعتها بعد سكوت</span>
+        <input
+          type="number"
+          min={30}
+          max={1200}
+          value={minutes ?? s.afterMinutes}
+          onChange={(e) => setMinutes(Number(e.target.value))}
+          className="num w-20 rounded-lg border border-line bg-card px-2 py-1 text-center outline-none focus:border-primary"
+        />
+        <span className="text-xs text-muted">دقيقة (من 30 لـ 1200)</span>
+        <Button onClick={() => save.mutate({ afterMinutes: minutes })} disabled={minutes === undefined || save.isPending}>
+          حفظ
+        </Button>
+      </div>
+      <div className="grid grid-cols-3 gap-3 text-center">
+        {[
+          { label: "انبعتت (آخر 7 أيام)", value: stats.sent },
+          { label: "الزبون رد بعدها", value: stats.replied },
+          { label: "ما بعت (ما بتناسب)", value: stats.skipped },
+        ].map((x) => (
+          <div key={x.label} className="rounded-xl bg-card-2 p-3">
+            <div className="num text-xl font-semibold">{x.value}</div>
+            <div className="mt-1 text-xs text-muted">{x.label}</div>
+          </div>
+        ))}
+      </div>
+      <ErrorNote error={save.error} />
     </Card>
   );
 }
