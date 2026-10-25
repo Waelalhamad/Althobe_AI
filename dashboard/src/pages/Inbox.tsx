@@ -37,7 +37,10 @@ export function Inbox() {
     <div className="-m-4 flex h-[calc(100%+2rem)] sm:-m-6 sm:h-[calc(100%+3rem)] lg:-m-8 lg:h-[calc(100%+4rem)]">
       <section className={clsx("flex w-full flex-col border-e border-line md:w-96 md:shrink-0", selected && "hidden md:flex")}>
         <div className="flex flex-col gap-3 border-b border-line p-4">
-          <h1 className="text-xl font-bold">المحادثات</h1>
+          <div className="flex items-center justify-between gap-2">
+            <h1 className="text-xl font-bold">المحادثات</h1>
+            <AnswerWaiting />
+          </div>
           <label className="flex items-center gap-2 rounded-xl border border-line bg-card-2 px-3 py-2 focus-within:border-primary">
             <Search size={16} className="text-muted" />
             <input
@@ -298,5 +301,34 @@ function Bubble({ m, showHistoryDivider }: { m: Message; showHistoryDivider: boo
         </div>
       </div>
     </>
+  );
+}
+
+// Lets the AI answer every customer left without a reply (e.g. they wrote while it was off).
+function AnswerWaiting() {
+  const queryClient = useQueryClient();
+  const answer = useMutation({
+    mutationFn: api.answerWaiting,
+    onSuccess: () => setTimeout(() => queryClient.invalidateQueries({ queryKey: ["conversations"] }), 5_000),
+  });
+  const r = answer.data;
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        onClick={() => answer.mutate()}
+        disabled={answer.isPending}
+        className="rounded-lg bg-primary-soft px-3 py-1 text-xs text-primary hover:bg-primary hover:text-white disabled:opacity-50"
+        title="المساعد بيرد على الزباين اللي ما انرد عليهم (مش المحادثات اللي الفريق ماسكها)"
+      >
+        رد على المتروكة
+      </button>
+      {r && (
+        <span className="text-[11px] text-muted">
+          {r.queued ? `عم يرد على ${r.queued}` : "ما في رسائل متروكة"}
+          {r.withTeam > 0 && ` · ${r.withTeam} مع الفريق`}
+        </span>
+      )}
+      {answer.error && <span className="text-[11px] text-bad">{answer.error.message}</span>}
+    </div>
   );
 }

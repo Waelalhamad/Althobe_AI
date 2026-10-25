@@ -10,6 +10,7 @@ import {
   lastCustomerMessageId,
   lastCustomerWamid,
   customerBackground,
+  db,
   pauseAi,
   recordAiCall,
   saveHistory,
@@ -219,6 +220,35 @@ export function historyForAi(customer: string): ChatTurn[] {
     const image = imageFile ? fileAsDataUrl(imageFile) : undefined;
     return image ? { ...turn, image } : turn;
   });
+}
+
+// Customers whose last message got no answer (e.g. they wrote while the AI was off or in test mode),
+// still inside WhatsApp's 24-hour window. The AI answers them one by one, a few seconds apart.
+// Chats the team took over are left to the team and only counted.
+export function answerWaiting(): { queued: number; withTeam: number } {
+  const since = Date.now() - 23 * 60 * 60 * 1000;
+  const rows = db
+    .prepare(
+      `SELECT m.customer FROM messages m
+       JOIN (SELECT customer, MAX(id) AS id FROM messages
+             WHERE history = 0 AND text NOT LIKE '[sent a reaction%' GROUP BY customer) last ON last.id = m.id
+       WHERE m.role = 'customer' AND m.created_at > ? AND m.customer NOT LIKE 'cw:%'
+       ORDER BY m.created_at`,
+    )
+    .all(since) as { customer: string }[];
+  let queued = 0;
+  let withTeam = 0;
+  for (const { customer } of rows) {
+    if (aiBlockedReason(customer)) continue;
+    if (isAiPaused(customer)) {
+      withTeam++;
+      continue;
+    }
+    scheduleReply(`wa:${customer}`, 1000 + queued * 3000, () => respond(customer));
+    queued++;
+  }
+  if (queued) log("dashboard", `answering ${queued} waiting chat(s)`);
+  return { queued, withTeam };
 }
 
 async function respond(customer: string) {

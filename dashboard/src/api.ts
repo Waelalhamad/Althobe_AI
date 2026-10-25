@@ -167,6 +167,7 @@ export const api = {
     request<ConversationSummary[]>(`/conversations?filter=${filter}&q=${encodeURIComponent(q)}&limit=200`),
   conversation: (customer: string) => request<ConversationDetail>(`/conversations/${encodeURIComponent(customer)}`),
   pause: (customer: string, hours?: number) => post(`/conversations/${encodeURIComponent(customer)}/pause`, { hours }),
+  answerWaiting: () => post<{ queued: number; withTeam: number }>("/answer-waiting"),
   resume: (customer: string) => post(`/conversations/${encodeURIComponent(customer)}/resume`),
   send: (customer: string, text: string) => post(`/conversations/${encodeURIComponent(customer)}/send`, { text }),
   handoffs: (days: number) => request<(AiCallRow & { id: number; stillWithTeam: boolean })[]>(`/handoffs?days=${days}`),

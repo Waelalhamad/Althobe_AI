@@ -6,7 +6,7 @@ import fs from "node:fs";
 import { decideReply, writeFollowUp, type ChatTurn } from "../agent.js";
 import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } from "../catalog.js";
 import { dataPath, transcribe } from "../media.js";
-import { sendTeamMessage } from "../channels/whatsapp.js";
+import { answerWaiting, sendTeamMessage } from "../channels/whatsapp.js";
 import {
   deleteKnowledgeFile,
   listKnowledgeFiles,
@@ -166,6 +166,15 @@ dashboardApi.post("/conversations/:customer/send", async (req, res) => {
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
   }
+});
+
+// The AI answers customers left without a reply (not the chats the team is handling).
+dashboardApi.post("/answer-waiting", (_req, res) => {
+  if (!aiRepliesEnabled()) {
+    res.status(400).json({ error: "AI replies are off" });
+    return;
+  }
+  res.json(answerWaiting());
 });
 
 dashboardApi.get("/handoffs", (req, res) => {
