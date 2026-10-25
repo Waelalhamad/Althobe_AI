@@ -295,6 +295,7 @@ function Meta({ d }: { d: Decision }) {
           {d.order.notes && ` · ${d.order.notes}`}
         </span>
       )}
+      {d.action === "reply" && d.confidence !== undefined && <span className="num">ثقة {d.confidence}/100</span>}
       {d.action === "handoff" && (
         <span className="flex items-center gap-1 text-warn">
           <Hand size={12} /> تحويل للفريق: <span className="ltr">{d.reason}</span>

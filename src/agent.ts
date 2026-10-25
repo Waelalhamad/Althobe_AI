@@ -23,7 +23,7 @@ export type CollectedOrder = {
 // photos: ids of catalog photos, sent before the text (see catalog.ts).
 // order: the customer confirmed an order; it is saved and the team takes over to confirm it.
 export type AgentDecision = (
-  | { action: "reply"; text: string; photos: string[] }
+  | { action: "reply"; text: string; photos: string[]; confidence?: number }
   // silent: hand the chat to the team without a message to the customer (when the knowledge says so).
   | { action: "handoff"; reason: string; messageToCustomer: string; silent?: boolean }
   | { action: "order"; order: CollectedOrder; messageToCustomer: string }
@@ -46,7 +46,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 # Facts
 - Use ONLY the facts in the knowledge documents (prices, what's included, sizes, colors, delivery, payment). Never invent a price, discount, stock, delivery time, gift or policy, and don't add details to a fact (if payment says "cash or bank transfer", don't add "on delivery"; don't promise calls or messages the knowledge doesn't mention).
 - If you don't know something, don't guess: use handoff_to_human, and tell the customer something natural like "لحظة نتأكدلك ونرجعلك 🙏".
-- Questions about the company itself or private ones (who owns it, the manager, staff names, profits, the exact address) are not something to "check and come back" on, and not a handoff: answer kindly with what the knowledge says about the store, in a line, and bring them back to the product with a question.
+- Questions about the company itself or private ones (who owns it, the manager, staff names, profits, the exact address): never answer them and never say "لحظة نتأكدلك": hand off with silent true and an empty message, and the team answers.
 - Only talk about our store and products. If asked about anything else, answer with one friendly line that brings them back to our products (no lecture).
 
 # Which product
@@ -291,7 +291,21 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     }
 
     const decision = readDecision(message);
-    if (decision.action === "reply") return { ...decision, photos, usage };
+    if (decision.action === "reply") {
+      if (!decision.text) return { ...decision, photos, usage };
+      const { confidence, unsure } = await checkReply(history, decision.text, usage, startedAt);
+      if (confidence < MIN_CONFIDENCE) {
+        const draft = decision.text.replace(/\s+/g, " ");
+        return {
+          action: "handoff",
+          reason: `المساعد مش متأكد من الجواب (${confidence}/100)، ما بعت شي.${unsure.length ? ` مش موجود بالمعلومات: ${unsure.join("، ")}.` : ""} كان رح يقول: ${draft}`,
+          messageToCustomer: "",
+          silent: true,
+          usage,
+        };
+      }
+      return { ...decision, photos, confidence, usage };
+    }
     if (decision.action === "order") return { ...decision, usage };
     const emptyReply = decision.reason === EMPTY;
     if (!emptyReply) return { ...decision, usage }; // a real handoff wins over photos
@@ -422,6 +436,57 @@ function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | u
     return handoff(message.refusal ? `AI refused: ${message.refusal}` : EMPTY);
   }
   return { action: "reply", text, photos: [] };
+}
+
+// Before a reply goes out, a second look checks it against the knowledge: the AI rarely doubts its own draft,
+// so a separate call scores it. Below MIN_CONFIDENCE nothing is sent and the team answers.
+const MIN_CONFIDENCE = 80;
+
+const CHECK_INSTRUCTIONS = `You check a reply our sales assistant wants to send a customer on WhatsApp, before it is sent. The knowledge documents below are the only source of truth about the store and its products.
+List every claim in the reply about the product, stock or availability, sizes, fabric, care, delivery, payment, policies, discounts or the company that is NOT written in the knowledge (guessed, assumed, or added), e.g. "not 100% cotton" when the fabric is only described as autumn fabric, or "the navy is available in 58" when the knowledge doesn't confirm stock. Greetings, questions to the customer, and plain rewording of what the knowledge says are fine. Facts from the chat itself (what the customer said) are fine.
+Then give a confidence from 0 to 100 that the reply answers what the customer asked and is fully backed by the knowledge. Any listed claim, or a reply that doesn't answer the question, means below ${MIN_CONFIDENCE}.`;
+
+const CHECK_SCHEMA: OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"] = {
+  type: "json_schema",
+  json_schema: {
+    name: "reply_check",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        not_in_knowledge: { type: "array", items: { type: "string" }, description: "Claims in the reply that are not written in the knowledge, in Arabic." },
+        confidence: { type: "integer", description: "0-100." },
+      },
+      required: ["not_in_knowledge", "confidence"],
+      additionalProperties: false,
+    },
+  },
+};
+
+async function checkReply(history: ChatTurn[], text: string, usage: AiUsage, startedAt: number) {
+  const chat = history
+    .slice(-6)
+    .map((t) => `${t.role === "customer" ? "CUSTOMER" : "US"}: ${t.text}`)
+    .join("\n");
+  const completion = await client!.chat.completions.create({
+    model: config.openai.model,
+    reasoning_effort: config.openai.reasoningEffort,
+    messages: [
+      { role: "developer", content: `${CHECK_INSTRUCTIONS}\n\n# Knowledge documents\n\n${loadKnowledge()}` },
+      { role: "user", content: `The chat so far:\n${chat}\n\nThe reply to check:\n${text.replace(/^\s*\[photos\]\s*$/gim, "[product photos]")}` },
+    ],
+    response_format: CHECK_SCHEMA,
+  });
+  addUsage(usage, completion, startedAt);
+  try {
+    const parsed = JSON.parse(completion.choices[0]?.message.content ?? "") as { not_in_knowledge?: unknown; confidence?: unknown };
+    const unsure = Array.isArray(parsed.not_in_knowledge) ? parsed.not_in_knowledge.filter((c): c is string => typeof c === "string" && c.trim() !== "") : [];
+    let confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0;
+    if (unsure.length) confidence = Math.min(confidence, MIN_CONFIDENCE - 1);
+    return { confidence, unsure };
+  } catch {
+    return { confidence: 0, unsure: [] as string[] };
+  }
 }
 
 // Fallback handoff when the AI itself fails; the caller sends a default customer message.

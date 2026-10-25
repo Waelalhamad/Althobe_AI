@@ -287,7 +287,8 @@ dashboardApi.put("/settings", (req, res) => {
   }
   if (Array.isArray(body.testNumbers)) {
     // WhatsApp numbers as digits only, with country code (e.g. 218912345678).
-    const digits = (body.testNumbers as unknown[]).map((n) => String(n).replace(/\D/g, ""));
+    // "00218..." is the same number as "+218...".
+    const digits = (body.testNumbers as unknown[]).map((n) => String(n).replace(/\D/g, "").replace(/^00/, ""));
     const numbers = [...new Set(digits)].filter((n) => n.length >= 8 && n.length <= 15);
     setTestNumbers(numbers);
     log("dashboard", numbers.length ? `test mode on for ${numbers.length} number(s)` : "test mode off");

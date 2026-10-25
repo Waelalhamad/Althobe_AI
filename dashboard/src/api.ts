@@ -146,7 +146,7 @@ export type EventRow = { id: number; conversation: string; message: string; at: 
 export type ChatTurn = { role: "customer" | "business"; text: string; image?: string };
 export type Decision =
   | (
-      | { action: "reply"; text: string; photos: string[] }
+      | { action: "reply"; text: string; photos: string[]; confidence?: number }
       | { action: "handoff"; reason: string; messageToCustomer: string; silent?: boolean }
       | {
           action: "order";
