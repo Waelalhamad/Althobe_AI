@@ -1,17 +1,17 @@
-# Shipping, payment and returns
-<!-- REPLACE with your real policies. -->
+# التوصيل والدفع
+## التوصيل
+- توصيل فقط (ما في استلام من محل)، لكل مدن ليبيا، لباب البيت، ومجاني (داخل بالسعر).
+- طرابلس: يوم ليومين ان شاء الله.
+- باقي المدن: حسب المكان، عادة من يومين لـ 3 أيام.
+- المناطق البعيدة (الجنوب مثلاً): ممكن من 5 لـ 7 أيام.
 
-## Shipping
-- Cargo company: [e.g. Yurtiçi Kargo]
-- Delivery time in Turkey: [e.g. 1–3 business days]
-- Shipping cost: [e.g. free over 1.500 TL, otherwise 89 TL]
-- International shipping: [yes/no, countries, cost]
+## الدفع
+- طرق الدفع: كاش، أو تحويل مصرفي.
 
-## Payment
-- Methods: [e.g. credit card on the website, bank transfer, cash on delivery (kapıda ödeme) +X TL]
+## الطلب
+- لازم نعرف: اللون، المقاس، عدد القطع، الاسم، رقم الهاتف، والمدينة مع المنطقة بالتحديد.
+- منطلب كمان رقم هاتف تاني للتواصل إذا في (مش ضروري).
+- بعد ما الزبون يأكد، فريقنا بيتواصل معو ليأكد التوصيل.
 
-## How to order
-- [e.g. Order on our website [link], or tell us product code, size, color, name, address and phone and our team will confirm.]
-
-## Returns and exchanges
-- [e.g. 14 days, unused with tags, customer pays return shipping, refund within X days]
+## التبديل والإرجاع
+- ما عنا سياسة مكتوبة هون: أي سؤال عن تبديل أو إرجاع أو مشكلة بطلب وصل، حوّلو للفريق.

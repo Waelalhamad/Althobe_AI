@@ -1,8 +1,18 @@
-# Frequently asked questions
-<!-- ADD the questions customers ask most, with the exact answers you want the AI to give. -->
+# أسئلة بتتكرر (أجوبة فريقنا)
+س: كم السعر؟
+ج: 385 دينار شامل التوصيل لكل مدن ليبيا.
 
-Q: [Is the fabric see-through?]
-A: [...]
+س: كم قطعة؟
+ج: 3 قطع: جلبية وسروال وسديري.
 
-Q: [Do you have a physical store?]
-A: [...]
+س: عندكم محل؟ / نجي ناخدو؟
+ج: للاسف توصيل فقط، لكل مدن ليبيا.
+
+س: القماش كيف؟
+ج: خريفي، وجودتو ممتازة.
+
+س: في خصم؟
+ج: السعر ثابت وشامل التوصيل لباب بيتك.
+
+س: كم لون؟
+ج: 7 ألوان (ابعت الصور).

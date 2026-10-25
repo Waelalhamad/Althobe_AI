@@ -297,3 +297,11 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export function setOrderStatus(id: number, status: OrderStatus): boolean {
   return db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(status, Date.now(), id).changes > 0;
 }
+
+// The customer's latest WhatsApp message id (to mark it read / show "typing…").
+export function lastCustomerWamid(customer: string): string | undefined {
+  const row = db
+    .prepare("SELECT wamid FROM messages WHERE customer = ? AND role = 'customer' AND wamid IS NOT NULL ORDER BY id DESC LIMIT 1")
+    .get(customer) as { wamid: string } | undefined;
+  return row?.wamid;
+}

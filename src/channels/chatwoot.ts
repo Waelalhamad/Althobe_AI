@@ -6,6 +6,7 @@ import { log, scheduleReply } from "../scheduler.js";
 import { recordAiCall, saveOrder } from "../store.js";
 import { notifyHandoff, notifyOrder, orderNote, orderOneLine } from "../orders.js";
 import { notifyError } from "../telegram.js";
+import { splitMessages, typingPause } from "../typing.js";
 import { aiBlockedReason } from "../settings.js";
 
 // Shape of the Chatwoot Agent Bot "message_created" event (only the fields we use).
@@ -18,8 +19,8 @@ export type MessageCreatedEvent = {
   conversation?: { id: number; status: string };
 };
 
-const DEFAULT_HANDOFF_MESSAGE = "شكراً لتواصلك! واحد من فريقنا رح يرد عليك بأقرب وقت 🙏";
-const DEFAULT_ORDER_MESSAGE = "تمام، تسجّل طلبك 🙏 فريقنا بيتواصل معاك قريب لتأكيد الحجز.";
+const DEFAULT_HANDOFF_MESSAGE = "حاضر، لحظة نتأكدلك ونرجعلك 🙏";
+const DEFAULT_ORDER_MESSAGE = "تمام، تم الحجز 🙏 شويه ونتواصلو معاك لتأكيد التوصيل";
 
 const seenMessageIds = new Map<number, number>(); // message id -> time seen
 
@@ -58,7 +59,10 @@ async function respond(accountId: number, conversationId: number) {
     });
 
     if (decision.action === "reply") {
-      await sendReply(accountId, conversationId, decision.text);
+      for (const [i, part] of splitMessages(decision.text).entries()) {
+        if (i > 0) await typingPause(part);
+        await sendReply(accountId, conversationId, part);
+      }
       log(key, "replied");
     } else if (decision.action === "order") {
       const id = saveOrder({ customer: key, channel: "chatwoot", ...decision.order });

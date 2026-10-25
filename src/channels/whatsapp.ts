@@ -7,6 +7,7 @@ import {
   attachMedia,
   getHistory,
   isAiPaused,
+  lastCustomerWamid,
   pauseAi,
   recordAiCall,
   saveHistory,
@@ -18,9 +19,10 @@ import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
 import { notifyHandoff, notifyOrder, orderOneLine } from "../orders.js";
 import { notifyError } from "../telegram.js";
+import { splitMessages, typingPause } from "../typing.js";
 
-const DEFAULT_HANDOFF_MESSAGE = "شكراً لتواصلك! واحد من فريقنا رح يرد عليك بأقرب وقت 🙏";
-const DEFAULT_ORDER_MESSAGE = "تمام، تسجّل طلبك 🙏 فريقنا بيتواصل معاك قريب لتأكيد الحجز.";
+const DEFAULT_HANDOFF_MESSAGE = "حاضر، لحظة نتأكدلك ونرجعلك 🙏";
+const DEFAULT_ORDER_MESSAGE = "تمام، تم الحجز 🙏 شويه ونتواصلو معاك لتأكيد التوصيل";
 
 // --- Webhook payload (Meta Cloud API format, only the fields we use) ---
 
@@ -222,6 +224,7 @@ async function respond(customer: string) {
   const key = `wa:${customer}`;
   try {
     await waitForMedia(customer);
+    void showTyping(customer);
     const decision = await decideReply(historyForAi(customer), { customerPhone: localPhone(customer) });
     recordAiCall({
       customer,
@@ -242,12 +245,26 @@ async function respond(customer: string) {
     }
 
     if (decision.action === "reply") {
-      // Photos first, then the text under them (like "here are the colors, which one do you like?").
-      await sendPhotos(customer, decision.photos);
-      if (decision.text) {
-        const wamid = await sendText(customer, decision.text);
-        saveMessage({ customer, role: "business", source: "ai", text: decision.text, wamid });
+      // A few short messages like a person types them. Photos go just before the last one
+      // ("حياك الله😊" / price / [photos] / "أي لون عجبك؟").
+      const parts = splitMessages(decision.text);
+      const beforePhotos = decision.photos.length ? parts.slice(0, -1) : parts;
+      const afterPhotos = decision.photos.length ? parts.slice(-1) : [];
+      let sent = 0;
+      const sendPart = async (part: string) => {
+        if (sent++ > 0) {
+          await typingPause(part);
+          if (isAiPaused(customer)) return; // the team jumped in
+        }
+        const wamid = await sendText(customer, part);
+        saveMessage({ customer, role: "business", source: "ai", text: part, wamid });
+      };
+      for (const part of beforePhotos) await sendPart(part);
+      if (decision.photos.length && !isAiPaused(customer)) {
+        await sendPhotos(customer, decision.photos);
+        sent++;
       }
+      for (const part of afterPhotos) await sendPart(part);
       log(key, decision.photos.length ? `replied with ${decision.photos.length} photo(s)` : "replied");
     } else if (decision.action === "order") {
       // The customer confirmed: save the order, thank them, and let the team confirm it.
@@ -333,6 +350,27 @@ async function sendMessage(to: string, content: Record<string, unknown>): Promis
   }
   const data = (await res.json()) as { messages?: { id?: string }[] };
   return data.messages?.[0]?.id;
+}
+
+// Blue ticks and "typing…" on the customer's phone while the AI thinks, like a person who opened the chat.
+// Optional: if the provider doesn't support it, the reply still goes out.
+let typingUnsupported = false;
+
+async function showTyping(customer: string) {
+  const messageId = lastCustomerWamid(customer);
+  if (!messageId || typingUnsupported) return;
+  const { url, headers } = sendEndpoint();
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: messageId, typing_indicator: { type: "text" } }),
+    });
+    if (res.status === 400 || res.status === 404) {
+      typingUnsupported = true;
+      log("wa", `typing indicator not supported by ${config.whatsapp.provider}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
+    }
+  } catch {}
 }
 
 // --- Helpers --------------------------------------------------------------
