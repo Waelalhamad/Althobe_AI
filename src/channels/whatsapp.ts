@@ -1,4 +1,6 @@
 // WhatsApp Cloud API through Dualhook or 360dialog. Webhooks use Meta's Cloud API format.
+import crypto from "node:crypto";
+import path from "node:path";
 import { config } from "../config.js";
 import { decideReply, type ChatTurn } from "../agent.js";
 import { listCatalog, publicPhotoUrl } from "../catalog.js";
@@ -373,9 +375,28 @@ export async function sendFollowUp(customer: string, text: string, afterId: numb
 }
 
 // A team member replied from the dashboard: send it and keep the AI out of this chat.
-export async function sendTeamMessage(customer: string, text: string) {
-  const wamid = await sendText(customer, text);
-  saveMessage({ customer, role: "business", source: "staff", text, wamid });
+// A photo from the dashboard is saved under media/team-<random>, which /sent/ serves publicly so WhatsApp can fetch it;
+// the text goes with it as the caption.
+export async function sendTeamMessage(customer: string, text: string, image?: { data: Buffer; mime: string }) {
+  if (image) {
+    if (!config.publicUrl) throw new Error("PUBLIC_URL is not set, so WhatsApp can't fetch the photo");
+    const file = saveFile("media", `team-${crypto.randomBytes(16).toString("hex")}`, image.data, image.mime);
+    const caption = text.length <= 1024 ? text : "";
+    const link = `${config.publicUrl}/sent/${path.basename(file)}`;
+    const wamid = await sendMessage(customer, { type: "image", image: caption ? { link, caption } : { link } });
+    saveMessage({
+      customer,
+      role: "business",
+      source: "staff",
+      text: caption ? `[sent a photo] ${caption}` : "[sent a photo]",
+      wamid,
+      media: { type: "image", file, mime: image.mime },
+    });
+    if (text && !caption) saveMessage({ customer, role: "business", source: "staff", text, wamid: await sendText(customer, text) });
+  } else {
+    const wamid = await sendText(customer, text);
+    saveMessage({ customer, role: "business", source: "staff", text, wamid });
+  }
   pauseAi(customer, "team replied from the dashboard", teamPauseMinutes() / 60);
   log(`wa:${customer}`, `team replied from the dashboard; AI paused for ${teamPauseMinutes()} min`);
 }

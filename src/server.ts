@@ -81,6 +81,17 @@ app.get("/catalog/:file", (req, res) => {
   res.sendFile(full, { maxAge: "7d" });
 });
 
+// Photos the team sent from the dashboard, public so WhatsApp can download them. Names are 128-bit random.
+app.get("/sent/:file", (req, res) => {
+  const file = req.params.file;
+  const full = /^team-[0-9a-f]{32}\.(jpg|png)$/.test(file) ? dataPath(`media/${file}`) : undefined;
+  if (!full || !fs.existsSync(full)) {
+    res.status(404).end();
+    return;
+  }
+  res.sendFile(full, { maxAge: "7d" });
+});
+
 // Checks the secret token in the URL and parses the raw body. Sends the error response itself.
 function readJson(req: express.Request, res: express.Response) {
   if (!safeEqual(String(req.params.token), config.webhookToken)) {

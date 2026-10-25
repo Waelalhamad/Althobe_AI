@@ -37,7 +37,7 @@ export const dashboardApi = express.Router();
 const smallJson = express.json({ limit: "1mb" });
 const uploadJson = express.json({ limit: "12mb" });
 dashboardApi.use((req, res, next) =>
-  (req.method === "POST" && (req.path === "/catalog" || req.path.startsWith("/playground")) ? uploadJson : smallJson)(req, res, next),
+  (req.method === "POST" && (req.path === "/catalog" || req.path.startsWith("/playground") || req.path.endsWith("/send")) ? uploadJson : smallJson)(req, res, next),
 );
 
 // --- Login: a signed cookie that expires; changing DASHBOARD_PASSWORD logs everyone out. ---
@@ -162,7 +162,18 @@ dashboardApi.post("/conversations/:customer/resume", (req, res) => {
 
 dashboardApi.post("/conversations/:customer/send", async (req, res) => {
   const text = String(req.body?.text ?? "").trim();
-  if (!text || text.length > 4096) {
+  // Optional photo: "data:image/jpeg;base64,..." (the dashboard shrinks it first).
+  const photo = req.body?.image ? /^data:(image\/(?:jpeg|png));base64,(.+)$/.exec(String(req.body.image)) : undefined;
+  if (req.body?.image && !photo) {
+    res.status(400).json({ error: "The photo must be a JPEG or PNG" });
+    return;
+  }
+  const image = photo ? { mime: photo[1]!, data: Buffer.from(photo[2]!, "base64") } : undefined;
+  if (image && image.data.length > 5 * 1024 * 1024) {
+    res.status(400).json({ error: "WhatsApp accepts photos up to 5 MB" });
+    return;
+  }
+  if ((!text && !image) || text.length > 4096) {
     res.status(400).json({ error: "Message must be 1 to 4096 characters" });
     return;
   }
@@ -171,7 +182,7 @@ dashboardApi.post("/conversations/:customer/send", async (req, res) => {
     return;
   }
   try {
-    await sendTeamMessage(req.params.customer, text);
+    await sendTeamMessage(req.params.customer, text, image);
     res.json({ ok: true });
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });

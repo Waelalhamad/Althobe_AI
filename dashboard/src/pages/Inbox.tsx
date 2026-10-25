@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowRight, Bot, History, Inbox as InboxIcon, Pause, Play, Search, Send, User, UserRound } from "lucide-react";
+import { ArrowRight, Bot, History, ImagePlus, Inbox as InboxIcon, Pause, Play, Search, Send, User, UserRound, X } from "lucide-react";
 import { api, mediaUrl, type ConversationFilter, type ConversationSummary, type Message } from "../api";
 import { Badge, Button, Empty, ErrorNote } from "../components/ui";
 import { ago, country, pauseLabel, phone, time, until } from "../format";
+import { prepareImage } from "../image";
 
 const FILTERS: { id: ConversationFilter; label: string }[] = [
   { id: "all", label: "الكل" },
@@ -123,6 +124,10 @@ function Thread({ customer }: { customer: string }) {
   const queryClient = useQueryClient();
   const detail = useQuery({ queryKey: ["conversation", customer], queryFn: () => api.conversation(customer), refetchInterval: 5_000 });
   const [text, setText] = useState("");
+  // A photo to send with the reply (shrunk to JPEG in the browser); the text becomes its caption.
+  const [photo, setPhoto] = useState<string>();
+  const [photoError, setPhotoError] = useState<string>();
+  const fileInput = useRef<HTMLInputElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const d = detail.data;
   const count = d?.messages.length ?? 0;
@@ -138,14 +143,26 @@ function Thread({ customer }: { customer: string }) {
   const pause = useMutation({ mutationFn: () => api.pause(customer), onSuccess: refresh });
   const resume = useMutation({ mutationFn: () => api.resume(customer), onSuccess: refresh });
   const send = useMutation({
-    mutationFn: () => api.send(customer, text.trim()),
+    mutationFn: () => api.send(customer, text.trim(), photo),
     onSuccess: () => {
       setText("");
+      setPhoto(undefined);
       refresh();
     },
   });
 
   const windowOpen = d?.windowOpenUntil ? d.windowOpenUntil > Date.now() : false;
+  const canSend = Boolean(text.trim() || photo) && !send.isPending && windowOpen;
+
+  async function pickPhoto(file?: File | null) {
+    if (!file || !file.type.startsWith("image/")) return;
+    setPhotoError(undefined);
+    try {
+      setPhoto((await prepareImage(file)).dataUrl);
+    } catch {
+      setPhotoError("ما قدرت افتح هالصورة، جرّب صورة JPG أو PNG.");
+    }
+  }
   const handoffs = d?.aiCalls.filter((c) => c.action !== "reply") ?? [];
 
   return (
@@ -197,31 +214,65 @@ function Thread({ customer }: { customer: string }) {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (text.trim()) send.mutate();
+          if (canSend) send.mutate();
         }}
         className="flex flex-col gap-2 border-t border-line p-3"
       >
         <ErrorNote error={send.error} />
+        {photoError && <p className="text-xs text-bad">{photoError}</p>}
+        {photo && (
+          <div className="relative w-fit">
+            <img src={photo} alt="" className="max-h-32 rounded-xl border border-line object-contain" />
+            <button
+              type="button"
+              onClick={() => setPhoto(undefined)}
+              aria-label="شيل الصورة"
+              className="absolute -top-2 -start-2 grid size-6 place-items-center rounded-full bg-bad text-white"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
         {!windowOpen && d && (
           <p className="text-xs text-warn">
             مرّ أكتر من 24 ساعة على آخر رسالة من الزبون، فواتساب ما بيسمح برسالة عادية. الرد لازم يكون من التطبيق بقالب.
           </p>
         )}
         <div className="flex items-end gap-2">
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              void pickPhoto(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          <Button type="button" variant="ghost" onClick={() => fileInput.current?.click()} disabled={!windowOpen} aria-label="إضافة صورة" title="إضافة صورة">
+            <ImagePlus size={16} />
+          </Button>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (text.trim()) send.mutate();
+                if (canSend) send.mutate();
+              }
+            }}
+            onPaste={(e) => {
+              const file = [...e.clipboardData.files].find((f) => f.type.startsWith("image/"));
+              if (file) {
+                e.preventDefault();
+                void pickPhoto(file);
               }
             }}
             rows={1}
-            placeholder="اكتب رد كفريق… (المساعد بيوقف على هالمحادثة)"
+            placeholder={photo ? "اكتب تعليق على الصورة (اختياري)…" : "اكتب رد كفريق… (المساعد بيوقف على هالمحادثة)"}
             className="max-h-40 min-h-11 flex-1 resize-y rounded-xl border border-line bg-card-2 px-3 py-2.5 text-sm outline-none focus:border-primary"
           />
-          <Button disabled={!text.trim() || send.isPending || !windowOpen} aria-label="إرسال">
+          <Button disabled={!canSend} aria-label="إرسال">
             <Send size={16} />
           </Button>
         </div>

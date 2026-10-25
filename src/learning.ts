@@ -171,7 +171,10 @@ export async function runLearning(): Promise<void> {
       const team = db
         .prepare("SELECT id, source, text, created_at FROM messages WHERE customer = ? AND id > ? AND source = 'staff' ORDER BY id")
         .all(row.customer, row.after_id) as Msg[];
-      const written = team.filter((m) => !/^\[(sent|voice note)/.test(m.text));
+      // Text the team wrote (a photo's caption counts; a photo or voice note alone doesn't).
+      const written = team
+        .map((m) => ({ ...m, text: m.text.replace(/^\[sent a photo\]\s*/, "") }))
+        .filter((m) => m.text && !/^\[(sent|voice note)/.test(m.text));
       if (!written.length) {
         if (Date.now() - row.created_at > GIVE_UP_AFTER) {
           setRow(row.id, { status: "unanswered" });
