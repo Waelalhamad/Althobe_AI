@@ -20,7 +20,7 @@ export const config = {
     model: optional("OPENAI_MODEL", "gpt-5-mini"),
     // How much the model "thinks" before answering. Thinking tokens are billed,
     // and shop questions need little of it. Values: minimal | low | medium | high
-    reasoningEffort: optional("OPENAI_REASONING_EFFORT", "low") as "minimal" | "low" | "medium" | "high",
+    reasoningEffort: optional("OPENAI_REASONING_EFFORT", "low") as "none" | "minimal" | "low" | "medium" | "high",
   },
 
   // WhatsApp Cloud API with Coexistence (number stays in the WhatsApp Business app).

@@ -6,6 +6,7 @@ import { MessageCircle, Pencil, Phone, Plus, ShoppingBag } from "lucide-react";
 import { api, type Order, type OrderStatus } from "../api";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { emptyOrder, OrderForm } from "../components/OrderForm";
+import { OrdersExport } from "../components/OrdersExport";
 import { ago, time } from "../format";
 
 const STATUSES: { id: OrderStatus; label: string; tone: "warn" | "info" | "ok" | "muted" }[] = [
@@ -30,6 +31,7 @@ export function Orders() {
             <Button onClick={() => setAdding(true)}>
               <Plus size={16} /> طلب جديد
             </Button>
+            <OrdersExport status={status} statusLabel={STATUSES.find((s) => s.id === status)?.label} />
             {STATUSES.map((s) => (
               <button
                 key={s.id}

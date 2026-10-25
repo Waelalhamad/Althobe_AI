@@ -285,6 +285,7 @@ async function respond(customer: string) {
   const key = `wa:${customer}`;
   try {
     await waitForMedia(customer);
+    const lastSeen = lastCustomerMessageId(customer);
     void showTyping(customer);
     const decision = await decideReply(historyForAi(customer), {
       customerPhone: localPhone(customer),
@@ -307,6 +308,12 @@ async function respond(customer: string) {
       log(key, "team replied while the AI was thinking; AI reply dropped");
       return;
     }
+    // The customer wrote again while the AI was thinking: this reply is already out of date (it would ask
+    // for what they just gave). The new message scheduled another reply, which reads everything.
+    if (lastCustomerMessageId(customer) !== lastSeen) {
+      log(key, "customer wrote again while the AI was thinking; reply superseded");
+      return;
+    }
 
     if (decision.action === "reply") {
       // A few short messages like a person types them, with the photos where the AI put them.
@@ -316,6 +323,7 @@ async function respond(customer: string) {
         if (sent++ > 0) {
           await typingPause(part);
           if (isAiPaused(customer)) return; // the team jumped in
+          if (lastCustomerMessageId(customer) !== lastSeen) return; // they wrote again: the next reply takes over
         }
         const wamid = await sendText(customer, part);
         saveMessage({ customer, role: "business", source: "ai", text: part, wamid });

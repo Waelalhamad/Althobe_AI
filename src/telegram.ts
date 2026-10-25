@@ -3,7 +3,7 @@
 import { config } from "./config.js";
 import { getSetting, setSetting } from "./store.js";
 
-export const NOTIFY_KINDS = ["order", "handoff", "lesson", "error", "supervisor", "report"] as const;
+export const NOTIFY_KINDS = ["order", "handoff", "lesson", "error", "supervisor", "report", "sheet"] as const;
 export type NotifyKind = (typeof NOTIFY_KINDS)[number];
 
 export function telegramToken(): string | undefined {
@@ -118,6 +118,32 @@ export function notify(kind: NotifyKind, html: string, buttons?: TeamButton[][])
     });
   queue = job.then(() => new Promise((resolve) => setTimeout(resolve, 1100)));
   return job.then(() => sent);
+}
+
+// Sends a file (e.g. the daily orders sheet) to the team group with an HTML caption. Never throws.
+export function notifyDocument(kind: NotifyKind, file: Buffer, filename: string, caption: string): Promise<void> {
+  const chatId = telegramChatId();
+  const token = telegramToken();
+  if (!token || !chatId || mutedKinds().includes(kind)) return Promise.resolve();
+  const job = queue
+    .then(async () => {
+      const form = new FormData();
+      form.append("chat_id", chatId);
+      form.append("caption", caption.slice(0, 1000));
+      form.append("parse_mode", "HTML");
+      form.append("document", new Blob([new Uint8Array(file)]), filename);
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: "POST", body: form, signal: AbortSignal.timeout(60_000) });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; description?: string };
+      if (!data.ok) throw new TelegramError(data.description ?? `HTTP ${res.status}`);
+      setSetting("telegram_last", JSON.stringify({ ok: true, at: Date.now() }));
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Telegram file failed: ${message}`);
+      setSetting("telegram_last", JSON.stringify({ ok: false, error: message, at: Date.now() }));
+    });
+  queue = job.then(() => new Promise((resolve) => setTimeout(resolve, 1100)));
+  return job;
 }
 
 // Rewrites a message the bot sent to the group (e.g. a lesson card once it was approved); drops its buttons.

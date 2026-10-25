@@ -13,6 +13,7 @@ const NOTIFY_LABELS: Record<NotifyKind, string> = {
   error: "أخطاء ومشاكل بالنظام",
   supervisor: "تنبيهات المشرف (زبون ناطر، طلب ما تأكد، ملاحظات مهمة)",
   report: "التقرير اليومي",
+  sheet: "شيت الطلبات اليومي (ملف Excel)",
 };
 
 export function TelegramCard() {

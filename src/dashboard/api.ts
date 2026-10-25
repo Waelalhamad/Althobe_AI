@@ -8,6 +8,7 @@ import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } fro
 import { dataPath, transcribe } from "../media.js";
 import { answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
 import { notifyOrder } from "../orders.js";
+import { ordersWorkbook, sendDailySheet, sheetName, type SheetRange } from "../ordersSheet.js";
 import { approveLesson, ignoreLesson, lessonsView } from "../learning.js";
 import {
   deleteKnowledgeFile,
@@ -34,7 +35,7 @@ import {
   type OrderStatus,
 } from "../store.js";
 import * as queries from "./queries.js";
-import { findGroups, sendTest, setMutedKinds, setTelegramChat, setTelegramToken, telegramStatus } from "../telegram.js";
+import { findGroups, sendTest, telegramChatId, setMutedKinds, setTelegramChat, setTelegramToken, telegramStatus } from "../telegram.js";
 import { followUpSettings, followUpStats, saveFollowUpSettings } from "../followup.js";
 import { generateReport, resolveAlert, runChecks, runReviews, saveSupervisorSettings, supervisorView } from "../supervisor.js";
 
@@ -230,6 +231,31 @@ dashboardApi.get("/handoffs", (req, res) => {
 dashboardApi.get("/orders", (req, res) => {
   const status = ORDER_STATUSES.find((s) => s === req.query.status);
   res.json(queries.orders({ status, limit: intParam(req.query.limit, 200, 1000) }));
+});
+
+// The orders as an Excel file. from / to: local days (YYYY-MM-DD, both included); status: one status or all.
+function sheetRange(query: Record<string, unknown>): SheetRange {
+  const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? Date.parse(`${v}T00:00:00Z`) - config.dashboard.timezoneOffsetHours * 3_600_000 : undefined);
+  const from = day(query.from) ?? 0;
+  const to = (day(query.to) ?? queries.localDayStart(0)) + 86_400_000;
+  return { from, to: Math.max(from + 1, to), status: ORDER_STATUSES.find((s) => s === query.status) };
+}
+
+dashboardApi.get("/orders/export", async (req, res) => {
+  const range = sheetRange(req.query);
+  const { file } = await ordersWorkbook(range);
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${sheetName(range)}"`);
+  res.send(file);
+});
+
+// Sends the last 24 hours' sheet to the Telegram group now (the same file as the daily one).
+dashboardApi.post("/orders/export/telegram", async (_req, res) => {
+  if (!telegramChatId()) {
+    res.status(400).json({ error: "التلغرام مش مربوط (الإعدادات ← التنبيهات)" });
+    return;
+  }
+  res.json({ orders: await sendDailySheet() });
 });
 
 // An order from the dashboard form (the team closed the sale, or corrects an order). Returns an error message if invalid.

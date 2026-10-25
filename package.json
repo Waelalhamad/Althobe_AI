@@ -17,6 +17,7 @@
     "set-webhook": "tsx --env-file=.env scripts/set-webhook.ts"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "express": "^5.3.0",
     "openai": "^7.39.0",
     "tsx": "^4.23.15"

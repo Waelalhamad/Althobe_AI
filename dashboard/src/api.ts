@@ -211,6 +211,9 @@ export const api = {
     request<{ counts: Partial<Record<OrderStatus, number>>; orders: Order[] }>(`/orders${status ? `?status=${status}` : ""}`),
   createOrder: (order: OrderInput & { customer?: string; status: OrderStatus }) => post<{ id: number }>("/orders", order),
   updateOrder: (id: number, order: OrderInput) => request(`/orders/${id}`, { method: "PUT", body: JSON.stringify(order) }),
+  ordersExportUrl: (q: { from?: string; to?: string; status?: OrderStatus }) =>
+    `${BASE}/orders/export?${new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => Boolean(e[1])))}`,
+  sendOrdersSheet: () => post<{ orders: number }>("/orders/export/telegram"),
   orderDraft: (customer: string) => post<OrderInput>(`/conversations/${encodeURIComponent(customer)}/order-draft`),
   setOrderStatus: (id: number, status: OrderStatus) =>
     request(`/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
@@ -247,7 +250,7 @@ export type FollowUpView = {
 
 // --- Telegram + supervisor -----------------------------------------------------------------
 
-export type NotifyKind = "order" | "handoff" | "lesson" | "error" | "supervisor" | "report";
+export type NotifyKind = "order" | "handoff" | "lesson" | "error" | "supervisor" | "report" | "sheet";
 export type TelegramChat = { id: number; title?: string; type: string; username?: string };
 export type TelegramStatus = {
   tokenSet: boolean;
