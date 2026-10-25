@@ -156,7 +156,7 @@ function Meta({ d }: { d: Decision }) {
       {d.action === "order" && (
         <span className="flex flex-wrap items-center gap-1 text-ok">
           طلب (ما بينحفظ بالتجربة): {d.order.name} · <span className="ltr">{d.order.phone}</span> · {d.order.city} {d.order.address} ·{" "}
-          {d.order.items.map((i) => `${i.quantity}× ${i.color} ${i.size}`).join("، ")} · {d.order.total}
+          {d.order.items.map((i) => [`${i.quantity}×`, i.product, i.color, i.size].filter(Boolean).join(" ")).join("، ")} · {d.order.total}
           {d.order.notes && ` · ${d.order.notes}`}
         </span>
       )}

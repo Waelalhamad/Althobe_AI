@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { FilePlus, FileText, Save, Trash2 } from "lucide-react";
+import { FilePlus, FileText, PackagePlus, Save, Trash2 } from "lucide-react";
 import { api } from "../api";
 import { Button, Card, ErrorNote, PageHeader } from "../components/ui";
 import { ago, num } from "../format";
@@ -25,13 +25,16 @@ export function Knowledge() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["knowledge"] }),
   });
   const create = useMutation({
-    mutationFn: (name: string) => api.saveKnowledge(name, `# ${name.replace(/\.(md|txt)$/, "")}\n\n`),
-    onSuccess: (_d, name) => {
+    mutationFn: ({ name, body }: { name: string; body?: string }) =>
+      api.saveKnowledge(name, body ?? `# ${name.replace(/\.(md|txt)$/, "")}\n\n`),
+    onSuccess: (_d, { name }) => {
       setNewName("");
+      setNewProduct("");
       setSelected(name);
       void queryClient.invalidateQueries({ queryKey: ["knowledge"] });
     },
   });
+  const [newProduct, setNewProduct] = useState("");
   const remove = useMutation({
     mutationFn: () => api.deleteKnowledge(current!),
     onSuccess: () => {
@@ -73,7 +76,7 @@ export function Knowledge() {
             onSubmit={(e) => {
               e.preventDefault();
               const name = newName.trim().replace(/\s+/g, "-");
-              if (name) create.mutate(/\.(md|txt)$/.test(name) ? name : `${name}.md`);
+              if (name) create.mutate({ name: /\.(md|txt)$/.test(name) ? name : `${name}.md` });
             }}
             className="flex gap-2 border-t border-line pt-3"
           >
@@ -86,6 +89,27 @@ export function Knowledge() {
             <Button variant="ghost" disabled={!newName.trim() || create.isPending} aria-label="ملف جديد">
               <FilePlus size={16} />
             </Button>
+          </form>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const product = newProduct.trim();
+              if (product) create.mutate({ name: `product-${product.replace(/[^\p{L}\p{N}_-]+/gu, "-")}.md`, body: productTemplate(product) });
+            }}
+            className="flex flex-col gap-2 rounded-xl bg-card-2 p-3"
+          >
+            <span className="text-xs text-muted">منتج جديد (لإعلان جديد): اكتب اسمو، وبيطلعلك ملف جاهز تعبّيه. وارفع صورو بصفحة «صور المنتجات» بنفس الاسم.</span>
+            <div className="flex gap-2">
+              <input
+                value={newProduct}
+                onChange={(e) => setNewProduct(e.target.value)}
+                placeholder="اسم المنتج"
+                className="min-w-0 flex-1 rounded-xl border border-line bg-card px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+              <Button disabled={!newProduct.trim() || create.isPending}>
+                <PackagePlus size={16} /> منتج جديد
+              </Button>
+            </div>
           </form>
           <ErrorNote error={create.error} />
           <p className="px-1 text-xs text-muted">
@@ -122,7 +146,7 @@ export function Knowledge() {
                 className="min-h-[60vh] w-full resize-y rounded-xl border border-line bg-card-2 p-4 font-mono text-sm leading-7 outline-none focus:border-primary"
               />
               <p className="text-xs text-muted">
-                نصيحة: اكتب كل منتج بسطر واحد مع السعر والمقاسات والألوان. شيل الأقواس [ ] من الأمثلة، والمساعد ما بيخترع شي مو مكتوب هون.
+                نصيحة: كل منتج بملف لحالو (زر «منتج جديد»). «00-how-we-talk» فيه طريقة كلام الفريق، والتوصيل والدفع العام بملف 04. المساعد ما بيخترع شي مو مكتوب هون.
               </p>
             </>
           ) : (
@@ -132,6 +156,25 @@ export function Knowledge() {
       </div>
     </div>
   );
+}
+
+// A new product's file: the AI sells it from what is written here (and its photos in the catalog).
+function productTemplate(product: string) {
+  return `# المنتج: ${product}
+- شو هو: (شو المنتج، شو فيه، كم قطعة)
+- السعر: (مثلاً 250 دينار، شامل التوصيل أو لا)
+- السعر ثابت؟ في عروض؟ (مثلاً: قطعتين بـ 450)
+- الألوان / الموديلات: (أو "كلها بالصور")
+- المقاسات: (والجدول إذا في: الوزن والطول لكل مقاس)
+- القماش / الجودة:
+- التوصيل والدفع: (إذا غير عن باقي المنتجات، وإلا بيمشي ملف التوصيل العام)
+
+## كيف نبيعو
+- أول رسالة: (شو منكتب للزبون الجاي من الإعلان، مثلاً: حياك الله😊 سعر ${product} ...)
+- شو منسأل أول: (مثلاً اللون، بعدين المقاس)
+
+<!-- شيل كل شي بين قوسين وحط المعلومة الصح. المساعد ما بيخترع شي مو مكتوب هون. -->
+`;
 }
 
 function confirmDiscard() {

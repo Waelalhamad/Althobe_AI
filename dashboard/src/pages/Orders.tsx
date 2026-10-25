@@ -98,7 +98,13 @@ function OrderCard({ o }: { o: Order }) {
             <ul>
               {o.items.map((i, n) => (
                 <li key={n}>
-                  {i.quantity} × {i.color} · مقاس <span className="num">{i.size}</span>
+                  {i.quantity} × {[i.product, i.color].filter(Boolean).join(" · ")}
+                  {i.size && (
+                    <>
+                      {" "}
+                      · مقاس <span className="num">{i.size}</span>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>

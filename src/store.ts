@@ -264,7 +264,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS orders_created ON orders (created_at);
 `);
 
-export type OrderItem = { color: string; size: string; quantity: number };
+// product: which product (empty on orders saved before there could be several).
+export type OrderItem = { product?: string; color: string; size: string; quantity: number };
 
 export type NewOrder = {
   customer: string;

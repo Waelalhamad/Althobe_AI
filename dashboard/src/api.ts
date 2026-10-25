@@ -88,7 +88,8 @@ export type Message = {
 };
 
 export type OrderStatus = "new" | "confirmed" | "delivered" | "cancelled";
-export type OrderItem = { color: string; size: string; quantity: number };
+// product: which product (empty on orders saved before there could be several).
+export type OrderItem = { product?: string; color: string; size: string; quantity: number };
 export type Order = {
   id: number;
   customer: string;
@@ -105,7 +106,15 @@ export type Order = {
   updatedAt: number;
 };
 
-export type CatalogItem = { id: string; name: string; description: string; file: string; mime: string; createdAt: number };
+export type CatalogItem = {
+  id: string;
+  product?: string;
+  name: string;
+  description: string;
+  file: string;
+  mime: string;
+  createdAt: number;
+};
 
 // URL of a stored photo/voice note (needs the login cookie).
 export const mediaUrl = (file: string) => `${BASE}/media/${file}`;
@@ -176,8 +185,9 @@ export const api = {
   setOrderStatus: (id: number, status: OrderStatus) =>
     request(`/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   catalog: () => request<CatalogItem[]>("/catalog"),
-  addPhoto: (photo: { name: string; description: string; mime: string; data: string }) => post<CatalogItem>("/catalog", photo),
-  updatePhoto: (id: string, patch: { name?: string; description?: string }) =>
+  addPhoto: (photo: { product: string; name: string; description: string; mime: string; data: string }) =>
+    post<CatalogItem>("/catalog", photo),
+  updatePhoto: (id: string, patch: { product?: string; name?: string; description?: string }) =>
     request<CatalogItem>(`/catalog/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deletePhoto: (id: string) => request(`/catalog/${id}`, { method: "DELETE" }),
   telegram: () => request<TelegramStatus>("/telegram"),

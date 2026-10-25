@@ -40,6 +40,8 @@ type WaMessage = {
   document?: WaMedia & { filename?: string };
   audio?: WaMedia & { voice?: boolean };
   sticker?: WaMedia;
+  // Set when the customer tapped a click-to-WhatsApp ad: tells us which product they saw.
+  referral?: { headline?: string; body?: string; source_url?: string; source_type?: string };
 };
 
 type WaMedia = { id?: string; mime_type?: string; caption?: string };
@@ -183,13 +185,13 @@ function trackMedia(customer: string, message: WaMessage) {
   const type = MEDIA_TYPES.find((t) => t === message.type);
   const media = type && message[type];
   if (!type || !media?.id || !config.whatsapp.enabled) return;
-  const job = processMedia(customer, message.id, type, media).finally(() => pending.delete(job));
+  const job = processMedia(customer, message.id, type, media, adNote(message)).finally(() => pending.delete(job));
   const pending = pendingMedia.get(customer) ?? new Set();
   pending.add(job);
   pendingMedia.set(customer, pending);
 }
 
-async function processMedia(customer: string, wamid: string, type: (typeof MEDIA_TYPES)[number], media: WaMedia) {
+async function processMedia(customer: string, wamid: string, type: (typeof MEDIA_TYPES)[number], media: WaMedia, prefix: string) {
   try {
     const { data, mime } = await downloadWhatsAppMedia(media.id!);
     const file = saveFile("media", wamid, data, media.mime_type ?? mime);
@@ -198,7 +200,7 @@ async function processMedia(customer: string, wamid: string, type: (typeof MEDIA
       const heard = await transcribe(data, media.mime_type ?? mime);
       text = heard ? `[voice note] ${heard}` : "[voice note, could not understand it]";
     }
-    attachMedia(wamid, text, { type, file, mime: media.mime_type ?? mime });
+    attachMedia(wamid, prefix + text, { type, file, mime: media.mime_type ?? mime });
   } catch (error) {
     log(`wa:${customer}`, `could not process the ${type}: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -376,6 +378,18 @@ async function showTyping(customer: string) {
 // --- Helpers --------------------------------------------------------------
 
 function describe(m: WaMessage): string {
+  return adNote(m) + describeContent(m);
+}
+
+// "[from the ad: «headline» body] " so the AI (and the team) know which product the customer saw.
+function adNote(m: WaMessage): string {
+  const ad = m.referral;
+  if (!ad) return "";
+  const text = [ad.headline && `«${ad.headline.trim()}»`, ad.body?.trim().slice(0, 300)].filter(Boolean).join(" ");
+  return `[from the ad${text ? `: ${text}` : ""}${ad.source_url ? ` ${ad.source_url}` : ""}] `;
+}
+
+function describeContent(m: WaMessage): string {
   switch (m.type) {
     case "text":
       return m.text?.body?.trim() || "[empty message]";

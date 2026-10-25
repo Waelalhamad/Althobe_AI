@@ -210,7 +210,7 @@ dashboardApi.get("/catalog", (_req, res) => {
 });
 
 dashboardApi.post("/catalog", (req, res) => {
-  const { name, description, mime, data } = req.body ?? {};
+  const { product, name, description, mime, data } = req.body ?? {};
   const bytes = typeof data === "string" ? Buffer.from(data, "base64") : undefined;
   if (typeof name !== "string" || !name.trim() || !PHOTO_TYPES.includes(mime) || !bytes?.length) {
     res.status(400).json({ error: "Name and a JPG/PNG/WebP photo are required" });
@@ -221,13 +221,14 @@ dashboardApi.post("/catalog", (req, res) => {
     res.status(400).json({ error: "Photo must be under 5 MB" });
     return;
   }
-  const item = addCatalogItem({ name: name.trim(), description: String(description ?? "").trim(), data: bytes, mime });
+  const item = addCatalogItem({ product: String(product ?? "").trim(), name: name.trim(), description: String(description ?? "").trim(), data: bytes, mime });
   log("dashboard", `product photo added: ${item.id} ${item.name}`);
   res.json(item);
 });
 
 dashboardApi.patch("/catalog/:id", (req, res) => {
   const item = updateCatalogItem(req.params.id, {
+    product: typeof req.body?.product === "string" ? req.body.product.trim() : undefined,
     name: typeof req.body?.name === "string" ? req.body.name.trim() : undefined,
     description: typeof req.body?.description === "string" ? req.body.description.trim() : undefined,
   });

@@ -3,7 +3,9 @@ import type { CollectedOrder } from "./agent.js";
 import { customerLabel, dashboardLink, esc, notify } from "./telegram.js";
 
 export function orderItemsText(order: CollectedOrder): string {
-  return order.items.map((i) => `${i.quantity} × ${i.color} مقاس ${i.size}`).join("، ");
+  return order.items
+    .map((i) => [`${i.quantity} ×`, i.product, i.color, i.size && `مقاس ${i.size}`].filter(Boolean).join(" "))
+    .join("، ");
 }
 
 // One line, e.g. for the activity log and handoff reasons.
