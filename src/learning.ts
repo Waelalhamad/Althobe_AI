@@ -8,7 +8,7 @@ import { config } from "./config.js";
 import { readKnowledgeFile, writeKnowledgeFile } from "./knowledge.js";
 import { log } from "./scheduler.js";
 import { customerBackground, db, recordAiCall } from "./store.js";
-import { customerLabel, dashboardLink, esc, notify, notifyError } from "./telegram.js";
+import { customerLabel, dashboardLink, editTeamMessage, esc, notify, notifyError, startTelegramUpdates, type TeamActions } from "./telegram.js";
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -40,6 +40,10 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS lessons_status ON lessons (status, updated_at);
 `);
+// The lesson's card in the Telegram group, so a button press or a reply there finds the lesson.
+if (!(db.prepare("PRAGMA table_info(lessons)").all() as { name: string }[]).some((c) => c.name === "tg_message")) {
+  db.exec("ALTER TABLE lessons ADD COLUMN tg_message INTEGER");
+}
 
 export type LessonStatus = "waiting" | "pending" | "approved" | "ignored" | "skipped" | "unanswered" | "merged";
 
@@ -71,6 +75,7 @@ type Row = {
   note: string;
   seen: number;
   retest: string;
+  tg_message: number | null;
   created_at: number;
   updated_at: number;
 };
@@ -168,7 +173,10 @@ export async function runLearning(): Promise<void> {
         .all(row.customer, row.after_id) as Msg[];
       const written = team.filter((m) => !/^\[(sent|voice note)/.test(m.text));
       if (!written.length) {
-        if (Date.now() - row.created_at > GIVE_UP_AFTER) setRow(row.id, { status: "unanswered" });
+        if (Date.now() - row.created_at > GIVE_UP_AFTER) {
+          setRow(row.id, { status: "unanswered" });
+          sendCard({ ...row, status: "unanswered" });
+        }
         continue;
       }
       if (Date.now() - team[team.length - 1]!.created_at < TEAM_DONE_AFTER) continue; // still talking
@@ -208,11 +216,76 @@ async function learnFrom(row: Row, teamReply: string) {
   }
   setRow(row.id, { status: "pending", team_reply: teamReply, question: draft.question, answer: draft.answer, note: draft.note });
   log("learning", `new lesson #${row.id} waiting for approval: ${draft.question}`);
-  notify(
-    "lesson",
-    `📚 <b>درس جديد للمساعد</b> (بانتظار موافقتك)\nالسؤال: ${esc(draft.question)}\nالجواب: ${esc(draft.answer)}\n${esc(draft.note)}\n${esc(customerLabel(row.customer))} · ${dashboardLink("/learning", "وافق أو عدّل")}`,
-  );
+  sendCard({ ...row, status: "pending", question: draft.question, answer: draft.answer, note: draft.note });
 }
+
+// --- Telegram cards: approve with a button, or reply with the right answer ----------------------------
+
+function card(row: Row): string {
+  const chat = `${esc(customerLabel(row.customer))} · ${dashboardLink("/learning", "صفحة التعلّم")}`;
+  if (row.status === "unanswered" || (!row.question && !row.answer)) {
+    const asked = toLesson(row).asked;
+    return `❓ <b>سؤال ما حدا جاوب عليه</b>\nالزبون كتب: ${esc(asked)}\n\n✍️ ردّ على هالرسالة بالجواب الصح، والمساعد بيتعلّمو.\n${chat}`;
+  }
+  return `📚 <b>درس جديد للمساعد</b>\nلما الزبون يسأل: ${esc(row.question)}\nالجواب: ${esc(row.answer)}\n${esc(row.note)}\n\n✍️ إذا الجواب مش مزبوط، ردّ على هالرسالة بالجواب الصح.\n${chat}`;
+}
+
+function sendCard(row: Row) {
+  const buttons =
+    row.status === "unanswered"
+      ? [[{ text: "❌ تجاهل", data: `lesson:no:${row.id}` }]]
+      : [[{ text: "✅ وافق", data: `lesson:ok:${row.id}` }, { text: "❌ تجاهل", data: `lesson:no:${row.id}` }]];
+  void notify("lesson", card(row), buttons).then((messageId) => messageId && setRow(row.id, { tg_message: messageId }));
+}
+
+// After approving or ignoring (anywhere), the card says who did it and loses its buttons.
+function closeCard(id: number, line: string) {
+  const row = db.prepare("SELECT * FROM lessons WHERE id = ?").get(id) as Row | undefined;
+  if (row?.tg_message) void editTeamMessage(row.tg_message, `${card(row)}\n\n${esc(line)}`);
+}
+
+const OPEN: LessonStatus[] = ["pending", "unanswered"];
+
+export const teamActions: TeamActions = {
+  async onButton(data, _messageId, who) {
+    const [, action, id] = data.match(/^lesson:(ok|no):(\d+)$/) ?? [];
+    const row = id ? (db.prepare("SELECT * FROM lessons WHERE id = ?").get(Number(id)) as Row | undefined) : undefined;
+    if (!row) return "ما لقيت هالدرس";
+    if (!OPEN.includes(row.status)) return "انعمل قبل";
+    if (action === "no") {
+      ignoreLesson(row.id, who);
+      return "تجاهلناه";
+    }
+    if (!row.question || !row.answer) return "ردّ على الرسالة بالجواب";
+    approveLesson(row.id, row.question, row.answer, who);
+    return "✅ تعلّمو المساعد";
+  },
+
+  async onReply(replyTo, text, who) {
+    const row = db.prepare("SELECT * FROM lessons WHERE tg_message = ?").get(replyTo) as Row | undefined;
+    if (!row) return undefined; // a reply to some other message of the bot
+    if (!OPEN.includes(row.status)) return "هالدرس انعمل قبل، إذا بدك تغيّرو عدّل ملف الدروس من صفحة معلومات المساعد.";
+    let question = row.question;
+    let answer = text.trim();
+    if (!question) {
+      // A gap nobody answered: the AI words the question (and cleans the answer) from the chat and this reply.
+      const { draft, usage } = await writeLesson(
+        `${transcript(row.customer, row.after_id)}\nTEAM (the owner, later): ${answer}`,
+        row.reason,
+        [],
+      );
+      recordAiCall({ customer: row.customer, channel: "whatsapp", action: "lesson", reason: draft?.note, usage });
+      if (!draft?.learnable || !draft.question) return "ما قدرت اطلّع منها جواب عام لكل الزباين. اكتبها من صفحة التعلّم بالداشبورد.";
+      question = draft.question;
+      answer = draft.answer || answer;
+    }
+    setRow(row.id, { team_reply: row.team_reply || text });
+    const lesson = approveLesson(row.id, question, answer, who, (retested) =>
+      notify("lesson", `🔁 هلق لما حدا يسأل «${esc(question)}» المساعد بيرد:\n${esc(retested)}`),
+    );
+    return lesson ? `✅ تعلّمو المساعد:\nلما الزبون يسأل: ${esc(question)}\nالجواب: ${esc(answer)}` : undefined;
+  },
+};
 
 // --- Owner actions (dashboard) ----------------------------------------------------------------
 
@@ -231,7 +304,13 @@ export function lessonsView() {
 
 // Adds the lesson to the lessons knowledge file (the AI uses it from the next message), then asks the AI the
 // original question again so the owner sees the new answer.
-export function approveLesson(id: number, question: string, answer: string): Lesson | undefined {
+export function approveLesson(
+  id: number,
+  question: string,
+  answer: string,
+  who = "من اللوحة",
+  onRetest?: (text: string) => void,
+): Lesson | undefined {
   const row = db.prepare("SELECT * FROM lessons WHERE id = ?").get(id) as Row | undefined;
   if (!row || !question.trim() || !answer.trim()) return undefined;
   const q = question.trim().replace(/\s+/g, " ");
@@ -239,27 +318,33 @@ export function approveLesson(id: number, question: string, answer: string): Les
   const file = readKnowledgeFile(LESSONS_FILE) ?? LESSONS_HEADER;
   writeKnowledgeFile(LESSONS_FILE, `${file.trimEnd()}\n\n- لما الزبون يسأل: ${q}\n  الجواب: ${a}\n`);
   setRow(id, { status: "approved", question: q, answer: a, retest: "" });
-  log("learning", `lesson #${id} approved: ${q}`);
-  void retest(id);
+  log("learning", `lesson #${id} approved (${who}): ${q}`);
+  closeCard(id, `✅ وافق عليه ${who}`);
+  void retest(id).then((text) => text && onRetest?.(text));
   return toLesson(db.prepare("SELECT * FROM lessons WHERE id = ?").get(id) as Row);
 }
 
-export function ignoreLesson(id: number) {
+export function ignoreLesson(id: number, who = "من اللوحة") {
   setRow(id, { status: "ignored" });
-  log("learning", `lesson #${id} ignored`);
+  log("learning", `lesson #${id} ignored (${who})`);
+  closeCard(id, `❌ تجاهلو ${who}`);
 }
 
-async function retest(id: number) {
+// Returns what the AI answers now.
+async function retest(id: number): Promise<string | undefined> {
   const row = db.prepare("SELECT * FROM lessons WHERE id = ?").get(id) as Row | undefined;
-  if (!row) return;
+  if (!row) return undefined;
   const history = historyAt(row.customer, row.after_id);
-  if (!history.length) return;
+  if (!history.length) return undefined;
   try {
     const decision = await decideReply(history, { background: customerBackground(row.customer) });
     const text = decision.action === "reply" ? decision.text : decision.action === "order" ? decision.messageToCustomer : `(لسا بيحوّل للفريق: ${decision.reason})`;
-    setRow(id, { retest: text.replace(/^\s*\[photos\]\s*$/gim, "[صور]").trim() });
+    const clean = text.replace(/^\s*\[photos\]\s*$/gim, "[صور]").trim();
+    setRow(id, { retest: clean });
+    return clean;
   } catch (error) {
     setRow(id, { retest: `(ما قدر يجرّب: ${error instanceof Error ? error.message : String(error)})` });
+    return undefined;
   }
 }
 
@@ -276,4 +361,5 @@ export function learningStats(since: number) {
 export function startLearning() {
   if (!config.whatsapp.enabled) return;
   setInterval(() => void runLearning(), 5 * MINUTE).unref();
+  startTelegramUpdates(teamActions);
 }
