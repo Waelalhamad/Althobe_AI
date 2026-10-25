@@ -9,6 +9,7 @@ import {
   isAiPaused,
   lastCustomerMessageId,
   lastCustomerWamid,
+  reactedMessage,
   customerBackground,
   db,
   pauseAi,
@@ -17,11 +18,13 @@ import {
   saveMessage,
   saveOrder,
   setSetting,
+  teamPauseMinutes,
 } from "../store.js";
 import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
 import { notifyHandoff, notifyOrder, orderOneLine } from "../orders.js";
 import { notifyError } from "../telegram.js";
+import { noteHandoff } from "../learning.js";
 import { splitAroundPhotos, splitMessages, typingPause } from "../typing.js";
 
 const DEFAULT_HANDOFF_MESSAGE = "حاضر، لحظة نتأكدلك ونرجعلك 🙏";
@@ -43,6 +46,10 @@ type WaMessage = {
   document?: WaMedia & { filename?: string };
   audio?: WaMedia & { voice?: boolean };
   sticker?: WaMedia;
+  // The customer edited an earlier message (Coexistence only): the new content is in edit.message.
+  edit?: { original_message_id?: string; message?: Omit<WaMessage, "id"> };
+  // An emoji on one of the messages in the chat (empty emoji = reaction removed).
+  reaction?: { message_id?: string; emoji?: string };
   // Set when the customer tapped a click-to-WhatsApp ad: tells us which product they saw.
   referral?: { headline?: string; body?: string; source_url?: string; source_type?: string };
 };
@@ -100,13 +107,26 @@ export function handleWhatsAppWebhook(payload: WebhookPayload) {
 function onCustomerMessage(message: WaMessage) {
   const customer = message.from;
   if (!customer) return;
-  if (message.type === "reaction" || message.type === "unsupported") return;
+  if (message.type === "unsupported") return;
+
+  // A reaction is saved with the message it was on. Only a reaction to our latest message, when that message
+  // asked something (e.g. 👍 on "نأكدلك الحجز؟"), is an answer that needs a reply.
+  let text = describe(message);
+  let needsReply = true;
+  if (message.type === "reaction") {
+    const emoji = message.reaction?.emoji?.trim();
+    if (!emoji) return;
+    const target = message.reaction?.message_id ? reactedMessage(customer, message.reaction.message_id) : undefined;
+    const quoted = target ? ` to: «${target.text.replace(/\s+/g, " ").slice(0, 200)}»` : "";
+    text = `[sent a reaction ${emoji}${quoted}]`;
+    needsReply = Boolean(target?.isOurLast && /[؟?]/.test(target.text));
+  }
 
   const isNew = saveMessage({
     customer,
     role: "customer",
     source: "customer",
-    text: describe(message),
+    text,
     wamid: message.id,
     createdAt: toMs(message.timestamp),
   });
@@ -120,6 +140,11 @@ function onCustomerMessage(message: WaMessage) {
   }
   if (isAiPaused(customer)) {
     log(`wa:${customer}`, "customer wrote; AI paused (team is handling this chat)");
+    return;
+  }
+
+  if (!needsReply) {
+    log(`wa:${customer}`, "customer reacted; no reply needed");
     return;
   }
 
@@ -139,8 +164,8 @@ function onStaffMessage(echo: WaMessage) {
     createdAt: toMs(echo.timestamp),
   });
   if (isNew) trackMedia(customer, echo); // so the dashboard shows the photos the team sent
-  pauseAi(customer, "team replied from the WhatsApp Business app");
-  log(`wa:${customer}`, `team replied from the app; AI paused for ${config.whatsapp.humanPauseHours}h`);
+  pauseAi(customer, "team replied from the WhatsApp Business app", teamPauseMinutes() / 60);
+  log(`wa:${customer}`, `team replied from the app; AI paused for ${teamPauseMinutes()} min`);
 }
 
 // Stores past chats so the AI knows what was already said. Never replies or pauses the AI.
@@ -319,7 +344,9 @@ async function respond(customer: string) {
       }
       pauseAi(customer, `AI handoff: ${decision.reason}`);
       log(key, `handed off to team: ${decision.reason}`);
-      notifyHandoff(customer, decision.reason);
+      // What the team answers to a question the AI didn't know becomes a lesson to approve (learning.ts).
+      if (decision.kind === "dont_know") noteHandoff(customer, decision.reason);
+      notifyHandoff(customer, decision.reason, decision.kind === "dont_know");
     }
   } catch (error) {
     // Never leave the customer stuck with the bot: stop the AI so the team answers in the app.
@@ -349,8 +376,8 @@ export async function sendFollowUp(customer: string, text: string, afterId: numb
 export async function sendTeamMessage(customer: string, text: string) {
   const wamid = await sendText(customer, text);
   saveMessage({ customer, role: "business", source: "staff", text, wamid });
-  pauseAi(customer, "team replied from the dashboard");
-  log(`wa:${customer}`, `team replied from the dashboard; AI paused for ${config.whatsapp.humanPauseHours}h`);
+  pauseAi(customer, "team replied from the dashboard", teamPauseMinutes() / 60);
+  log(`wa:${customer}`, `team replied from the dashboard; AI paused for ${teamPauseMinutes()} min`);
 }
 
 // --- Sending (Dualhook or 360dialog; both take Meta's Cloud API message body) ---
@@ -452,6 +479,8 @@ function describeContent(m: WaMessage): string {
     case "audio":
     case "sticker":
       return describeMedia(m.type, m[m.type] ?? {});
+    case "edit":
+      return m.edit?.message ? `[edited] ${describeContent({ ...m.edit.message, id: m.id })}` : "[edited a message]";
     case "media_placeholder": // history sync leaves out media contents
       return "[sent a media file]";
     default:

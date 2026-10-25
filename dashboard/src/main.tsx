@@ -8,6 +8,7 @@ import { Login } from "./pages/Login";
 import { Overview } from "./pages/Overview";
 import { Inbox } from "./pages/Inbox";
 import { Handoffs } from "./pages/Handoffs";
+import { Learning } from "./pages/Learning";
 import { Knowledge } from "./pages/Knowledge";
 import { Catalog } from "./pages/Catalog";
 import { Orders } from "./pages/Orders";
@@ -45,6 +46,7 @@ function App() {
           <Route path="/orders" component={Orders} />
           <Route path="/supervisor" component={Supervisor} />
           <Route path="/handoffs" component={Handoffs} />
+          <Route path="/learning" component={Learning} />
           <Route path="/knowledge" component={Knowledge} />
           <Route path="/catalog" component={Catalog} />
           <Route path="/playground" component={Playground} />

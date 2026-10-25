@@ -134,6 +134,7 @@ export type Settings = {
   model: string;
   reasoningEffort: string;
   humanPauseHours: number;
+  teamPauseMinutes: number;
   debounceMs: number;
   historyLimit: number;
   timezoneOffsetHours: number;
@@ -141,6 +142,22 @@ export type Settings = {
   historySync: { phase?: number; chunk?: number; progress?: number; error?: string; at: number } | null;
 };
 
+export type Lesson = {
+  id: number;
+  customer: string;
+  status: "waiting" | "pending" | "approved" | "ignored" | "skipped" | "unanswered" | "merged";
+  reason: string;
+  question: string;
+  answer: string;
+  teamReply: string;
+  note: string;
+  seen: number;
+  retest: string;
+  asked: string;
+  createdAt: number;
+  updatedAt: number;
+};
+export type LessonsView = { pending: Lesson[]; unanswered: Lesson[]; waiting: number; approved: Lesson[]; done: Lesson[] };
 export type KnowledgeFile = { name: string; size: number; updatedAt: number };
 export type EventRow = { id: number; conversation: string; message: string; at: number };
 export type ChatTurn = { role: "customer" | "business"; text: string; image?: string };
@@ -170,10 +187,13 @@ export const api = {
   answerWaiting: () => post<{ queued: number; withTeam: number }>("/answer-waiting"),
   resume: (customer: string) => post(`/conversations/${encodeURIComponent(customer)}/resume`),
   send: (customer: string, text: string) => post(`/conversations/${encodeURIComponent(customer)}/send`, { text }),
+  learning: () => request<LessonsView>("/learning"),
+  approveLesson: (id: number, question: string, answer: string) => post<Lesson>(`/learning/${id}/approve`, { question, answer }),
+  ignoreLesson: (id: number) => post(`/learning/${id}/ignore`),
   handoffs: (days: number) => request<(AiCallRow & { id: number; stillWithTeam: boolean })[]>(`/handoffs?days=${days}`),
   events: (q: string) => request<EventRow[]>(`/events?q=${encodeURIComponent(q)}&limit=300`),
   settings: () => request<Settings>("/settings"),
-  saveSettings: (patch: Partial<Pick<Settings, "aiReplies" | "testNumbers">>) =>
+  saveSettings: (patch: Partial<Pick<Settings, "aiReplies" | "testNumbers" | "teamPauseMinutes">>) =>
     request<Settings>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
   knowledge: () => request<KnowledgeFile[]>("/knowledge"),
   knowledgeFile: (name: string) => request<{ name: string; body: string }>(`/knowledge/${encodeURIComponent(name)}`),
@@ -219,7 +239,7 @@ export type FollowUpView = {
 
 // --- Telegram + supervisor -----------------------------------------------------------------
 
-export type NotifyKind = "order" | "handoff" | "error" | "supervisor" | "report";
+export type NotifyKind = "order" | "handoff" | "lesson" | "error" | "supervisor" | "report";
 export type TelegramChat = { id: number; title?: string; type: string; username?: string };
 export type TelegramStatus = {
   tokenSet: boolean;

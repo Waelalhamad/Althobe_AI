@@ -9,6 +9,7 @@ import { ago } from "../format";
 const NOTIFY_LABELS: Record<NotifyKind, string> = {
   order: "طلب جديد جمعه المساعد",
   handoff: "المساعد حوّل زبون للفريق (ما عرف يجاوب)",
+  lesson: "درس جديد للمساعد بانتظار موافقتك",
   error: "أخطاء ومشاكل بالنظام",
   supervisor: "تنبيهات المشرف (زبون ناطر، طلب ما تأكد، ملاحظات مهمة)",
   report: "التقرير اليومي",

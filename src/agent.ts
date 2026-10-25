@@ -22,10 +22,14 @@ export type CollectedOrder = {
 
 // photos: ids of catalog photos, sent before the text (see catalog.ts).
 // order: the customer confirmed an order; it is saved and the team takes over to confirm it.
+export const HANDOFF_KINDS = ["dont_know", "order_problem", "complaint", "policy", "wants_person", "media", "other"] as const;
+export type HandoffKind = (typeof HANDOFF_KINDS)[number];
+
 export type AgentDecision = (
   | { action: "reply"; text: string; photos: string[]; confidence?: number }
   // silent: hand the chat to the team without a message to the customer (when the knowledge says so).
-  | { action: "handoff"; reason: string; messageToCustomer: string; silent?: boolean }
+  // kind: why it went to the team; "dont_know" ones are what the team can teach (see learning.ts).
+  | { action: "handoff"; reason: string; messageToCustomer: string; silent?: boolean; kind?: HandoffKind }
   | { action: "order"; order: CollectedOrder; messageToCustomer: string }
 ) & { usage?: AiUsage };
 
@@ -97,6 +101,7 @@ The message to the customer must sound like the same person continuing the chat,
 
 # Photos and voice notes
 - You can see photos the customer sends. Often it's a screenshot of one of our product photos or ads, to show what they want: say which product and color it is (compare with the product photo list below) and continue.
+- A line like "[sent a reaction 👍 to: «...»]" is the customer reacting to that message of ours. 👍 ❤️ ✅ 👌 🙏 on a question means yes (on "نأكدلك الحجز؟" it confirms the order, so submit it); 👎 or 😡 means no or unhappy. Answer it like the words it stands for.
 - Voice notes reach you as text, like "[voice note] ...". Answer them like normal messages. If the text is unclear, ask them to write it.
 
 # Product photos you can send
@@ -182,12 +187,18 @@ const HANDOFF_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
           type: "string",
           description: "Short natural message to the customer in their language, like the same person continuing the chat (e.g. \"حاضر استاذ، لحظة نتأكدلك ونرجعلك 🙏\"). Never mention a team or a transfer. Empty when silent.",
         },
+        kind: {
+          type: "string",
+          enum: [...HANDOFF_KINDS],
+          description:
+            "dont_know: the knowledge doesn't answer it or you're not sure; order_problem: an existing order (change, cancel, where is it, late, wrong item); complaint: unhappy or angry; policy: the knowledge says this case goes to the team (e.g. bulk discount, questions about the company); wants_person: they asked for a human; media: a video, file or photo you can't read; other.",
+        },
         silent: {
           type: "boolean",
           description: "true only when the knowledge says to hand this case to the team without replying: then nothing is sent and the team answers. Otherwise false.",
         },
       },
-      required: ["reason", "message_to_customer", "silent"],
+      required: ["reason", "kind", "message_to_customer", "silent"],
       additionalProperties: false,
     },
   },
@@ -257,15 +268,18 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
   const knownPhotos = new Set(listCatalog().map((p) => p.id));
   const photos: string[] = [];
 
+  // A reply the check rejects gets one rewrite with the reviewer's notes; a second miss goes to the team.
+  let rejected: ReplyCheck | undefined;
+
   // The model may first ask to send photos and then write its text, so allow a few rounds.
-  for (let round = 0; round < 3; round++) {
+  for (let round = 0; round < 4; round++) {
     const completion = await client.chat.completions.create({
       model: config.openai.model,
       reasoning_effort: config.openai.reasoningEffort,
       messages,
       tools: knownPhotos.size ? [HANDOFF_TOOL, ORDER_TOOL, PHOTOS_TOOL] : [HANDOFF_TOOL, ORDER_TOOL],
       // Once photos are queued, the next step is the text that goes with them.
-      tool_choice: photos.length ? "none" : "auto",
+      tool_choice: photos.length && !rejected ? "none" : "auto",
     });
     addUsage(usage, completion, startedAt);
 
@@ -294,18 +308,25 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     const decision = readDecision(message);
     if (decision.action === "reply") {
       if (!decision.text) return { ...decision, photos, usage };
-      const { confidence, unsure } = await checkReply(history, decision.text, usage, startedAt);
-      if (confidence < MIN_CONFIDENCE) {
-        const draft = decision.text.replace(/\s+/g, " ");
-        return {
-          action: "handoff",
-          reason: `المساعد مش متأكد من الجواب (${confidence}/100)، ما بعت شي.${unsure.length ? ` مش موجود بالمعلومات: ${unsure.join("، ")}.` : ""} كان رح يقول: ${draft}`,
-          messageToCustomer: "",
-          silent: true,
-          usage,
-        };
+      const check = await checkReply(history, context, decision.text, usage, startedAt);
+      if (check.confidence >= MIN_CONFIDENCE) return { ...decision, photos, confidence: check.confidence, usage };
+      if (!rejected && message) {
+        rejected = check;
+        messages.push(message, { role: "developer", content: checkFeedback(check) });
+        continue;
       }
-      return { ...decision, photos, confidence, usage };
+      const notes = [
+        check.missed.length && `ما جاوب على: ${check.missed.join("، ")}.`,
+        check.unsure.length && `مش موجود بالمعلومات: ${check.unsure.join("، ")}.`,
+      ].filter(Boolean);
+      return {
+        action: "handoff",
+        kind: "dont_know",
+        reason: `المساعد مش متأكد من الجواب (${check.confidence}/100)، ما بعت شي. ${notes.join(" ")} كان رح يقول: ${decision.text.replace(/\s+/g, " ")}`,
+        messageToCustomer: "",
+        silent: true,
+        usage,
+      };
     }
     if (decision.action === "order") return { ...decision, usage };
     const emptyReply = decision.reason === EMPTY;
@@ -355,6 +376,71 @@ Then "message": only for "choosing" (otherwise empty). Follow the "follow-up" pa
     const answer = JSON.parse(completion.choices[0]?.message?.content ?? "{}") as { stage?: string; message?: string };
     const text = answer.message?.trim();
     return answer.stage === "choosing" && text ? { text, stage: answer.stage, usage } : { stage: answer.stage, usage };
+  } catch {
+    return { usage };
+  }
+}
+
+// After the AI handed a chat to the team because it didn't know, and the team answered: is there a general
+// fact in the team's answer that would let the AI answer any customer next time? (see learning.ts)
+export type LessonDraft = { learnable: boolean; known: boolean; question: string; answer: string; note: string; sameAs: number };
+
+const LESSON_INSTRUCTIONS = `Our WhatsApp sales assistant handed a chat to our team because it couldn't answer. You read the chat (CUSTOMER, BOT = the assistant, TEAM = a person from our team) and the knowledge documents the assistant uses, and decide whether the team's answer teaches something the assistant should know for every customer.
+- learnable: true only for a general fact or rule about our products, prices, delivery, payment or how we sell, that the TEAM stated in writing and that would answer the same question from any customer. false for: anything about this customer's own order, delivery status or a problem with it; a deal, discount, gift or promise made for this one customer; the team only greeting, asking questions or sending photos/voice notes ([sent a photo], [voice note] without text); facts that change day by day (what's in stock right now); anything private (names, addresses, the owner or staff).
+- known: true if the knowledge documents already answer it (the assistant should have known); then learnable is false.
+- question: the customer question, said generally, in Arabic (e.g. "القماش بيكرمش؟").
+- answer: the fact to add to the knowledge, short and clear, in Arabic, the way a teammate would note it (e.g. "القماش ما بيكرمش، وما بيحتاج كوي كتير"). Only what the team said, nothing added.
+- note: one line in Arabic for the owner: why it is or isn't a lesson, and if it changes or contradicts something in the knowledge, say what.
+- same_as: the id of a lesson in the waiting list below that asks the same thing, or 0.
+Leave question and answer empty when learnable is false.`;
+
+const LESSON_SCHEMA = {
+  type: "object",
+  properties: {
+    learnable: { type: "boolean" },
+    known: { type: "boolean" },
+    question: { type: "string" },
+    answer: { type: "string" },
+    note: { type: "string" },
+    same_as: { type: "integer" },
+  },
+  required: ["learnable", "known", "question", "answer", "note", "same_as"],
+  additionalProperties: false,
+};
+
+export async function writeLesson(
+  transcript: string,
+  handoffReason: string,
+  waiting: { id: number; question: string }[],
+): Promise<{ draft?: LessonDraft; usage: AiUsage }> {
+  client ??= new OpenAI();
+  const startedAt = Date.now();
+  const usage = emptyUsage();
+  const list = waiting.map((w) => `#${w.id}: ${w.question}`).join("\n") || "(none)";
+  const completion = await client.chat.completions.create({
+    model: config.openai.model,
+    reasoning_effort: config.openai.reasoningEffort,
+    messages: [
+      { role: "developer", content: `${LESSON_INSTRUCTIONS}\n\n# Knowledge documents\n\n${loadKnowledge()}` },
+      { role: "user", content: `Why the assistant handed off: ${handoffReason}\n\nThe chat:\n${transcript}\n\nLessons waiting for approval:\n${list}` },
+    ],
+    response_format: { type: "json_schema", json_schema: { name: "lesson", strict: true, schema: LESSON_SCHEMA } },
+  });
+  addUsage(usage, completion, startedAt);
+  try {
+    const a = JSON.parse(completion.choices[0]?.message?.content ?? "{}") as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    return {
+      draft: {
+        learnable: a.learnable === true && a.known !== true && str(a.answer) !== "",
+        known: a.known === true,
+        question: str(a.question),
+        answer: str(a.answer),
+        note: str(a.note),
+        sameAs: typeof a.same_as === "number" ? a.same_as : 0,
+      },
+      usage,
+    };
   } catch {
     return { usage };
   }
@@ -419,6 +505,7 @@ function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | u
         reason?: unknown;
         message_to_customer?: unknown;
         silent?: unknown;
+        kind?: unknown;
       };
       return {
         action: "handoff",
@@ -426,6 +513,7 @@ function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | u
         messageToCustomer:
           typeof args.message_to_customer === "string" ? args.message_to_customer : "",
         silent: args.silent === true,
+        kind: HANDOFF_KINDS.find((k) => k === args.kind) ?? "other",
       };
     } catch {
       return handoff("AI handoff arguments were not valid JSON");
@@ -444,8 +532,11 @@ function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | u
 const MIN_CONFIDENCE = 80;
 
 const CHECK_INSTRUCTIONS = `You check a reply our sales assistant wants to send a customer on WhatsApp, before it is sent. The knowledge documents below are the only source of truth about the store and its products.
-List every claim in the reply about the product, stock or availability, sizes, fabric, care, delivery, payment, policies, discounts or the company that is NOT written in the knowledge (guessed, assumed, or added), e.g. "not 100% cotton" when the fabric is only described as autumn fabric, or "the navy is available in 58" when the knowledge doesn't confirm stock. Greetings, questions to the customer, and plain rewording of what the knowledge says are fine. Facts from the chat itself (what the customer said) are fine. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, asking for missing details, and questions about color, size, country or address.
-Then give a confidence from 0 to 100 that the reply answers what the customer asked and is fully backed by the knowledge. Any listed claim, or a reply that doesn't answer the question, means below ${MIN_CONFIDENCE}.`;
+1. not_in_knowledge: every claim in the reply about the product, stock or availability, sizes, fabric, care, delivery, payment, policies, discounts or the company that the knowledge does not back (guessed, assumed, or added), e.g. "not 100% cotton" when the fabric is only described as autumn fabric, or "the navy is available in 58" when the knowledge doesn't confirm stock.
+   These are backed, don't list them: a specific case of a general rule in the knowledge (free delivery to all Libyan cities → free delivery to Tripoli); plain rewording of the knowledge; anything said earlier in the chat by us or the customer (their name, color, size, city, what we sent); [sent product photo: ...] / [product photos] lines, which are our catalog photos; greetings and questions to the customer. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, asking for missing details, asking which color, size, country or address.
+2. missed_questions: questions or requests in the customer's latest messages (after our last message) that the reply ignores or doesn't answer, e.g. they asked the price and the reply only asks about the color. Empty if everything was answered, or if the customer asked nothing. Only what the customer asked: a question our rules say we should ask them (country, size, color) is not a missed question.
+3. confidence 0-100 that the reply is right to send as it is. Anything in either list means below ${MIN_CONFIDENCE}.
+Judge only the facts and the customer's questions, not our sales steps: a reply that doesn't ask the country, size or color yet, or style and wording, is not a problem for you.`;
 
 const CHECK_SCHEMA: OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"] = {
   type: "json_schema",
@@ -455,39 +546,55 @@ const CHECK_SCHEMA: OpenAI.Chat.Completions.ChatCompletionCreateParams["response
     schema: {
       type: "object",
       properties: {
-        not_in_knowledge: { type: "array", items: { type: "string" }, description: "Claims in the reply that are not written in the knowledge, in Arabic." },
+        not_in_knowledge: { type: "array", items: { type: "string" }, description: "Claims in the reply that the knowledge doesn't back, in Arabic." },
+        missed_questions: { type: "array", items: { type: "string" }, description: "What the customer asked that the reply doesn't answer, in Arabic." },
         confidence: { type: "integer", description: "0-100." },
       },
-      required: ["not_in_knowledge", "confidence"],
+      required: ["not_in_knowledge", "missed_questions", "confidence"],
       additionalProperties: false,
     },
   },
 };
 
-async function checkReply(history: ChatTurn[], text: string, usage: AiUsage, startedAt: number) {
-  const chat = history
-    .slice(-6)
-    .map((t) => `${t.role === "customer" ? "CUSTOMER" : "US"}: ${t.text}`)
-    .join("\n");
+export type ReplyCheck = { confidence: number; unsure: string[]; missed: string[] };
+
+// The same chat and customer facts the assistant saw, so earlier messages count as known.
+async function checkReply(history: ChatTurn[], context: CustomerContext, text: string, usage: AiUsage, startedAt: number): Promise<ReplyCheck> {
+  const chat = history.map((t) => `${t.role === "customer" ? "CUSTOMER" : "US"}: ${t.text}`).join("\n");
+  const about = [context.customerPhone && `WhatsApp number: ${context.customerPhone}`, context.background].filter(Boolean).join("\n");
   const completion = await client!.chat.completions.create({
     model: config.openai.model,
     reasoning_effort: config.openai.reasoningEffort,
     messages: [
       { role: "developer", content: `${CHECK_INSTRUCTIONS}\n\n# Knowledge documents\n\n${loadKnowledge()}` },
-      { role: "user", content: `The chat so far:\n${chat}\n\nThe reply to check:\n${text.replace(/^\s*\[photos\]\s*$/gim, "[product photos]")}` },
+      {
+        role: "user",
+        content: `${about ? `This customer:\n${about}\n\n` : ""}The chat so far:\n${chat}\n\nThe reply to check:\n${text.replace(/^\s*\[photos\]\s*$/gim, "[product photos]")}`,
+      },
     ],
     response_format: CHECK_SCHEMA,
   });
   addUsage(usage, completion, startedAt);
   try {
-    const parsed = JSON.parse(completion.choices[0]?.message.content ?? "") as { not_in_knowledge?: unknown; confidence?: unknown };
-    const unsure = Array.isArray(parsed.not_in_knowledge) ? parsed.not_in_knowledge.filter((c): c is string => typeof c === "string" && c.trim() !== "") : [];
+    const parsed = JSON.parse(completion.choices[0]?.message.content ?? "") as Record<string, unknown>;
+    const list = (v: unknown) => (Array.isArray(v) ? v.filter((c): c is string => typeof c === "string" && c.trim() !== "") : []);
+    const unsure = list(parsed.not_in_knowledge);
+    const missed = list(parsed.missed_questions);
     let confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0;
-    if (unsure.length) confidence = Math.min(confidence, MIN_CONFIDENCE - 1);
-    return { confidence, unsure };
+    if (unsure.length || missed.length) confidence = Math.min(confidence, MIN_CONFIDENCE - 1);
+    return { confidence, unsure, missed };
   } catch {
-    return { confidence: 0, unsure: [] as string[] };
+    return { confidence: 0, unsure: [], missed: [] };
   }
+}
+
+// What the reviewer found, for the one rewrite the assistant gets.
+function checkFeedback(check: ReplyCheck): string {
+  const lines = [
+    ...check.missed.map((q) => `- The customer asked this and your reply doesn't answer it: ${q}`),
+    ...check.unsure.map((c) => `- Not backed by the knowledge, remove or fix it: ${c}`),
+  ];
+  return `A reviewer checked your reply before it was sent and it was NOT sent:\n${lines.join("\n") || "- It doesn't fit the chat."}\nWrite the reply again: answer what the customer asked, and say only what the knowledge documents back. If the knowledge can't answer it, call handoff_to_human with kind "dont_know" instead.`;
 }
 
 // Fallback handoff when the AI itself fails; the caller sends a default customer message.

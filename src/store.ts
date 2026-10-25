@@ -195,7 +195,7 @@ const insertAiCall = db.prepare(
 export function recordAiCall(call: {
   customer: string;
   channel: "whatsapp" | "chatwoot";
-  action: "reply" | "handoff" | "order" | "error" | "followup";
+  action: "reply" | "handoff" | "order" | "error" | "followup" | "lesson";
   reason?: string;
   usage?: AiUsage;
 }) {
@@ -241,6 +241,27 @@ export function getSetting(key: string): string | undefined {
 
 export function setSetting(key: string, value: string) {
   upsertSetting.run(key, value);
+}
+
+// How long the AI stays out of a chat after the team writes in it (Settings). Each team message restarts it,
+// so the AI only comes back once the team has been quiet that long.
+export function teamPauseMinutes(): number {
+  const minutes = Number(getSetting("team_pause_minutes"));
+  return Number.isFinite(minutes) && minutes >= 5 ? minutes : 30;
+}
+
+// Also moves the chats paused by a team reply right now to the new length.
+export function setTeamPauseMinutes(minutes: number) {
+  const change = (minutes - teamPauseMinutes()) * 60 * 1000;
+  setSetting("team_pause_minutes", String(minutes));
+  db.prepare("UPDATE pauses SET until = until + ? WHERE reason LIKE 'team replied%'").run(change);
+}
+
+// Before this setting, a team reply paused the AI for HUMAN_PAUSE_HOURS; the chats paused that way get the new length.
+if (getSetting("team_pause_minutes") === undefined) {
+  const change = (teamPauseMinutes() - config.whatsapp.humanPauseHours * 60) * 60 * 1000;
+  setSetting("team_pause_minutes", String(teamPauseMinutes()));
+  db.prepare("UPDATE pauses SET until = until + ? WHERE reason LIKE 'team replied%'").run(change);
 }
 
 // --- Orders the AI collected (the team confirms them) --------------------------------
@@ -305,6 +326,18 @@ export function lastCustomerWamid(customer: string): string | undefined {
     .prepare("SELECT wamid FROM messages WHERE customer = ? AND role = 'customer' AND wamid IS NOT NULL ORDER BY id DESC LIMIT 1")
     .get(customer) as { wamid: string } | undefined;
   return row?.wamid;
+}
+
+// The message a customer reacted to, and whether it is our latest one in the chat.
+export function reactedMessage(customer: string, wamid: string): { text: string; role: string; isOurLast: boolean } | undefined {
+  const row = db.prepare("SELECT id, text, role FROM messages WHERE customer = ? AND wamid = ?").get(customer, wamid) as
+    | { id: number; text: string; role: string }
+    | undefined;
+  if (!row) return undefined;
+  const last = db
+    .prepare("SELECT MAX(id) AS id FROM messages WHERE customer = ? AND role = 'business' AND history = 0")
+    .get(customer) as { id: number | null };
+  return { text: row.text, role: row.role, isOurLast: row.role === "business" && last.id === row.id };
 }
 
 // What we know about a customer before today's chat, for the AI: new, wrote before, or has orders.

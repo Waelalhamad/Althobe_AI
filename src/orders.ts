@@ -45,7 +45,9 @@ export function notifyOrder(id: number, customer: string, order: CollectedOrder)
 }
 
 // Telegram: the AI didn't know the answer (or the customer needs a person).
-export function notifyHandoff(customer: string, reason: string) {
+// learns: the AI didn't know, so it will learn from what the team writes back (learning.ts).
+export function notifyHandoff(customer: string, reason: string, learns = false) {
   const link = customer.startsWith("cw:") ? "" : dashboardLink(`/inbox/${customer}`, "فتح المحادثة");
-  notify("handoff", `🙋 <b>زبون بدو حدا من الفريق</b>\n${esc(customerLabel(customer))}\nالسبب: ${esc(reason)}\n${link}`);
+  const hint = learns ? "\n📚 ردو عليه بالواتساب متل العادة، والمساعد بيتعلم من جوابكن (بعد موافقتكن)." : "";
+  notify("handoff", `🙋 <b>زبون بدو حدا من الفريق</b>\n${esc(customerLabel(customer))}\nالسبب: ${esc(reason)}${hint}\n${link}`);
 }

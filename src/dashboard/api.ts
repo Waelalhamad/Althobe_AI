@@ -7,6 +7,7 @@ import { decideReply, writeFollowUp, type ChatTurn } from "../agent.js";
 import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } from "../catalog.js";
 import { dataPath, transcribe } from "../media.js";
 import { answerWaiting, sendTeamMessage } from "../channels/whatsapp.js";
+import { approveLesson, ignoreLesson, lessonsView } from "../learning.js";
 import {
   deleteKnowledgeFile,
   listKnowledgeFiles,
@@ -16,7 +17,16 @@ import {
 } from "../knowledge.js";
 import { log } from "../scheduler.js";
 import { aiRepliesEnabled, setAiReplies, setTestNumbers, testNumbers } from "../settings.js";
-import { getSetting, ORDER_STATUSES, pauseAi, resumeAi, setOrderStatus, type OrderStatus } from "../store.js";
+import {
+  getSetting,
+  ORDER_STATUSES,
+  pauseAi,
+  resumeAi,
+  setOrderStatus,
+  setTeamPauseMinutes,
+  teamPauseMinutes,
+  type OrderStatus,
+} from "../store.js";
 import * as queries from "./queries.js";
 import { findGroups, sendTest, setMutedKinds, setTelegramChat, setTelegramToken, telegramStatus } from "../telegram.js";
 import { followUpSettings, followUpStats, saveFollowUpSettings } from "../followup.js";
@@ -177,6 +187,25 @@ dashboardApi.post("/answer-waiting", (_req, res) => {
   res.json(answerWaiting());
 });
 
+// Lessons from the team's answers to handoffs (learning.ts): the owner approves, edits or ignores them.
+dashboardApi.get("/learning", (_req, res) => {
+  res.json(lessonsView());
+});
+
+dashboardApi.post("/learning/:id/approve", (req, res) => {
+  const lesson = approveLesson(Number(req.params.id), String(req.body?.question ?? ""), String(req.body?.answer ?? ""));
+  if (!lesson) {
+    res.status(400).json({ error: "question and answer are required" });
+    return;
+  }
+  res.json(lesson);
+});
+
+dashboardApi.post("/learning/:id/ignore", (req, res) => {
+  ignoreLesson(Number(req.params.id));
+  res.json({ ok: true });
+});
+
 dashboardApi.get("/handoffs", (req, res) => {
   res.json(queries.handoffs(intParam(req.query.days, 7, 90)));
 });
@@ -271,6 +300,7 @@ function settingsView() {
     model: config.openai.model,
     reasoningEffort: config.openai.reasoningEffort,
     humanPauseHours: config.whatsapp.humanPauseHours,
+    teamPauseMinutes: teamPauseMinutes(),
     debounceMs: config.debounceMs,
     historyLimit: config.historyLimit,
     timezoneOffsetHours: config.dashboard.timezoneOffsetHours,
@@ -293,6 +323,11 @@ dashboardApi.put("/settings", (req, res) => {
   if (typeof body.aiReplies === "boolean") {
     setAiReplies(body.aiReplies);
     log("dashboard", `AI replies turned ${body.aiReplies ? "on" : "off"}`);
+  }
+  const pauseMinutes = Math.round(Number(body.teamPauseMinutes));
+  if (body.teamPauseMinutes !== undefined && pauseMinutes >= 5 && pauseMinutes <= 24 * 60) {
+    setTeamPauseMinutes(pauseMinutes);
+    log("dashboard", `AI waits ${pauseMinutes} min after a team reply`);
   }
   if (Array.isArray(body.testNumbers)) {
     // WhatsApp numbers as digits only, with country code (e.g. 218912345678).

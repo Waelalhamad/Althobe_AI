@@ -3,7 +3,7 @@
 import { config } from "./config.js";
 import { getSetting, setSetting } from "./store.js";
 
-export const NOTIFY_KINDS = ["order", "handoff", "error", "supervisor", "report"] as const;
+export const NOTIFY_KINDS = ["order", "handoff", "lesson", "error", "supervisor", "report"] as const;
 export type NotifyKind = (typeof NOTIFY_KINDS)[number];
 
 export function telegramToken(): string | undefined {

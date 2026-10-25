@@ -4,6 +4,7 @@
 // - once a day, a short report. Alerts and the report also go to the Telegram group.
 // It only reads chats and writes to the team; it never messages customers.
 import OpenAI from "openai";
+import { learningStats } from "./learning.js";
 import { config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
 import { catalogForPrompt } from "./catalog.js";
@@ -639,6 +640,10 @@ export async function generateReport(): Promise<number | undefined> {
     }
     if (!text) {
       text = `📊 محادثات ${stats.conversations} · طلبات ${stats.orders} · رسائل الفريق ${stats.teamMessages} · نص وقت الرد ${stats.response.p50Min} د · ناطرين هلق ${stats.waitingNow}`;
+    }
+    const learned = learningStats(since);
+    if (learned.learned || learned.pending || learned.unanswered) {
+      text += `\n\n📚 التعلّم: تعلّم ${learned.learned} اليوم · ${learned.pending} درس بانتظار موافقتك · ${learned.unanswered} سؤال ما حدا جاوبو`;
     }
 
     const id = Number(

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CircleSlash, FlaskConical, Power } from "lucide-react";
+import { CheckCircle2, CircleSlash, FlaskConical, Power, Timer } from "lucide-react";
 import { api, type Settings } from "../api";
 import { Badge, Button, Card, ErrorNote, PageHeader, Toggle } from "../components/ui";
 import { ago } from "../format";
@@ -17,7 +17,7 @@ export function SettingsPage() {
   }, [s?.testNumbers.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = useMutation({
-    mutationFn: (patch: Partial<Pick<Settings, "aiReplies" | "testNumbers">>) => api.saveSettings(patch),
+    mutationFn: (patch: Partial<Pick<Settings, "aiReplies" | "testNumbers" | "teamPauseMinutes">>) => api.saveSettings(patch),
     onSuccess: (data) => queryClient.setQueryData(["settings"], data),
   });
 
@@ -83,6 +83,8 @@ export function SettingsPage() {
         </div>
       </Card>
 
+      <TeamPauseCard minutes={s.teamPauseMinutes} saving={save.isPending} onSave={(m) => save.mutate({ teamPauseMinutes: m })} />
+
       <TelegramCard />
       <FollowUpCard />
       <SupervisorCard />
@@ -110,13 +112,52 @@ export function SettingsPage() {
       <Card>
         <h2 className="mb-4 font-semibold">قيم ثابتة (بتتغير من متغيرات Railway)</h2>
         <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-          <Info k="إيقاف المساعد بعد رد الفريق" v={`${s.humanPauseHours} ساعة`} />
+          <Info k="إيقاف المساعد بعد تحويل للفريق أو طلب" v={`${s.humanPauseHours} ساعة`} />
           <Info k="انتظار قبل الرد (رسائل ورا بعض)" v={`${s.debounceMs / 1000} ثانية`} />
           <Info k="عدد الرسائل يلي بيشوفها المساعد" v={`آخر ${s.historyLimit}`} />
           <Info k="توقيت اللوحة" v={`UTC+${s.timezoneOffsetHours}`} />
         </dl>
       </Card>
     </div>
+  );
+}
+
+// How long the AI stays quiet in a chat after someone from the team writes in it.
+function TeamPauseCard({ minutes, saving, onSave }: { minutes: number; saving: boolean; onSave: (m: number) => void }) {
+  const [value, setValue] = useState(String(minutes));
+  useEffect(() => setValue(String(minutes)), [minutes]);
+  const n = Math.round(Number(value));
+  const valid = n >= 5 && n <= 1440;
+  return (
+    <Card className="flex flex-col gap-3">
+      <div className="flex items-start gap-4">
+        <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-info/12 text-info">
+          <Timer size={20} />
+        </span>
+        <div className="flex-1">
+          <h2 className="font-semibold">لما حدا من الفريق يرد</h2>
+          <p className="mt-1 text-sm text-muted">
+            المساعد بيسكت بهالمحادثة لحتى ما يحكي فوق الموظف. كل رد من الموظف بيرجّع العداد من الأول، والمساعد بيرجع بس بعد ما الموظف يسكت هالمدة.
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="number"
+          min={5}
+          max={1440}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className="num w-24 rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary"
+          aria-label="الدقايق"
+        />
+        <span className="text-sm text-muted">دقيقة</span>
+        <Button onClick={() => onSave(n)} disabled={saving || !valid || n === minutes}>
+          حفظ
+        </Button>
+        {!valid && <span className="text-xs text-bad">من 5 لـ 1440 دقيقة</span>}
+      </div>
+    </Card>
   );
 }
 
