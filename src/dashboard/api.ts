@@ -5,7 +5,7 @@ import { config } from "../config.js";
 import fs from "node:fs";
 import { decideReply, writeFollowUp, type ChatTurn } from "../agent.js";
 import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } from "../catalog.js";
-import { dataPath } from "../media.js";
+import { dataPath, transcribe } from "../media.js";
 import { sendTeamMessage } from "../channels/whatsapp.js";
 import {
   deleteKnowledgeFile,
@@ -463,6 +463,21 @@ dashboardApi.post("/playground", async (req, res) => {
   }
   try {
     res.json(await decideReply(history, { background: playgroundBackground(req.body?.customerType) }));
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// A test voice note recorded in the browser → the text the AI would get, like a WhatsApp voice note.
+dashboardApi.post("/playground/voice", async (req, res) => {
+  const match = /^data:(audio\/[\w.+-]+)(?:;[^,;]*)*;base64,(.+)$/.exec(String(req.body?.audio ?? ""));
+  if (!match) {
+    res.status(400).json({ error: "Send the recording as an audio data URL" });
+    return;
+  }
+  try {
+    const heard = await transcribe(Buffer.from(match[2]!, "base64"), match[1]!);
+    res.json({ text: heard ? `[voice note] ${heard}` : "[voice note, could not understand it]" });
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
   }

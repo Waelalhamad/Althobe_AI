@@ -1,14 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bot, Clock, Hand, ImagePlus, RotateCcw, Send, X } from "lucide-react";
+import { Bot, Clock, Hand, ImagePlus, Mic, RotateCcw, Send, Square, X } from "lucide-react";
 import { api, mediaUrl, type ChatTurn, type Decision } from "../api";
 import { prepareImage } from "../image";
 import { Button, Card, ErrorNote, PageHeader } from "../components/ui";
 import { num, secs, usd } from "../format";
 
 // skipped: the follow-up test decided not to write (shown as a note, not sent to the AI).
-type Turn = ChatTurn & { meta?: Decision; followUp?: boolean; skipped?: boolean };
+// audio: a test voice note, for playing it back here (the AI gets its text, like on WhatsApp).
+type Turn = ChatTurn & { meta?: Decision; followUp?: boolean; skipped?: boolean; audio?: string };
+
+const MAX_VOICE_SECONDS = 120;
+
+function blobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
 
 const EXAMPLES = [
   "مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟",
@@ -60,7 +72,51 @@ export function Playground() {
           : { role: "business", text: "ما رح يبعت متابعة هون (ما بتناسب المحادثة)", skipped: true },
       ]),
   });
-  const busy = ask.isPending || followUp.isPending;
+  // A voice note: record in the browser, turn it into text on the server, then send it like a message.
+  const voice = useMutation({
+    mutationFn: async (blob: Blob) => ({ ...(await api.playgroundVoice(await blobAsDataUrl(blob))), audio: URL.createObjectURL(blob) }),
+    onSuccess: ({ text: heard, audio }) => {
+      const next: Turn[] = [...turns.filter((t) => !t.skipped), { role: "customer", text: heard, audio }];
+      setTurns(next);
+      ask.mutate(next);
+    },
+  });
+  const [recording, setRecording] = useState<{ recorder: MediaRecorder; seconds: number }>();
+  const [micError, setMicError] = useState<string>();
+  const busy = ask.isPending || followUp.isPending || voice.isPending;
+
+  const startRecording = async () => {
+    setMicError(undefined);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        setRecording(undefined);
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        if (blob.size > 0) voice.mutate(blob);
+      };
+      recorder.start();
+      setRecording({ recorder, seconds: 0 });
+    } catch {
+      setMicError("ما قدرنا نفتح المايك. اسمح للمتصفح يستعمل المايك وجرب مرة تانية.");
+    }
+  };
+
+  // The recording timer; stops by itself after MAX_VOICE_SECONDS.
+  useEffect(() => {
+    if (!recording) return;
+    const timer = setInterval(() => {
+      setRecording((r) => {
+        if (!r) return r;
+        if (r.seconds + 1 >= MAX_VOICE_SECONDS && r.recorder.state === "recording") r.recorder.stop();
+        return { ...r, seconds: r.seconds + 1 };
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [recording?.recorder]);
 
   // Braces: the effect must not return what scrollIntoView returns (React would call it as a cleanup).
   useEffect(() => {
@@ -139,7 +195,14 @@ export function Playground() {
                   )}
                 >
                   {t.image && <img src={t.image} alt="" className="mb-1 max-h-48 rounded-xl" />}
-                  {t.text !== "[sent a photo]" && t.text}
+                  {t.audio ? (
+                    <>
+                      <audio src={t.audio} controls className="h-9 max-w-full" />
+                      <span className="mt-1 block text-xs text-muted">المساعد سمعها: {t.text.replace(/^\[voice note\]\s*/, "")}</span>
+                    </>
+                  ) : (
+                    t.text !== "[sent a photo]" && t.text
+                  )}
                 </div>
                 {t.meta?.action === "reply" && t.meta.photos.length > 0 && (
                   <div className="mt-1 flex flex-wrap justify-end gap-1">
@@ -163,7 +226,8 @@ export function Playground() {
             <div ref={bottom} />
           </div>
         </div>
-        <ErrorNote error={ask.error ?? followUp.error} />
+        <ErrorNote error={ask.error ?? followUp.error ?? voice.error} />
+        {micError && <p className="px-4 pb-2 text-sm text-bad">{micError}</p>}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -193,6 +257,17 @@ export function Playground() {
               if (file) setImage((await prepareImage(file, 1024)).dataUrl);
             }}
           />
+          <button
+            type="button"
+            onClick={() => (recording ? recording.recorder.stop() : startRecording())}
+            disabled={busy && !recording}
+            className={clsx("flex items-center gap-1 hover:text-primary", recording ? "text-bad" : "text-muted")}
+            aria-label={recording ? "وقّف التسجيل وابعت" : "سجّل رسالة صوتية"}
+            title={recording ? "وقّف التسجيل وابعت" : "سجّل رسالة صوتية متل الزبون"}
+          >
+            {recording ? <Square size={18} className="animate-pulse" /> : <Mic size={20} />}
+            {recording && <span className="num text-xs">{recording.seconds}s</span>}
+          </button>
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}

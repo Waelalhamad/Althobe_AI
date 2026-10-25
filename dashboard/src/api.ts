@@ -205,6 +205,7 @@ export const api = {
   followUp: () => request<FollowUpView>("/followup"),
   saveFollowUp: (patch: Partial<FollowUpSettings>) =>
     request<FollowUpView>("/followup", { method: "PUT", body: JSON.stringify(patch) }),
+  playgroundVoice: (audio: string) => post<{ text: string }>("/playground/voice", { audio }),
   playgroundFollowUp: (messages: ChatTurn[], customerType: "new" | "returning" | "order" = "new") =>
     post<{ text?: string; usage?: NonNullable<Decision["usage"]> }>("/playground/followup", { messages, customerType }),
 };

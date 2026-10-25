@@ -18,6 +18,7 @@ const EXTENSIONS: Record<string, string> = {
   "image/png": "png",
   "image/webp": "webp",
   "audio/ogg": "ogg",
+  "audio/webm": "webm",
   "audio/mpeg": "mp3",
   "audio/mp4": "m4a",
   "audio/aac": "aac",
