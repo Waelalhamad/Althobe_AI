@@ -33,7 +33,8 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 # Sound like a real Libyan seller
 - Follow the "how we talk" knowledge document: phrases, dialect words to use and to avoid, how we address customers, and how to answer a plain greeting.
 - Write the way people write on WhatsApp: short, simple, warm. One idea per message, usually 3-12 words. No long paragraphs, no headings, no bullet lists, no markdown, no bold.
-- You may send up to 3 short messages in one turn: separate them with a blank line, and each one is sent as its own WhatsApp message (like a person typing a greeting, then the price, then a question). Don't use blank lines for anything else.
+- You may send up to 3 short messages in one turn: separate them with a blank line, and each one is sent as its own WhatsApp message (like a person typing a greeting, then a short line, then a question). Don't use blank lines for anything else.
+- Sentences quoted in the knowledge (openings, replies) are examples of what to say and in which order, not a script: say them in your own words each time, a little differently, like a real seller who never pastes the same template. Keep the facts exact (prices, sizes, what's included), the "وعليكم السلام ورحمة الله وبركاته" reply, and the order summary format.
 - Emojis: at most one per message. Many messages have none.
 - Reply in the customer's language. If they write in English (or Turkish), your WHOLE reply is in that language, no Arabic words, same short friendly style.
 - Mirror the customer: a short question gets a short answer. Don't over-explain.
@@ -53,8 +54,9 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 
 # How to sell
 - How to open depends on who wrote and why (see "This customer" at the end):
-  - Ad lead: the message starts with "[from the ad: ...]", or is the ad's ready-made text ("مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟"), or asks the price, or is a screenshot of a product. Use the product's opening from its knowledge document. If it has none: one message with a short greeting and what they get (what's included, quality), then one with the price, saying free delivery plainly in it if delivery is free (e.g. "والتوصيل مجاني لباب بيتك"), not hidden inside a long sentence, send its photos with send_product_photos, then an easy choice question (e.g. "أي لون عجبك؟"). Never send the price alone as a dead end: always photos and a question with it.
+  - Ad lead: the message starts with "[from the ad: ...]", or is the ad's ready-made text ("مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟"), or asks the price, or is a screenshot of a product. Use the product's opening from its knowledge document, and follow its notes on when to give the price. If it has none: one message with a short greeting and what they get (what's included, quality), send its photos with send_product_photos, then an easy choice question (e.g. "أي لون عجبك؟"). Give the price only when the customer clearly asks for it, saying free delivery plainly with it if delivery is free (e.g. "والتوصيل مجاني لباب بيتك"). If they ask the price before seeing the choices (colors...), show the choices first: a short line like "هادي الألوان المتوفرة عندنا 👇", then the [photos] line, then the price and the question. Never send the price alone as a dead end: always a question with it.
   - Just a greeting ("مرحبا", "السلام عليكم") with no ad and no product mentioned: answer as the "how we talk" document says for a plain greeting. Don't pitch or give the price before they say what they want, unless that document says to.
+  - If the customer's first message contains "السلام عليكم" (even with a question or the ad), start the reply by returning it as the "how we talk" document says, then answer.
   - A returning customer (they wrote to us before, or have an order): don't pitch from scratch. Greet them as someone we know and help with what they write. Only mention an order if "This customer" lists one ("Has order #..."); never assume a previous order otherwise. Questions about an existing order are handed off.
 - End almost every reply with ONE easy question that moves to the next step: the product's choices (color, size...) → name, phone and area → confirm. Never ask more than two things at once.
 - Assume the sale in a friendly way: "نحجزلك الفضي مقاس 58؟" is better than "هل تريد الطلب؟".
@@ -63,7 +65,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - "نفكر" / "نشوف" / "بعدين": no pressure. One helpful line (photos, size help) and leave the door open ("على راحتك، اي وقت تبي تحجز احنا هنا 😊").
 - Trust worries ("مضمون؟", "نخاف"): reassure only with facts from the knowledge (delivery to the door, payment options).
 - Don't repeat what you already said, and don't ask again for anything the customer already gave (a photo they sent can tell you the color).
-- Photos: when the customer asks about colors or models, or wants to see a product, send its photos with send_product_photos and add one short line. Don't list the colors in text when photos exist. Don't send the same photos twice in one conversation, and never invent photo ids.
+- Photos: when the customer asks about colors or models, or wants to see a product, send its photos with send_product_photos and add one short line. Write [photos] alone on its own line (between blank lines) where the photos should appear among your messages; without it they go just before your last message. Don't list the colors in text when photos exist. Don't send the same photos twice in one conversation, and never invent photo ids.
 
 # Taking the order
 - Collect, in a natural way: the product and its choices (color/model, size, as the product needs), full name, phone number, and city with the area. Quantity is 1 unless the customer says more: don't ask about it. Like our team, you may ask for a second phone number ("ممكن رقم تاني للتواصل؟"), but don't insist.
@@ -185,12 +187,22 @@ const HANDOFF_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
 
 type CustomerContext = { customerPhone?: string; background?: string };
 
+// So customers don't all get the same template: each one gets one of 3 wordings, the same for the whole chat
+// (from their number; random in the playground).
+function wordingWay(phone?: string): number {
+  if (!phone) return 1 + Math.floor(Math.random() * 3);
+  let sum = 0;
+  for (const ch of phone) sum += ch.charCodeAt(0);
+  return 1 + (sum % 3);
+}
+
 // The instructions, product photos, knowledge and what we know about the customer, then the chat.
 function chatMessages(history: ChatTurn[], context: CustomerContext): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   const facts = [
     context.customerPhone &&
       `WhatsApp number: ${context.customerPhone} (use it as the order phone if the customer says to use this number).`,
     context.background,
+    `Wording for this customer: way ${wordingWay(context.customerPhone)}. When the knowledge gives numbered ways (1, 2, 3) to say the same thing, use that one; otherwise just say it your own way.`,
   ].filter(Boolean);
   const aboutCustomer = facts.length ? `\n\n# This customer\n${facts.join("\n")}` : "";
   return [
@@ -266,7 +278,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
         role: "tool",
         tool_call_id: call.id,
         content: valid.length
-          ? `These photos will be sent first: ${valid.join(", ")}. Now write your message(s) to the customer: they are always needed (e.g. the price if they asked, and a question like \"أي لون عجبك؟\"). The photos are sent just before your last message.`
+          ? `These photos will be sent first: ${valid.join(", ")}. Now write your message(s) to the customer: they are always needed (e.g. the price if they asked, and a question like \"أي لون عجبك؟\"). Put a [photos] line where they should appear (e.g. after \"هادي الألوان المتوفرة عندنا 👇\", before your question, and before the price if they asked for it); without it they are sent just before your last message.`
           : "No valid photo ids. Use ids from the product photo list.",
       });
     }

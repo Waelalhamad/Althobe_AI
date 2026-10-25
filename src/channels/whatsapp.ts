@@ -21,7 +21,7 @@ import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
 import { notifyHandoff, notifyOrder, orderOneLine } from "../orders.js";
 import { notifyError } from "../telegram.js";
-import { splitMessages, typingPause } from "../typing.js";
+import { splitAroundPhotos, splitMessages, typingPause } from "../typing.js";
 
 const DEFAULT_HANDOFF_MESSAGE = "حاضر، لحظة نتأكدلك ونرجعلك 🙏";
 const DEFAULT_ORDER_MESSAGE = "تمام، تم الحجز 🙏 شويه ونتواصلو معاك لتأكيد التوصيل";
@@ -252,11 +252,8 @@ async function respond(customer: string) {
     }
 
     if (decision.action === "reply") {
-      // A few short messages like a person types them. Photos go just before the last one
-      // ("حياك الله😊" / price / [photos] / "أي لون عجبك؟").
-      const parts = splitMessages(decision.text);
-      const beforePhotos = decision.photos.length ? parts.slice(0, -1) : parts;
-      const afterPhotos = decision.photos.length ? parts.slice(-1) : [];
+      // A few short messages like a person types them, with the photos where the AI put them.
+      const { before: beforePhotos, after: afterPhotos } = splitAroundPhotos(decision.text, decision.photos.length > 0);
       let sent = 0;
       const sendPart = async (part: string) => {
         if (sent++ > 0) {

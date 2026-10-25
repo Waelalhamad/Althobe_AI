@@ -6,7 +6,7 @@ import { log, scheduleReply } from "../scheduler.js";
 import { recordAiCall, saveOrder } from "../store.js";
 import { notifyHandoff, notifyOrder, orderNote, orderOneLine } from "../orders.js";
 import { notifyError } from "../telegram.js";
-import { splitMessages, typingPause } from "../typing.js";
+import { splitAroundPhotos, typingPause } from "../typing.js";
 import { aiBlockedReason } from "../settings.js";
 
 // Shape of the Chatwoot Agent Bot "message_created" event (only the fields we use).
@@ -59,7 +59,7 @@ async function respond(accountId: number, conversationId: number) {
     });
 
     if (decision.action === "reply") {
-      for (const [i, part] of splitMessages(decision.text).entries()) {
+      for (const [i, part] of splitAroundPhotos(decision.text, false).before.entries()) {
         if (i > 0) await typingPause(part);
         await sendReply(accountId, conversationId, part);
       }
