@@ -329,8 +329,10 @@ async function respond(customer: string) {
       log(key, decision.photos.length ? `replied with ${decision.photos.length} photo(s)` : "replied");
     } else if (decision.action === "order") {
       // The customer confirmed: save the order, thank them, and let the team confirm it.
-      // "Same number" answers come through as text; fall back to the WhatsApp number.
-      if (!/\d{6,}/.test(decision.order.phone)) decision.order.phone = localPhone(customer);
+      // Customers often write the number in Arabic digits (٠٩٢…): store it in 0-9. "Same number" answers come
+      // through as text; fall back to the WhatsApp number.
+      decision.order.phone = latinDigits(decision.order.phone);
+      if (!/\d{6,}/.test(decision.order.phone.replace(/[\s-]/g, ""))) decision.order.phone = localPhone(customer);
       const id = saveOrder({ customer, channel: "whatsapp", ...decision.order });
       const text = decision.messageToCustomer || DEFAULT_ORDER_MESSAGE;
       const wamid = await sendText(customer, text);
@@ -507,6 +509,11 @@ function describeContent(m: WaMessage): string {
     default:
       return `[sent a ${m.type} message]`;
   }
+}
+
+// ٠٩٢٧٨٧٥٤٠٧ / ۰۹۲۷۸۷۵۴۰۷ → 0927875407
+export function latinDigits(text: string): string {
+  return text.replace(/[٠-٩۰-۹]/g, (d) => String((d.charCodeAt(0) - 0x0660) % 0x90));
 }
 
 // 218912345678 → 0912345678 (how Libyan customers write their number); other countries: +<number>.

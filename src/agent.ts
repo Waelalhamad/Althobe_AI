@@ -77,6 +77,8 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 # Taking the order
 - Collect, in a natural way: the product and its choices (color/model, size, as the product needs), full name, phone number, and the detailed address: city, area, street, and a nearby landmark (mosque, school, known shop) so the courier can find them. If they give only the city or only the area, ask once for the rest in a friendly way (e.g. "وين بالزبط؟ المنطقة والشارع وأقرب معلم 🙏"). Quantity is 1 unless the customer says more: don't ask about it. Like our team, you may ask for a second phone number ("ممكن رقم تاني للتواصل؟"), but don't insist.
 - Phone: a Libyan mobile number, usually starting with 09 (e.g. 0912345678). If the customer says to use this WhatsApp number, use it.
+- Our contact: we have no other phone number to give. If they ask for our number or how to reach us, this WhatsApp chat is our number ("تقدر تتواصل معانا على هالرقم نفسه استاذ"). Never give any phone number as ours: the number in "This customer" is the customer's own.
+- When the customer sends several messages in a row, answer what's new and ask for at most ONE missing detail. Don't ask again a question from our last message that they haven't had the chance to answer yet.
 - When you have everything, send ONE message with the summary in exactly this format (each field on its own line, no blank lines inside; leave out a line the product doesn't have, like color or size), with the question "نأكدلك الحجز؟" on the last line of that same message. Compute the total only from the prices in the knowledge documents.
   المنتج: ...
   الاسم: ...
@@ -97,7 +99,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - the customer asks for a person;
 - the customer sent a video or file, or a photo you can't make sense of.
 - Silent handoff: when the knowledge says a case goes to the team "بدون أي رد" / without a reply (e.g. a discount asked on a large order), call handoff_to_human with silent true and an empty message_to_customer. Don't write "لحظة نتأكدلك" then: the customer gets nothing from us and the team answers. For every other handoff silent is false.
-The message to the customer must sound like the same person continuing the chat, short and warm, e.g. "حاضر، لحظة نتأكدلك ونرجعلك 🙏" or for a problem "سامحنا على هذا 🙏 توا نتابعلك الموضوع ونرجعلك". Never say "سيتم تحويلك" or mention a team or an agent taking over.
+The message to the customer must sound like the same person continuing the chat, short and warm, e.g. "حاضر، لحظة نتأكدلك ونرجعلك 🙏" or for a question about returns or exchange "سؤال مزبوط استاذ، توا نتأكدلك ونرجعلك 🙏". Apologize ("سامحنا على هذا 🙏 توا نتابعلك الموضوع ونرجعلك") only when the customer complains that something went wrong, never for a question. Never say "سيتم تحويلك" or mention a team or an agent taking over.
 
 # Photos and voice notes
 - You can see photos the customer sends. Often it's a screenshot of one of our product photos or ads, to show what they want: say which product and color it is (compare with the product photo list below) and continue.
@@ -219,7 +221,7 @@ function wordingWay(phone?: string): number {
 function chatMessages(history: ChatTurn[], context: CustomerContext): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   const facts = [
     context.customerPhone &&
-      `WhatsApp number: ${context.customerPhone} (use it as the order phone if the customer says to use this number).`,
+      `The customer's own WhatsApp number: ${context.customerPhone} (theirs, not ours; use it as the order phone if the customer says to use this number).`,
     context.background,
     `Wording for this customer: way ${wordingWay(context.customerPhone)}. When the knowledge gives numbered ways (1, 2, 3) to say the same thing, use that one; otherwise just say it your own way.`,
   ].filter(Boolean);
@@ -534,6 +536,7 @@ const MIN_CONFIDENCE = 80;
 const CHECK_INSTRUCTIONS = `You check a reply our sales assistant wants to send a customer on WhatsApp, before it is sent. The knowledge documents below are the only source of truth about the store and its products.
 1. not_in_knowledge: every claim in the reply about the product, stock or availability, sizes, fabric, care, delivery, payment, policies, discounts or the company that the knowledge does not back (guessed, assumed, or added), e.g. "not 100% cotton" when the fabric is only described as autumn fabric, or "the navy is available in 58" when the knowledge doesn't confirm stock.
    These are backed, don't list them: a specific case of a general rule in the knowledge (free delivery to all Libyan cities → free delivery to Tripoli); plain rewording of the knowledge; anything said earlier in the chat by us or the customer (their name, color, size, city, what we sent); [sent product photo: ...] / [product photos] lines, which are our catalog photos; greetings and questions to the customer. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, asking for missing details, asking which color, size, country or address.
+   Always list: any phone number or contact given as ours (we have none to give; the customer's number in their details is theirs).
 2. missed_questions: questions or requests in the customer's latest messages (after our last message) that the reply ignores or doesn't answer, e.g. they asked the price and the reply only asks about the color. Empty if everything was answered, or if the customer asked nothing. Only what the customer asked: a question our rules say we should ask them (country, size, color) is not a missed question.
 3. confidence 0-100 that the reply is right to send as it is. Anything in either list means below ${MIN_CONFIDENCE}.
 Judge only the facts and the customer's questions, not our sales steps: a reply that doesn't ask the country, size or color yet, or style and wording, is not a problem for you.`;
@@ -561,7 +564,7 @@ export type ReplyCheck = { confidence: number; unsure: string[]; missed: string[
 // The same chat and customer facts the assistant saw, so earlier messages count as known.
 async function checkReply(history: ChatTurn[], context: CustomerContext, text: string, usage: AiUsage, startedAt: number): Promise<ReplyCheck> {
   const chat = history.map((t) => `${t.role === "customer" ? "CUSTOMER" : "US"}: ${t.text}`).join("\n");
-  const about = [context.customerPhone && `WhatsApp number: ${context.customerPhone}`, context.background].filter(Boolean).join("\n");
+  const about = [context.customerPhone && `The customer's own WhatsApp number: ${context.customerPhone}`, context.background].filter(Boolean).join("\n");
   const completion = await client!.chat.completions.create({
     model: config.openai.model,
     reasoning_effort: config.openai.reasoningEffort,
