@@ -30,7 +30,10 @@ export function Playground() {
     },
   });
 
-  useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [turns.length, ask.isPending]);
+  // Braces: the effect must not return what scrollIntoView returns (React would call it as a cleanup).
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ block: "end" });
+  }, [turns.length, ask.isPending]);
 
   const submit = (value: string) => {
     const v = value.trim();
