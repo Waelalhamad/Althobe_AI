@@ -320,6 +320,14 @@ export function saveOrder(o: NewOrder): number {
   return Number(result.lastInsertRowid);
 }
 
+// The same items already ordered by this customer and still open: the AI re-sending an order it took earlier in the chat.
+export function findSameOrder(customer: string, items: OrderItem[], since: number): number | undefined {
+  const row = db
+    .prepare("SELECT id FROM orders WHERE customer = ? AND items = ? AND status IN ('new', 'confirmed') AND created_at > ? ORDER BY id DESC LIMIT 1")
+    .get(customer, JSON.stringify(items), since) as { id: number } | undefined;
+  return row?.id;
+}
+
 export type OrderFields = Pick<NewOrder, "name" | "phone" | "city" | "address" | "items" | "total" | "notes">;
 
 // The team corrects an order (a wrong number, a changed size...).

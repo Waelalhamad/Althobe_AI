@@ -260,10 +260,63 @@ function addUsage(usage: AiUsage, completion: OpenAI.Chat.Completions.ChatComple
   usage.latencyMs = Date.now() - startedAt;
 }
 
+// The reply loop uses the Responses API: newer models (gpt-5.5) only think before calling tools there.
+// These helpers translate the chat-style messages and tools, and give back a chat-style message for readDecision.
+function responseInput(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): OpenAI.Responses.ResponseInputItem[] {
+  return messages.map((m): OpenAI.Responses.ResponseInputItem => {
+    const role = m.role === "assistant" ? "assistant" : m.role === "user" ? "user" : "developer";
+    if (typeof m.content === "string" || role !== "user") {
+      return { role, content: typeof m.content === "string" ? m.content : "" };
+    }
+    const parts = (m.content ?? []) as OpenAI.Chat.Completions.ChatCompletionContentPart[];
+    return {
+      role,
+      content: parts.flatMap((p): OpenAI.Responses.ResponseInputContent[] =>
+        p.type === "text"
+          ? [{ type: "input_text", text: p.text }]
+          : p.type === "image_url"
+            ? [{ type: "input_image", image_url: p.image_url.url, detail: p.image_url.detail ?? "auto" }]
+            : [],
+      ),
+    };
+  });
+}
+
+function responseTool(tool: OpenAI.Chat.Completions.ChatCompletionTool): OpenAI.Responses.FunctionTool {
+  const f = (tool as OpenAI.Chat.Completions.ChatCompletionFunctionTool).function;
+  return { type: "function", name: f.name, description: f.description ?? null, parameters: f.parameters ?? null, strict: f.strict ?? false };
+}
+
+function asMessage(response: OpenAI.Responses.Response): OpenAI.Chat.Completions.ChatCompletionMessage {
+  const calls = response.output.filter((o): o is OpenAI.Responses.ResponseFunctionToolCall => o.type === "function_call");
+  return {
+    role: "assistant",
+    content: response.output_text || null,
+    refusal: null,
+    ...(calls.length && {
+      tool_calls: calls.map((c) => ({ id: c.call_id, type: "function" as const, function: { name: c.name, arguments: c.arguments } })),
+    }),
+  };
+}
+
+// What the model produced (reasoning, text, tool calls), to send back as context for the next round.
+function outputItems(response: OpenAI.Responses.Response): OpenAI.Responses.ResponseInputItem[] {
+  return response.output as OpenAI.Responses.ResponseInputItem[];
+}
+
+function addResponseUsage(usage: AiUsage, response: OpenAI.Responses.Response, startedAt: number) {
+  usage.model = response.model;
+  usage.promptTokens += response.usage?.input_tokens ?? 0;
+  usage.cachedTokens += response.usage?.input_tokens_details?.cached_tokens ?? 0;
+  usage.completionTokens += response.usage?.output_tokens ?? 0;
+  usage.reasoningTokens += response.usage?.output_tokens_details?.reasoning_tokens ?? 0;
+  usage.latencyMs = Date.now() - startedAt;
+}
+
 // customerPhone: the customer's WhatsApp number in local form (e.g. 0912345678), when known.
 // background: what we know about the customer before this chat (new / wrote before / their orders).
 export async function decideReply(history: ChatTurn[], context: CustomerContext = {}): Promise<AgentDecision> {
-  const messages = chatMessages(history, context);
+  const input = responseInput(chatMessages(history, context));
 
   client ??= new OpenAI();
   const startedAt = Date.now();
@@ -276,21 +329,24 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
 
   // The model may first ask to send photos and then write its text, so allow a few rounds.
   for (let round = 0; round < 4; round++) {
-    const completion = await client.chat.completions.create({
+    const response = await client.responses.create({
       model: config.openai.model,
-      reasoning_effort: config.openai.reasoningEffort,
-      messages,
-      tools: knownPhotos.size ? [HANDOFF_TOOL, ORDER_TOOL, PHOTOS_TOOL] : [HANDOFF_TOOL, ORDER_TOOL],
+      reasoning: { effort: config.openai.reasoningEffort },
+      input,
+      tools: (knownPhotos.size ? [HANDOFF_TOOL, ORDER_TOOL, PHOTOS_TOOL] : [HANDOFF_TOOL, ORDER_TOOL]).map(responseTool),
       // Once photos are queued, the next step is the text that goes with them.
       tool_choice: photos.length && !rejected ? "none" : "auto",
+      // Nothing is kept at OpenAI; the encrypted reasoning comes back so the next round can continue from it.
+      store: false,
+      include: ["reasoning.encrypted_content"],
     });
-    addUsage(usage, completion, startedAt);
+    addResponseUsage(usage, response, startedAt);
 
-    const message = completion.choices[0]?.message;
-    const photoCalls = (message?.tool_calls ?? []).filter(
+    const message = asMessage(response);
+    const photoCalls = (message.tool_calls ?? []).filter(
       (call) => call.type === "function" && call.function.name === "send_product_photos",
     );
-    const toolResults: OpenAI.Chat.Completions.ChatCompletionToolMessageParam[] = [];
+    const toolResults: OpenAI.Responses.ResponseInputItem.FunctionCallOutput[] = [];
     for (const call of photoCalls) {
       if (call.type !== "function") continue;
       let ids: string[] = [];
@@ -300,9 +356,9 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       const valid = ids.filter((id) => knownPhotos.has(id) && !photos.includes(id));
       photos.push(...valid);
       toolResults.push({
-        role: "tool",
-        tool_call_id: call.id,
-        content: valid.length
+        type: "function_call_output",
+        call_id: call.id,
+        output: valid.length
           ? `These photos will be sent first: ${valid.join(", ")}. Now write your message(s) to the customer: they are always needed (e.g. the price if they asked, and a question like \"أي لون عجبك؟\"). Put a [photos] line where they should appear (e.g. after \"هادي الألوان المتوفرة عندنا 👇\", before your question, and before the price if they asked for it); without it they are sent just before your last message.`
           : "No valid photo ids. Use ids from the product photo list.",
       });
@@ -313,9 +369,9 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       if (!decision.text) return { ...decision, photos, usage };
       const check = await checkReply(history, context, decision.text, usage, startedAt);
       if (check.confidence >= MIN_CONFIDENCE) return { ...decision, photos, confidence: check.confidence, usage };
-      if (!rejected && message) {
+      if (!rejected) {
         rejected = check;
-        messages.push(message, { role: "developer", content: checkFeedback(check) });
+        input.push(...outputItems(response), { role: "developer", content: checkFeedback(check) });
         continue;
       }
       const notes = [
@@ -334,12 +390,12 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     if (decision.action === "order") return { ...decision, usage };
     const emptyReply = decision.reason === EMPTY;
     if (!emptyReply) return { ...decision, usage }; // a real handoff wins over photos
-    if (!photoCalls.length || !message) {
+    if (!photoCalls.length) {
       // Photos alone are a fine answer ("here are the colors").
       return photos.length ? { action: "reply", text: "", photos, usage } : { ...decision, usage };
     }
     // The model only asked for photos: tell it they're queued, so it writes the text next.
-    messages.push(message, ...toolResults);
+    input.push(...outputItems(response), ...toolResults);
   }
   return { ...handoff("AI kept calling tools without answering"), usage };
 }

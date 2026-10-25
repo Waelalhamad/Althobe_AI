@@ -19,6 +19,7 @@ import {
   saveHistory,
   saveMessage,
   saveOrder,
+  findSameOrder,
   setSetting,
   teamPauseMinutes,
 } from "../store.js";
@@ -341,6 +342,15 @@ async function respond(customer: string) {
       // through as text; fall back to the WhatsApp number.
       decision.order.phone = latinDigits(decision.order.phone);
       if (!/\d{6,}/.test(decision.order.phone.replace(/[\s-]/g, ""))) decision.order.phone = localPhone(customer);
+      const same = findSameOrder(customer, decision.order.items, Date.now() - 7 * 24 * 60 * 60 * 1000);
+      if (same) {
+        // Already saved: just send the message, don't record it twice or stop the AI again.
+        const text = decision.messageToCustomer || DEFAULT_ORDER_MESSAGE;
+        const wamid = await sendText(customer, text);
+        saveMessage({ customer, role: "business", source: "ai", text, wamid });
+        log(key, `same order as #${same} sent again by the AI; not saved twice`);
+        return;
+      }
       const id = saveOrder({ customer, channel: "whatsapp", ...decision.order });
       const text = decision.messageToCustomer || DEFAULT_ORDER_MESSAGE;
       const wamid = await sendText(customer, text);
