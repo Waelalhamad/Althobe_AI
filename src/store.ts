@@ -195,7 +195,7 @@ const insertAiCall = db.prepare(
 export function recordAiCall(call: {
   customer: string;
   channel: "whatsapp" | "chatwoot";
-  action: "reply" | "handoff" | "order" | "error" | "followup" | "lesson";
+  action: "reply" | "handoff" | "order" | "error" | "followup" | "lesson" | "draft";
   reason?: string;
   usage?: AiUsage;
 }) {
@@ -284,6 +284,10 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS orders_created ON orders (created_at);
 `);
+// Who recorded the order: the AI (customer confirmed the summary) or the team (from the dashboard).
+if (!(db.prepare("PRAGMA table_info(orders)").all() as { name: string }[]).some((c) => c.name === "source")) {
+  db.exec("ALTER TABLE orders ADD COLUMN source TEXT NOT NULL DEFAULT 'ai'");
+}
 
 // product: which product (empty on orders saved before there could be several).
 export type OrderItem = { product?: string; color: string; size: string; quantity: number };
@@ -298,19 +302,33 @@ export type NewOrder = {
   items: OrderItem[];
   total: string;
   notes: string;
+  source?: "ai" | "team";
+  status?: OrderStatus;
 };
 
 const insertOrder = db.prepare(
-  `INSERT INTO orders (customer, channel, name, phone, city, address, items, total, notes, created_at, updated_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  `INSERT INTO orders (customer, channel, name, phone, city, address, items, total, notes, source, status, created_at, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 );
 
 export function saveOrder(o: NewOrder): number {
   const now = Date.now();
   const result = insertOrder.run(
-    o.customer, o.channel, o.name, o.phone, o.city, o.address, JSON.stringify(o.items), o.total, o.notes, now, now,
+    o.customer, o.channel, o.name, o.phone, o.city, o.address, JSON.stringify(o.items), o.total, o.notes,
+    o.source ?? "ai", o.status ?? "new", now, now,
   );
   return Number(result.lastInsertRowid);
+}
+
+export type OrderFields = Pick<NewOrder, "name" | "phone" | "city" | "address" | "items" | "total" | "notes">;
+
+// The team corrects an order (a wrong number, a changed size...).
+export function updateOrder(id: number, o: OrderFields): boolean {
+  return (
+    db
+      .prepare("UPDATE orders SET name = ?, phone = ?, city = ?, address = ?, items = ?, total = ?, notes = ?, updated_at = ? WHERE id = ?")
+      .run(o.name, o.phone, o.city, o.address, JSON.stringify(o.items), o.total, o.notes, Date.now(), id).changes > 0
+  );
 }
 
 export const ORDER_STATUSES = ["new", "confirmed", "delivered", "cancelled"] as const;

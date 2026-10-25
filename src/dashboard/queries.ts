@@ -24,6 +24,7 @@ type Totals = {
   aiReplies: number;
   handoffs: number;
   orders: number;
+  teamOrders?: number;
   errors: number;
   aiConversations: number;
   aiOnlyConversations: number;
@@ -89,6 +90,9 @@ export function totals(since: number): Totals {
   ).map((r) => r.l);
   const pick = (q: number) => latencies[Math.min(latencies.length - 1, Math.floor(q * latencies.length))] ?? 0;
 
+  // Orders the team recorded from the dashboard (sales they closed themselves).
+  const teamOrders = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE source = 'team' AND created_at >= ?").get(since) as { n: number };
+
   const prompt = ai.prompt ?? 0;
   const cached = ai.cached ?? 0;
   const completion = ai.completion ?? 0;
@@ -100,6 +104,7 @@ export function totals(since: number): Totals {
     aiReplies: ai.replies ?? 0,
     handoffs: ai.handoffs ?? 0,
     orders: ai.orders ?? 0,
+    teamOrders: teamOrders.n,
     errors: ai.errors ?? 0,
     aiConversations: ai.conversations ?? 0,
     aiOnlyConversations: aiOnly.n,
@@ -160,6 +165,17 @@ export function overview(days: number) {
     row.orders = r.orders;
     row.errors = r.errors;
     row.costUsd = costUsd(r.prompt, r.cached, r.completion);
+  }
+  // The chart's orders line counts the team's orders too.
+  const teamRows = db
+    .prepare(
+      `SELECT strftime('%Y-%m-%d', created_at / 1000 + ${offsetSec}, 'unixepoch') AS day, COUNT(*) AS n
+       FROM orders WHERE source = 'team' AND created_at >= ? GROUP BY day`,
+    )
+    .all(since) as { day: string; n: number }[];
+  for (const r of teamRows) {
+    const row = daily.get(r.day);
+    if (row) row.orders = (row.orders ?? 0) + r.n;
   }
 
   // Customer messages per local hour of day, to see when the ads bring people in.
@@ -317,7 +333,7 @@ export function handoffs(days: number) {
 export function orders(opts: { status: string | undefined; limit: number }) {
   const rows = db
     .prepare(
-      `SELECT id, customer, channel, name, phone, city, address, items, total, notes, status,
+      `SELECT id, customer, channel, name, phone, city, address, items, total, notes, status, source,
          created_at AS createdAt, updated_at AS updatedAt
        FROM orders ${opts.status ? "WHERE status = ?" : ""} ORDER BY id DESC LIMIT ?`,
     )

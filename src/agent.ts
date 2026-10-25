@@ -448,6 +448,61 @@ export async function writeLesson(
   }
 }
 
+// The team closed a sale in the chat: fill the order form from the conversation, for the team to check and save.
+export type OrderDraft = CollectedOrder;
+
+const ORDER_DRAFT_INSTRUCTIONS = `You read a WhatsApp chat between our store and a customer (CUSTOMER, BOT = our assistant, TEAM = a person from our team) and fill in the order the customer agreed on, for our team to check before saving.
+- Take the latest values: if the customer changed the color, size, quantity or address later in the chat, use the last one.
+- phone: the number the customer gave for delivery, in 0-9 digits (٠٩٢٧٨٧٥٤٠٧ → 0927875407). If they said to use this number, or gave none, use their WhatsApp number from the details.
+- total: from what we told the customer, or computed from the knowledge prices (quantity × price), with the currency (e.g. "770 دينار"). If the team agreed on a special price in the chat, use it and say so in notes.
+- notes: anything else the team agreed or should know (a discount, height/weight, delivery wishes). Empty if nothing.
+- Leave a field empty when the chat doesn't say it. Never invent a name, phone or address.`;
+
+const ORDER_DRAFT_SCHEMA = (() => {
+  const { message_to_customer: _, ...properties } = (ORDER_TOOL.function.parameters as { properties: Record<string, unknown> }).properties;
+  return { type: "object", properties, required: Object.keys(properties), additionalProperties: false };
+})();
+
+export async function draftOrder(transcript: string, customerPhone: string): Promise<{ draft?: OrderDraft; usage: AiUsage }> {
+  client ??= new OpenAI();
+  const startedAt = Date.now();
+  const usage = emptyUsage();
+  const completion = await client.chat.completions.create({
+    model: config.openai.model,
+    reasoning_effort: "low",
+    messages: [
+      { role: "developer", content: `${ORDER_DRAFT_INSTRUCTIONS}\n\n# Knowledge documents\n\n${loadKnowledge()}` },
+      { role: "user", content: `The customer's WhatsApp number: ${customerPhone}\n\nThe chat:\n${transcript}` },
+    ],
+    response_format: { type: "json_schema", json_schema: { name: "order_draft", strict: true, schema: ORDER_DRAFT_SCHEMA } },
+  });
+  addUsage(usage, completion, startedAt);
+  try {
+    const a = JSON.parse(completion.choices[0]?.message?.content ?? "{}") as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const items = Array.isArray(a.items) ? (a.items as Record<string, unknown>[]) : [];
+    return {
+      draft: {
+        name: str(a.customer_name),
+        phone: str(a.phone),
+        city: str(a.city),
+        address: str(a.address),
+        items: items.map((i) => ({
+          product: str(i.product),
+          color: str(i.color),
+          size: str(i.size),
+          quantity: typeof i.quantity === "number" && i.quantity > 0 ? i.quantity : 1,
+        })),
+        total: str(a.total),
+        notes: str(a.notes),
+      },
+      usage,
+    };
+  } catch {
+    return { usage };
+  }
+}
+
 const FOLLOW_UP_SCHEMA = {
   type: "object",
   properties: {

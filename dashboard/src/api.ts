@@ -33,6 +33,7 @@ export type Totals = {
   aiReplies: number;
   handoffs: number;
   orders: number;
+  teamOrders?: number;
   errors: number;
   aiConversations: number;
   aiOnlyConversations: number;
@@ -102,9 +103,13 @@ export type Order = {
   total: string;
   notes: string;
   status: OrderStatus;
+  source?: "ai" | "team";
   createdAt: number;
   updatedAt: number;
 };
+
+// What the team fills in the order form (and what the AI drafts from a chat).
+export type OrderInput = Pick<Order, "name" | "phone" | "city" | "address" | "items" | "total" | "notes">;
 
 export type CatalogItem = {
   id: string;
@@ -204,6 +209,9 @@ export const api = {
     post<Decision>("/playground", { messages, customerType }),
   orders: (status?: OrderStatus) =>
     request<{ counts: Partial<Record<OrderStatus, number>>; orders: Order[] }>(`/orders${status ? `?status=${status}` : ""}`),
+  createOrder: (order: OrderInput & { customer?: string; status: OrderStatus }) => post<{ id: number }>("/orders", order),
+  updateOrder: (id: number, order: OrderInput) => request(`/orders/${id}`, { method: "PUT", body: JSON.stringify(order) }),
+  orderDraft: (customer: string) => post<OrderInput>(`/conversations/${encodeURIComponent(customer)}/order-draft`),
   setOrderStatus: (id: number, status: OrderStatus) =>
     request(`/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   catalog: () => request<CatalogItem[]>("/catalog"),

@@ -2,9 +2,10 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { MessageCircle, Phone, ShoppingBag } from "lucide-react";
+import { MessageCircle, Pencil, Phone, Plus, ShoppingBag } from "lucide-react";
 import { api, type Order, type OrderStatus } from "../api";
-import { Badge, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
+import { emptyOrder, OrderForm } from "../components/OrderForm";
 import { ago, time } from "../format";
 
 const STATUSES: { id: OrderStatus; label: string; tone: "warn" | "info" | "ok" | "muted" }[] = [
@@ -17,14 +18,18 @@ const STATUSES: { id: OrderStatus; label: string; tone: "warn" | "info" | "ok" |
 export function Orders() {
   const [status, setStatus] = useState<OrderStatus | undefined>("new");
   const q = useQuery({ queryKey: ["orders", status], queryFn: () => api.orders(status), refetchInterval: 10_000 });
+  const [adding, setAdding] = useState(false);
 
   return (
     <div className="mx-auto max-w-5xl">
       <PageHeader
         title="الطلبات"
-        subtitle="الطلبات يلي جمعها المساعد بعد ما أكّد الزبون الملخص. المساعد بيوقف على المحادثة، والفريق بيتواصل مع الزبون ليأكد الحجز."
+        subtitle="الطلبات يلي جمعها المساعد بعد ما أكّد الزبون الملخص، والطلبات يلي سجّلها الفريق. المساعد بيوقف على المحادثة، والفريق بيتواصل مع الزبون ليأكد الحجز."
         actions={
           <>
+            <Button onClick={() => setAdding(true)}>
+              <Plus size={16} /> طلب جديد
+            </Button>
             {STATUSES.map((s) => (
               <button
                 key={s.id}
@@ -44,6 +49,7 @@ export function Orders() {
         }
       />
       <ErrorNote error={q.error} />
+      {adding && <OrderForm initial={emptyOrder()} onClose={() => setAdding(false)} />}
       {q.data?.orders.length === 0 && (
         <Card>
           <Empty icon={ShoppingBag} text="ما في طلبات هون." />
@@ -63,21 +69,33 @@ function OrderCard({ o }: { o: Order }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["orders"] }),
   });
   const current = STATUSES.find((s) => s.id === o.status);
+  const [editing, setEditing] = useState(false);
 
   return (
     <Card className="flex flex-col gap-4">
+      {editing && (
+        <OrderForm
+          orderId={o.id}
+          initial={{ name: o.name, phone: o.phone, city: o.city, address: o.address, items: o.items, total: o.total, notes: o.notes }}
+          onClose={() => setEditing(false)}
+        />
+      )}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <span className="num text-lg font-bold">#{o.id}</span>
             <span className="text-lg font-semibold">{o.name}</span>
             {current && <Badge tone={current.tone}>{current.label}</Badge>}
+            <Badge tone={o.source === "team" ? "primary" : "muted"}>{o.source === "team" ? "سجّلو الفريق" : "جمعه المساعد"}</Badge>
           </div>
           <div className="mt-1 text-xs text-muted">
             {time(o.createdAt)} · {ago(o.createdAt)} · {o.channel === "whatsapp" ? "واتساب" : "Instagram / Messenger"}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button onClick={() => setEditing(true)} className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
+            <Pencil size={16} /> تعديل
+          </button>
           {o.channel === "whatsapp" && (
             <Link href={`/inbox/${o.customer}`} className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
               <MessageCircle size={16} /> المحادثة

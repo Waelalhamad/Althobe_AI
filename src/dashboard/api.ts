@@ -3,10 +3,11 @@ import crypto from "node:crypto";
 import express from "express";
 import { config } from "../config.js";
 import fs from "node:fs";
-import { decideReply, writeFollowUp, type ChatTurn } from "../agent.js";
+import { decideReply, draftOrder, writeFollowUp, type ChatTurn } from "../agent.js";
 import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } from "../catalog.js";
 import { dataPath, transcribe } from "../media.js";
-import { answerWaiting, sendTeamMessage } from "../channels/whatsapp.js";
+import { answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
+import { notifyOrder } from "../orders.js";
 import { approveLesson, ignoreLesson, lessonsView } from "../learning.js";
 import {
   deleteKnowledgeFile,
@@ -18,11 +19,16 @@ import {
 import { log } from "../scheduler.js";
 import { aiRepliesEnabled, setAiReplies, setTestNumbers, testNumbers } from "../settings.js";
 import {
+  db,
   getSetting,
   ORDER_STATUSES,
   pauseAi,
+  recordAiCall,
   resumeAi,
+  saveOrder,
   setOrderStatus,
+  updateOrder,
+  type OrderFields,
   setTeamPauseMinutes,
   teamPauseMinutes,
   type OrderStatus,
@@ -224,6 +230,90 @@ dashboardApi.get("/handoffs", (req, res) => {
 dashboardApi.get("/orders", (req, res) => {
   const status = ORDER_STATUSES.find((s) => s === req.query.status);
   res.json(queries.orders({ status, limit: intParam(req.query.limit, 200, 1000) }));
+});
+
+// An order from the dashboard form (the team closed the sale, or corrects an order). Returns an error message if invalid.
+function orderFields(body: Record<string, unknown> | undefined): OrderFields | string {
+  const str = (v: unknown, max = 500) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+  const items = (Array.isArray(body?.items) ? (body.items as Record<string, unknown>[]) : [])
+    .map((i) => ({
+      product: str(i?.product, 100),
+      color: str(i?.color, 100),
+      size: str(i?.size, 20),
+      quantity: Math.max(1, Math.min(1000, Math.round(Number(i?.quantity) || 1))),
+    }))
+    .filter((i) => i.product || i.color || i.size);
+  const fields = {
+    name: str(body?.name, 200),
+    phone: latinDigits(str(body?.phone, 40)),
+    city: str(body?.city, 100),
+    address: str(body?.address),
+    items,
+    total: str(body?.total, 100),
+    notes: str(body?.notes, 2000),
+  };
+  if (!fields.phone.replace(/\D/g, "")) return "اكتب رقم الزبون";
+  if (!items.length) return "اكتب شو طلب (اللون والمقاس)";
+  return fields;
+}
+
+// 0912345678 → 218912345678 (the chat's id); other numbers: digits only.
+function customerFromPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "").replace(/^00/, "");
+  return /^09\d{8}$/.test(digits) ? `218${digits.slice(1)}` : digits;
+}
+
+dashboardApi.post("/orders", (req, res) => {
+  const fields = orderFields(req.body);
+  if (typeof fields === "string") {
+    res.status(400).json({ error: fields });
+    return;
+  }
+  const customer = String(req.body?.customer ?? "").replace(/\D/g, "") || customerFromPhone(fields.phone);
+  const status = ORDER_STATUSES.find((s) => s === req.body?.status) ?? "confirmed";
+  const id = saveOrder({ customer, channel: "whatsapp", ...fields, source: "team", status });
+  log(`wa:${customer}`, `order #${id} recorded by the team (${status})`);
+  notifyOrder(id, customer, fields, true);
+  res.json({ id });
+});
+
+dashboardApi.put("/orders/:id", (req, res) => {
+  const fields = orderFields(req.body);
+  if (typeof fields === "string") {
+    res.status(400).json({ error: fields });
+    return;
+  }
+  if (!updateOrder(Number(req.params.id), fields)) {
+    res.status(404).json({ error: "Unknown order" });
+    return;
+  }
+  log("dashboard", `order #${req.params.id} edited`);
+  res.json({ ok: true });
+});
+
+// The AI reads the chat and fills the order form; the team checks it and saves.
+dashboardApi.post("/conversations/:customer/order-draft", async (req, res) => {
+  const customer = req.params.customer;
+  const rows = (
+    db.prepare("SELECT source, text FROM messages WHERE customer = ? ORDER BY id DESC LIMIT 80").all(customer) as { source: string; text: string }[]
+  ).reverse();
+  if (!rows.length) {
+    res.status(404).json({ error: "No messages in this chat" });
+    return;
+  }
+  const label: Record<string, string> = { customer: "CUSTOMER", ai: "BOT", staff: "TEAM" };
+  const transcript = rows.map((m) => `${label[m.source] ?? m.source}: ${m.text.replace(/\s+/g, " ").slice(0, 600)}`).join("\n");
+  try {
+    const { draft, usage } = await draftOrder(transcript, localPhone(customer));
+    recordAiCall({ customer, channel: "whatsapp", action: "draft", usage });
+    if (!draft) {
+      res.status(502).json({ error: "ما قدر يقرا المحادثة، عبّي الطلب بإيدك" });
+      return;
+    }
+    res.json(draft);
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 dashboardApi.patch("/orders/:id", (req, res) => {

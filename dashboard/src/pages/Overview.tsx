@@ -58,9 +58,9 @@ export function Overview() {
             <Stat icon={UserPlus} label="زباين جدد" value={num(t.newCustomers)} hint="أول مرة بيكتبولنا" tone="info" />
             <Stat
               icon={ShoppingBag}
-              label="طلبات جمعها المساعد"
-              value={<Link href="/orders">{num(t.orders)}</Link>}
-              hint={t.conversations ? `${pct(t.orders, t.conversations)} من المحادثات` : "بدها تأكيد الفريق"}
+              label="الطلبات"
+              value={<Link href="/orders">{num(t.orders + (t.teamOrders ?? 0))}</Link>}
+              hint={`${num(t.orders)} جمعها المساعد · ${num(t.teamOrders ?? 0)} سجّلها الفريق`}
               tone="ok"
             />
             <Stat icon={Bot} label="ردود المساعد" value={num(t.aiReplies)} hint={`${num(t.staffMessages)} رد من الفريق`} tone="ok" />

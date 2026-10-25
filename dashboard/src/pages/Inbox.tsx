@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowRight, Bot, History, ImagePlus, Inbox as InboxIcon, Pause, Play, Search, Send, User, UserRound, X } from "lucide-react";
+import { ArrowRight, Bot, History, ImagePlus, ShoppingBag, Inbox as InboxIcon, Pause, Play, Search, Send, User, UserRound, X } from "lucide-react";
 import { api, mediaUrl, type ConversationFilter, type ConversationSummary, type Message } from "../api";
 import { Badge, Button, Empty, ErrorNote } from "../components/ui";
 import { ago, country, pauseLabel, phone, time, until } from "../format";
 import { prepareImage } from "../image";
+import { OrderForm } from "../components/OrderForm";
+import type { OrderInput } from "../api";
 
 const FILTERS: { id: ConversationFilter; label: string }[] = [
   { id: "all", label: "الكل" },
@@ -141,6 +143,9 @@ function Thread({ customer }: { customer: string }) {
     void queryClient.invalidateQueries({ queryKey: ["conversations"] });
   };
   const pause = useMutation({ mutationFn: () => api.pause(customer), onSuccess: refresh });
+  // "Record order": the AI fills the form from the chat, the team checks and saves.
+  const [orderDraft, setOrderDraft] = useState<OrderInput>();
+  const draft = useMutation({ mutationFn: () => api.orderDraft(customer), onSuccess: setOrderDraft });
   const resume = useMutation({ mutationFn: () => api.resume(customer), onSuccess: refresh });
   const send = useMutation({
     mutationFn: () => api.send(customer, text.trim(), photo),
@@ -179,6 +184,9 @@ function Thread({ customer }: { customer: string }) {
             {d?.windowOpenUntil && (windowOpen ? ` · نافذة الرد مفتوحة ${until(d.windowOpenUntil)}` : " · نافذة الـ 24 ساعة مسكّرة")}
           </div>
         </div>
+        <Button variant="ghost" onClick={() => draft.mutate()} disabled={draft.isPending} title="المساعد بيعبّي الطلب من المحادثة، وانت بتتأكد وبتحفظ">
+          <ShoppingBag size={16} /> {draft.isPending ? "عم يقرا المحادثة…" : "سجّل طلب"}
+        </Button>
         {d?.pausedUntil ? (
           <>
             <Badge tone="warn">
@@ -195,6 +203,19 @@ function Thread({ customer }: { customer: string }) {
         )}
       </header>
 
+      {draft.error && (
+        <div className="border-b border-line px-4 py-2">
+          <ErrorNote error={draft.error} />
+        </div>
+      )}
+      {orderDraft && (
+        <OrderForm
+          initial={orderDraft}
+          customer={customer}
+          note="المساعد عبّى الطلب من المحادثة. تأكد من كل شي (خاصة الرقم والعنوان) قبل ما تحفظ."
+          onClose={() => setOrderDraft(undefined)}
+        />
+      )}
       {handoffs[0] && (
         <div className="border-b border-line bg-warn/5 px-4 py-2 text-xs text-warn">
           آخر تحويل ({ago(handoffs[0].at)}): <span className="ltr">{handoffs[0].reason}</span>
