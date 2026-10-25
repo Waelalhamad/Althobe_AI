@@ -9,18 +9,30 @@ import { num, secs, usd } from "../format";
 
 type Turn = ChatTurn & { meta?: Decision };
 
-const EXAMPLES = ["السلام عليكم، بكم الثوب؟", "شو المقاسات المتوفرة؟", "كم بياخد التوصيل لطرابلس؟", "بدي احكي مع موظف"];
+const EXAMPLES = [
+  "مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟",
+  "مرحبا",
+  "بكم؟",
+  "المقاس غلط ونبي نبدلو",
+];
+
+const CUSTOMER_TYPES = [
+  { id: "new", label: "زبون جديد" },
+  { id: "returning", label: "زبون كتبلنا قبل" },
+  { id: "order", label: "عندو طلب" },
+] as const;
 
 export function Playground() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [text, setText] = useState("");
   const [image, setImage] = useState<string>();
+  const [customerType, setCustomerType] = useState<(typeof CUSTOMER_TYPES)[number]["id"]>("new");
   const bottom = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: api.catalog });
 
   const ask = useMutation({
-    mutationFn: (history: Turn[]) => api.playground(history.map(({ role, text, image }) => ({ role, text, image }))),
+    mutationFn: (history: Turn[]) => api.playground(history.map(({ role, text, image }) => ({ role, text, image })), customerType),
     onSuccess: (decision) => {
       const reply =
         decision.action === "reply"
@@ -51,9 +63,23 @@ export function Playground() {
         title="جرّب المساعد"
         subtitle="احكي معو متل زبون، وفيك تبعتلو صورة. بيستعمل نفس المعلومات وصور المنتجات، بس ما بينبعت شي لحدا وما بينحسب بالأرقام."
         actions={
-          <Button variant="ghost" onClick={() => setTurns([])} disabled={!turns.length}>
-            <RotateCcw size={16} /> محادثة جديدة
-          </Button>
+          <>
+            <select
+              value={customerType}
+              onChange={(e) => setCustomerType(e.target.value as typeof customerType)}
+              className="rounded-xl border border-line bg-card-2 px-3 py-1.5 text-sm outline-none focus:border-primary"
+              aria-label="نوع الزبون"
+            >
+              {CUSTOMER_TYPES.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+            <Button variant="ghost" onClick={() => setTurns([])} disabled={!turns.length}>
+              <RotateCcw size={16} /> محادثة جديدة
+            </Button>
+          </>
         }
       />
       <Card className="flex min-h-[50vh] flex-1 flex-col p-0">

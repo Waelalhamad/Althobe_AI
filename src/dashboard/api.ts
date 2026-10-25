@@ -432,7 +432,13 @@ dashboardApi.post("/playground", async (req, res) => {
     return;
   }
   try {
-    res.json(await decideReply(history));
+    // Pretend to be a new customer, a returning one, or one with an order (for testing the opening).
+    const background = {
+      new: "New customer: first time writing to us (today).",
+      returning: "Returning customer: wrote to us before (12 earlier messages, first 20 days ago).",
+      order: "Returning customer: wrote to us before (15 earlier messages, first 5 days ago).\nHas order #1 (status: confirmed, 3 days ago).",
+    }[String(req.body?.customerType)] ?? "New customer: first time writing to us (today).";
+    res.json(await decideReply(history, { background }));
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
   }

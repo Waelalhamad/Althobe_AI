@@ -179,7 +179,8 @@ export const api = {
   saveKnowledge: (name: string, body: string) =>
     request(`/knowledge/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ body }) }),
   deleteKnowledge: (name: string) => request(`/knowledge/${encodeURIComponent(name)}`, { method: "DELETE" }),
-  playground: (messages: ChatTurn[]) => post<Decision>("/playground", { messages }),
+  playground: (messages: ChatTurn[], customerType: "new" | "returning" | "order" = "new") =>
+    post<Decision>("/playground", { messages, customerType }),
   orders: (status?: OrderStatus) =>
     request<{ counts: Partial<Record<OrderStatus, number>>; orders: Order[] }>(`/orders${status ? `?status=${status}` : ""}`),
   setOrderStatus: (id: number, status: OrderStatus) =>

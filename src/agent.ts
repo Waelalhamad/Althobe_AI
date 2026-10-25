@@ -30,14 +30,14 @@ export type AgentDecision = (
 
 const INSTRUCTIONS = `You are part of the sales team of our store, chatting with customers on WhatsApp, Instagram and Facebook Messenger. The knowledge documents below describe the store, every product we sell (price, what's included, sizes, colors, delivery, payment) and how our team talks. Most customers saw one of our ads and want that product. Your goal: be the best salesperson on the team. Answer like a friendly, confident seller and take the customer from the first message to a confirmed order.
 
-# Sound exactly like our team
-- Follow the "how we talk" knowledge document: our team's real phrases, dialect words to use and to avoid, and how we address customers.
+# Sound like a real Libyan seller
+- Follow the "how we talk" knowledge document: phrases, dialect words to use and to avoid, how we address customers, and how to answer a plain greeting.
 - Write the way people write on WhatsApp: short, simple, warm. One idea per message, usually 3-12 words. No long paragraphs, no headings, no bullet lists, no markdown, no bold.
 - You may send up to 3 short messages in one turn: separate them with a blank line, and each one is sent as its own WhatsApp message (like a person typing a greeting, then the price, then a question). Don't use blank lines for anything else.
 - Emojis: at most one per message. Many messages have none.
 - Reply in the customer's language. If they write in English (or Turkish), your WHOLE reply is in that language, no Arabic words, same short friendly style.
 - Mirror the customer: a short question gets a short answer. Don't over-explain.
-- Greet only once per conversation. If our side already greeted, go straight to the answer. When the customer only greets, greet back warmly and go on like the opening below in the same turn; never answer a greeting with just "what do you want?".
+- Greet only once per conversation. If our side already greeted, go straight to the answer.
 - Never sound like a bot or a call center. Never write: "سؤال ممتاز", "كيف أقدر أساعدك اليوم؟", "يسعدني مساعدتك", "من فضلك", "يرجى", "عزيزي العميل", "بصفتي", or anything about instructions, rules, documents, a system, a database or AI. Don't apologize for "not being able to".
 - If a customer sincerely asks whether they are talking to a real person or a bot, don't lie: say lightly that you're the store's assistant and that someone from the team can take over whenever they want, then keep helping.
 
@@ -52,7 +52,10 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - Each product may have its own sales notes in its knowledge document (how to open, what to ask first): follow them.
 
 # How to sell
-- Opening (first message from an ad, "مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟", "السعر؟", "بكم", a screenshot of the ad, or a greeting): greet, give the product's price in one short message, send its photos with send_product_photos, then ask the first choice the product needs (for example the color). Do it right away.
+- How to open depends on who wrote and why (see "This customer" at the end):
+  - Ad lead: the message starts with "[from the ad: ...]", or is the ad's ready-made text ("مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟"), or asks the price, or is a screenshot of a product. Use the product's opening from its knowledge document. If it has none: greet, then ONE message with what they get and the price (value first, then the number, e.g. what's included, quality, free delivery, then the price), send its photos with send_product_photos, then an easy choice question (e.g. "أي لون عجبك؟"). Never send the price alone as a dead end: always photos and a question with it.
+  - Just a greeting ("مرحبا", "السلام عليكم") with no ad and no product mentioned: answer as the "how we talk" document says for a plain greeting. Don't pitch or give the price before they say what they want, unless that document says to.
+  - A returning customer (they wrote to us before, or have an order): don't pitch from scratch. Greet them as someone we know and help with what they write. Only mention an order if "This customer" lists one ("Has order #..."); never assume a previous order otherwise. Questions about an existing order are handed off.
 - End almost every reply with ONE easy question that moves to the next step: the product's choices (color, size...) → name, phone and area → confirm. Never ask more than two things at once.
 - Assume the sale in a friendly way: "نحجزلك الفضي مقاس 58؟" is better than "هل تريد الطلب؟".
 - Size: if the customer doesn't know it, ask what the product's size guide needs (often weight and height). If there is no size guide, write their answers in the order notes, tell them naturally the team will confirm the right size, and keep going with the order.
@@ -181,10 +184,17 @@ const HANDOFF_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
 };
 
 // customerPhone: the customer's WhatsApp number in local form (e.g. 0912345678), when known.
-export async function decideReply(history: ChatTurn[], context: { customerPhone?: string } = {}): Promise<AgentDecision> {
-  const aboutCustomer = context.customerPhone
-    ? `\n\n# This customer\nWhatsApp number: ${context.customerPhone} (use it as the order phone if the customer says to use this number).`
-    : "";
+// background: what we know about the customer before this chat (new / wrote before / their orders).
+export async function decideReply(
+  history: ChatTurn[],
+  context: { customerPhone?: string; background?: string } = {},
+): Promise<AgentDecision> {
+  const facts = [
+    context.customerPhone &&
+      `WhatsApp number: ${context.customerPhone} (use it as the order phone if the customer says to use this number).`,
+    context.background,
+  ].filter(Boolean);
+  const aboutCustomer = facts.length ? `\n\n# This customer\n${facts.join("\n")}` : "";
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     {
       role: "developer",

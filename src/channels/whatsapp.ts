@@ -8,6 +8,7 @@ import {
   getHistory,
   isAiPaused,
   lastCustomerWamid,
+  customerBackground,
   pauseAi,
   recordAiCall,
   saveHistory,
@@ -227,7 +228,10 @@ async function respond(customer: string) {
   try {
     await waitForMedia(customer);
     void showTyping(customer);
-    const decision = await decideReply(historyForAi(customer), { customerPhone: localPhone(customer) });
+    const decision = await decideReply(historyForAi(customer), {
+      customerPhone: localPhone(customer),
+      background: customerBackground(customer),
+    });
     recordAiCall({
       customer,
       channel: "whatsapp",

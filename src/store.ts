@@ -306,3 +306,22 @@ export function lastCustomerWamid(customer: string): string | undefined {
     .get(customer) as { wamid: string } | undefined;
   return row?.wamid;
 }
+
+// What we know about a customer before today's chat, for the AI: new, wrote before, or has orders.
+export function customerBackground(customer: string): string {
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  const earlier = db
+    .prepare("SELECT COUNT(*) AS n, MIN(created_at) AS first FROM messages WHERE customer = ? AND created_at < ?")
+    .get(customer, dayAgo) as { n: number; first: number | null };
+  const orders = db
+    .prepare("SELECT id, status, created_at FROM orders WHERE customer = ? ORDER BY id DESC LIMIT 3")
+    .all(customer) as { id: number; status: string; created_at: number }[];
+  const daysAgo = (ms: number) => Math.max(0, Math.round((Date.now() - ms) / (24 * 60 * 60 * 1000)));
+  const lines = [
+    earlier.n && earlier.first
+      ? `Returning customer: wrote to us before (${earlier.n} earlier messages, first ${daysAgo(earlier.first)} days ago).`
+      : "New customer: first time writing to us (today).",
+    ...orders.map((o) => `Has order #${o.id} (status: ${o.status}, ${daysAgo(o.created_at)} days ago).`),
+  ];
+  return lines.join("\n");
+}
