@@ -282,9 +282,11 @@ async function respond(customer: string) {
       log(key, `order #${id} collected, team must confirm: ${orderOneLine(decision.order)}`);
       notifyOrder(id, customer, decision.order);
     } else {
-      const text = decision.messageToCustomer || DEFAULT_HANDOFF_MESSAGE;
-      const wamid = await sendText(customer, text);
-      saveMessage({ customer, role: "business", source: "ai", text, wamid });
+      if (!decision.silent) {
+        const text = decision.messageToCustomer || DEFAULT_HANDOFF_MESSAGE;
+        const wamid = await sendText(customer, text);
+        saveMessage({ customer, role: "business", source: "ai", text, wamid });
+      }
       pauseAi(customer, `AI handoff: ${decision.reason}`);
       log(key, `handed off to team: ${decision.reason}`);
       notifyHandoff(customer, decision.reason);

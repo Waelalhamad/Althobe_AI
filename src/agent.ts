@@ -24,7 +24,8 @@ export type CollectedOrder = {
 // order: the customer confirmed an order; it is saved and the team takes over to confirm it.
 export type AgentDecision = (
   | { action: "reply"; text: string; photos: string[] }
-  | { action: "handoff"; reason: string; messageToCustomer: string }
+  // silent: hand the chat to the team without a message to the customer (when the knowledge says so).
+  | { action: "handoff"; reason: string; messageToCustomer: string; silent?: boolean }
   | { action: "order"; order: CollectedOrder; messageToCustomer: string }
 ) & { usage?: AiUsage };
 
@@ -90,7 +91,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - a problem with an order they received (wrong size, damaged, exchange, refund), a complaint, or an angry customer;
 - the customer asks for a person;
 - the customer sent a video or file, or a photo you can't make sense of.
-The message to the customer must sound like the same person continuing the chat, short and warm, e.g. "حاضر، لحظة نتأكدلك ونرجعلك 🙏" or for a problem "سامحنا على هذا 🙏 توا نتابعلك الموضوع ونرجعلك". Never say "سيتم تحويلك" or mention a team or an agent taking over.
+The message to the customer must sound like the same person continuing the chat, short and warm, e.g. "حاضر، لحظة نتأكدلك ونرجعلك 🙏" or for a problem "سامحنا على هذا 🙏 توا نتابعلك الموضوع ونرجعلك". Never say "سيتم تحويلك" or mention a team or an agent taking over. If the knowledge says a case goes to the team without a reply, hand off with silent true and no message.
 
 # Photos and voice notes
 - You can see photos the customer sends. Often it's a screenshot of one of our product photos or ads, to show what they want: say which product and color it is (compare with the product photo list below) and continue.
@@ -177,10 +178,14 @@ const HANDOFF_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
         },
         message_to_customer: {
           type: "string",
-          description: "Short natural message to the customer in their language, like the same person continuing the chat (e.g. \"حاضر استاذ، لحظة نتأكدلك ونرجعلك 🙏\"). Never mention a team or a transfer.",
+          description: "Short natural message to the customer in their language, like the same person continuing the chat (e.g. \"حاضر استاذ، لحظة نتأكدلك ونرجعلك 🙏\"). Never mention a team or a transfer. Empty when silent.",
+        },
+        silent: {
+          type: "boolean",
+          description: "true only when the knowledge says to hand this case to the team without replying: then nothing is sent and the team answers. Otherwise false.",
         },
       },
-      required: ["reason", "message_to_customer"],
+      required: ["reason", "message_to_customer", "silent"],
       additionalProperties: false,
     },
   },
@@ -397,12 +402,14 @@ function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | u
       const args = JSON.parse(toolCall.function.arguments) as {
         reason?: unknown;
         message_to_customer?: unknown;
+        silent?: unknown;
       };
       return {
         action: "handoff",
         reason: typeof args.reason === "string" ? args.reason : "No reason given",
         messageToCustomer:
           typeof args.message_to_customer === "string" ? args.message_to_customer : "",
+        silent: args.silent === true,
       };
     } catch {
       return handoff("AI handoff arguments were not valid JSON");

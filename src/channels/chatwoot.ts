@@ -72,7 +72,9 @@ async function respond(accountId: number, conversationId: number) {
       log(key, `order #${id} collected, team must confirm: ${orderOneLine(decision.order)}`);
       notifyOrder(id, key, decision.order);
     } else {
-      await sendReply(accountId, conversationId, decision.messageToCustomer || DEFAULT_HANDOFF_MESSAGE);
+      if (!decision.silent) {
+        await sendReply(accountId, conversationId, decision.messageToCustomer || DEFAULT_HANDOFF_MESSAGE);
+      }
       await addPrivateNote(accountId, conversationId, `🤖 Handed off by AI: ${decision.reason}`);
       await handOffToHuman(accountId, conversationId);
       log(key, `handed off: ${decision.reason}`);

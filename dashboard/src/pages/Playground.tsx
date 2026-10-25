@@ -38,7 +38,9 @@ export function Playground() {
       const reply =
         decision.action === "reply"
           ? decision.text || "(صور بس)"
-          : decision.messageToCustomer || (decision.action === "order" ? "(رسالة الطلب الافتراضية)" : "(رسالة التحويل الافتراضية)");
+          : decision.action === "handoff" && decision.silent
+            ? "(بدون رد للزبون، الفريق بيرد)"
+            : decision.messageToCustomer || (decision.action === "order" ? "(رسالة الطلب الافتراضية)" : "(رسالة التحويل الافتراضية)");
       setTurns((t) => [...t, { role: "business", text: reply, meta: decision }]);
     },
   });
