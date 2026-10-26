@@ -279,6 +279,20 @@ export function answerWaiting(): { queued: number; withTeam: number } {
   return { queued, withTeam };
 }
 
+// After the AI is turned back on for a chat: if the customer's last message is still unanswered, answer it.
+export function answerIfWaiting(customer: string): boolean {
+  const last = db
+    .prepare(
+      `SELECT role, created_at FROM messages WHERE customer = ? AND history = 0 AND text NOT LIKE '[sent a reaction%'
+       ORDER BY id DESC LIMIT 1`,
+    )
+    .get(customer) as { role: string; created_at: number } | undefined;
+  if (!last || last.role !== "customer" || last.created_at < Date.now() - 23 * 60 * 60 * 1000) return false;
+  if (aiBlockedReason(customer) || isAiPaused(customer)) return false;
+  scheduleReply(`wa:${customer}`, 1000, () => respond(customer));
+  return true;
+}
+
 async function respond(customer: string) {
   // The team may have taken over while we were waiting.
   if (isAiPaused(customer)) return;

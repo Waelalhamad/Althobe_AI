@@ -6,7 +6,7 @@ import fs from "node:fs";
 import { decideReply, draftOrder, writeFollowUp, type ChatTurn } from "../agent.js";
 import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } from "../catalog.js";
 import { dataPath, transcribe } from "../media.js";
-import { answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
+import { answerIfWaiting, answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
 import { notifyOrder } from "../orders.js";
 import { ordersWorkbook, sendDailySheet, sheetName, type SheetRange } from "../ordersSheet.js";
 import { approveLesson, ignoreLesson, lessonsView } from "../learning.js";
@@ -163,7 +163,8 @@ dashboardApi.post("/conversations/:customer/pause", (req, res) => {
 
 dashboardApi.post("/conversations/:customer/resume", (req, res) => {
   resumeAi(req.params.customer);
-  log(`wa:${req.params.customer}`, "AI resumed from the dashboard");
+  const answering = answerIfWaiting(req.params.customer);
+  log(`wa:${req.params.customer}`, answering ? "AI resumed from the dashboard; answering the waiting message" : "AI resumed from the dashboard");
   res.json({ ok: true });
 });
 

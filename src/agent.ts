@@ -387,6 +387,8 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
         input.push(...outputItems(response), { role: "developer", content: checkFeedback(check) });
         continue;
       }
+      // Nothing made up, it just may not answer everything: better sent than silence.
+      if (!check.unsure.length) return { ...decision, photos, confidence: check.confidence, usage };
       const notes = [
         check.missed.length && `ما جاوب على: ${check.missed.join("، ")}.`,
         check.unsure.length && `مش موجود بالمعلومات: ${check.unsure.join("، ")}.`,
@@ -662,7 +664,7 @@ const CHECK_INSTRUCTIONS = `You check a reply our sales assistant wants to send 
 1. not_in_knowledge: every claim in the reply about the product, stock or availability, sizes, fabric, care, delivery, payment, policies, discounts or the company that the knowledge does not back (guessed, assumed, or added), e.g. "not 100% cotton" when the fabric is only described as autumn fabric, or "the navy is available in 58" when the knowledge doesn't confirm stock.
    These are backed, don't list them: a specific case of a general rule in the knowledge (free delivery to all Libyan cities → free delivery to Tripoli); plain rewording of the knowledge; anything said earlier in the chat by us or the customer (their name, color, size, city, what we sent); [sent product photo: ...] / [product photos] lines, which are our catalog photos; greetings and questions to the customer. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, asking for missing details, asking which color, size, country or address.
    Always list: any phone number or contact given as ours (we have none to give; the customer's number in their details is theirs).
-2. missed_questions: questions or requests in the customer's latest messages (after our last message) that the reply ignores or doesn't answer, e.g. they asked the price and the reply only asks about the color. Empty if everything was answered, or if the customer asked nothing. Only what the customer asked: a question our rules say we should ask them (country, size, color) is not a missed question.
+2. missed_questions: questions or requests in the customer's latest messages (after our last message) that the reply ignores or doesn't answer (the ad button's automatic text, e.g. "هل يمكنني الحصول على مزيد من المعلومات حول هذا؟" or "Can I get more info?", is only a hello: any answer about the product or price covers it), e.g. they asked the price and the reply only asks about the color. Empty if everything was answered, or if the customer asked nothing. Only what the customer asked: a question our rules say we should ask them (country, size, color) is not a missed question.
 3. confidence 0-100 that the reply is right to send as it is. Anything in either list means below ${MIN_CONFIDENCE}.
 Judge only the facts and the customer's questions, not our sales steps: a reply that doesn't ask the country, size or color yet, or style and wording, is not a problem for you.`;
 
