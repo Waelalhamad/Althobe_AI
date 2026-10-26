@@ -1,5 +1,5 @@
 // Read-only numbers for the dashboard. Imported chat history (history = 1) never counts in the stats.
-import { config } from "../config.js";
+import { aiCostUsd, config } from "../config.js";
 import { db } from "../store.js";
 
 const HOUR = 60 * 60 * 1000;
@@ -33,9 +33,9 @@ type Totals = {
   latency: { avgMs: number; p50Ms: number; p90Ms: number };
 };
 
-export function costUsd(prompt: number, cached: number, completion: number): number {
-  const p = config.dashboard.price;
-  return ((prompt - cached) * p.input + cached * p.cachedInput + completion * p.output) / 1_000_000;
+// At the given model's price (the main model by default).
+export function costUsd(prompt: number, cached: number, completion: number, model = config.openai.model): number {
+  return aiCostUsd(model, prompt, cached, completion);
 }
 
 export function totals(since: number): Totals {
@@ -63,7 +63,7 @@ export function totals(since: number): Totals {
          SUM(action = 'reply') AS replies, SUM(action = 'handoff') AS handoffs, SUM(action = 'error') AS errors,
          SUM(action = 'order') AS orders, COUNT(DISTINCT customer) AS conversations,
          SUM(prompt_tokens) AS prompt, SUM(cached_tokens) AS cached,
-         SUM(completion_tokens) AS completion, SUM(reasoning_tokens) AS reasoning
+         SUM(completion_tokens) AS completion, SUM(reasoning_tokens) AS reasoning, SUM(cost_usd) AS cost
        FROM ai_calls WHERE created_at >= ?`,
     )
     .get(since) as Record<string, number | null>;
@@ -108,7 +108,7 @@ export function totals(since: number): Totals {
     errors: ai.errors ?? 0,
     aiConversations: ai.conversations ?? 0,
     aiOnlyConversations: aiOnly.n,
-    costUsd: costUsd(prompt, cached, completion),
+    costUsd: ai.cost ?? 0,
     tokens: { prompt, cached, completion, reasoning: ai.reasoning ?? 0 },
     latency: {
       avgMs: latencies.length ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0,
@@ -144,7 +144,7 @@ export function overview(days: number) {
       `SELECT strftime('%Y-%m-%d', created_at / 1000 + ${offsetSec}, 'unixepoch') AS day,
          SUM(action = 'reply') AS aiReplies, SUM(action = 'handoff') AS handoffs, SUM(action = 'error') AS errors,
          SUM(action = 'order') AS orders,
-         SUM(prompt_tokens) AS prompt, SUM(cached_tokens) AS cached, SUM(completion_tokens) AS completion
+         SUM(cost_usd) AS cost
        FROM ai_calls WHERE created_at >= ? GROUP BY day`,
     )
     .all(since) as {
@@ -153,9 +153,7 @@ export function overview(days: number) {
     handoffs: number;
     orders: number;
     errors: number;
-    prompt: number;
-    cached: number;
-    completion: number;
+    cost: number;
   }[];
   for (const r of aiRows) {
     const row = daily.get(r.day);
@@ -164,7 +162,7 @@ export function overview(days: number) {
     row.handoffs = r.handoffs;
     row.orders = r.orders;
     row.errors = r.errors;
-    row.costUsd = costUsd(r.prompt, r.cached, r.completion);
+    row.costUsd = r.cost ?? 0;
   }
   // The chart's orders line counts the team's orders too.
   const teamRows = db

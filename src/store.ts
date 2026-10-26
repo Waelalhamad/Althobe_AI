@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { config } from "./config.js";
+import { aiCostUsd, config } from "./config.js";
 import type { ChatTurn } from "./agent.js";
 
 fs.mkdirSync(path.dirname(path.resolve(config.databasePath)), { recursive: true });
@@ -185,11 +185,29 @@ export type AiUsage = {
   completionTokens: number;
   reasoningTokens: number;
   latencyMs: number;
+  // Summed per call at each model's price: one decision can mix models (the reply and its check).
+  costUsd: number;
 };
+
+// Cost in US$, saved with each call since prices differ per model. Older rows get it from their model once.
+if (!(db.prepare("PRAGMA table_info(ai_calls)").all() as { name: string }[]).some((c) => c.name === "cost_usd")) {
+  db.exec("ALTER TABLE ai_calls ADD COLUMN cost_usd REAL");
+  const old = db.prepare("SELECT id, model, prompt_tokens, cached_tokens, completion_tokens FROM ai_calls").all() as {
+    id: number;
+    model: string | null;
+    prompt_tokens: number;
+    cached_tokens: number;
+    completion_tokens: number;
+  }[];
+  const setCost = db.prepare("UPDATE ai_calls SET cost_usd = ? WHERE id = ?");
+  db.exec("BEGIN");
+  for (const r of old) setCost.run(aiCostUsd(r.model, r.prompt_tokens, r.cached_tokens, r.completion_tokens), r.id);
+  db.exec("COMMIT");
+}
 
 const insertAiCall = db.prepare(
   `INSERT INTO ai_calls (customer, channel, action, reason, model, prompt_tokens, cached_tokens,
-     completion_tokens, reasoning_tokens, latency_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     completion_tokens, reasoning_tokens, latency_ms, cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 );
 
 export function recordAiCall(call: {
@@ -211,6 +229,7 @@ export function recordAiCall(call: {
     u?.completionTokens ?? 0,
     u?.reasoningTokens ?? 0,
     u?.latencyMs ?? 0,
+    u?.costUsd ?? 0,
     Date.now(),
   );
 }

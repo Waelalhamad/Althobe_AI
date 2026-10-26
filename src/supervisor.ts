@@ -404,7 +404,7 @@ export async function reviewConversation(customer: string): Promise<number | und
 
   client ??= new OpenAI();
   const completion = await client.chat.completions.create({
-    model: config.openai.model,
+    model: config.openai.supportModel,
     reasoning_effort: "low",
     messages: [
       { role: "developer", content: supervisorPrompt() },
@@ -627,7 +627,7 @@ export async function generateReport(): Promise<number | undefined> {
     if (process.env.OPENAI_API_KEY?.trim() && supervisorSettings().reviews) {
       client ??= new OpenAI();
       const completion = await client.chat.completions.create({
-        model: config.openai.model,
+        model: config.openai.supportModel,
         reasoning_effort: "low",
         messages: [
           { role: "developer", content: REPORT },
@@ -742,7 +742,7 @@ export function supervisorView(days: number) {
     alerts,
     reports,
     unconfirmedOrders: (db.prepare("SELECT COUNT(*) AS n FROM orders WHERE status = 'new'").get() as { n: number }).n,
-    costUsd: costUsd(tokens.p, tokens.c, tokens.o),
+    costUsd: costUsd(tokens.p, tokens.c, tokens.o, config.openai.supportModel),
   };
 }
 

@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { config } from "./config.js";
+import { aiCostUsd, config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
 import { catalogForPrompt, listCatalog } from "./catalog.js";
 import type { AiUsage, OrderItem } from "./store.js";
@@ -248,7 +248,7 @@ function chatMessages(history: ChatTurn[], context: CustomerContext): OpenAI.Cha
 }
 
 function emptyUsage(): AiUsage {
-  return { model: config.openai.model, promptTokens: 0, cachedTokens: 0, completionTokens: 0, reasoningTokens: 0, latencyMs: 0 };
+  return { model: config.openai.model, promptTokens: 0, cachedTokens: 0, completionTokens: 0, reasoningTokens: 0, latencyMs: 0, costUsd: 0 };
 }
 
 function addUsage(usage: AiUsage, completion: OpenAI.Chat.Completions.ChatCompletion, startedAt: number) {
@@ -257,6 +257,12 @@ function addUsage(usage: AiUsage, completion: OpenAI.Chat.Completions.ChatComple
   usage.cachedTokens += completion.usage?.prompt_tokens_details?.cached_tokens ?? 0;
   usage.completionTokens += completion.usage?.completion_tokens ?? 0;
   usage.reasoningTokens += completion.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+  usage.costUsd += aiCostUsd(
+    completion.model,
+    completion.usage?.prompt_tokens ?? 0,
+    completion.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+    completion.usage?.completion_tokens ?? 0,
+  );
   usage.latencyMs = Date.now() - startedAt;
 }
 
@@ -310,6 +316,12 @@ function addResponseUsage(usage: AiUsage, response: OpenAI.Responses.Response, s
   usage.cachedTokens += response.usage?.input_tokens_details?.cached_tokens ?? 0;
   usage.completionTokens += response.usage?.output_tokens ?? 0;
   usage.reasoningTokens += response.usage?.output_tokens_details?.reasoning_tokens ?? 0;
+  usage.costUsd += aiCostUsd(
+    response.model,
+    response.usage?.input_tokens ?? 0,
+    response.usage?.input_tokens_details?.cached_tokens ?? 0,
+    response.usage?.output_tokens ?? 0,
+  );
   usage.latencyMs = Date.now() - startedAt;
 }
 
@@ -425,8 +437,8 @@ Then "message": only for "choosing" (otherwise empty). Follow the "follow-up" pa
   const startedAt = Date.now();
   const usage = emptyUsage();
   const completion = await client.chat.completions.create({
-    model: config.openai.model,
-    reasoning_effort: config.openai.reasoningEffort,
+    model: config.openai.supportModel,
+    reasoning_effort: "low",
     messages,
     response_format: { type: "json_schema", json_schema: { name: "follow_up", strict: true, schema: FOLLOW_UP_SCHEMA } },
   });
@@ -477,8 +489,8 @@ export async function writeLesson(
   const usage = emptyUsage();
   const list = waiting.map((w) => `#${w.id}: ${w.question}`).join("\n") || "(none)";
   const completion = await client.chat.completions.create({
-    model: config.openai.model,
-    reasoning_effort: config.openai.reasoningEffort,
+    model: config.openai.supportModel,
+    reasoning_effort: "low",
     messages: [
       { role: "developer", content: `${LESSON_INSTRUCTIONS}\n\n# Knowledge documents\n\n${loadKnowledge()}` },
       { role: "user", content: `Why the assistant handed off: ${handoffReason}\n\nThe chat:\n${transcript}\n\nLessons waiting for approval:\n${list}` },
@@ -525,7 +537,7 @@ export async function draftOrder(transcript: string, customerPhone: string): Pro
   const startedAt = Date.now();
   const usage = emptyUsage();
   const completion = await client.chat.completions.create({
-    model: config.openai.model,
+    model: config.openai.supportModel,
     reasoning_effort: "low",
     messages: [
       { role: "developer", content: `${ORDER_DRAFT_INSTRUCTIONS}\n\n# Knowledge documents\n\n${loadKnowledge()}` },
@@ -678,8 +690,8 @@ async function checkReply(history: ChatTurn[], context: CustomerContext, text: s
   const chat = history.map((t) => `${t.role === "customer" ? "CUSTOMER" : "US"}: ${t.text}`).join("\n");
   const about = [context.customerPhone && `The customer's own WhatsApp number: ${context.customerPhone}`, context.background].filter(Boolean).join("\n");
   const completion = await client!.chat.completions.create({
-    model: config.openai.model,
-    reasoning_effort: config.openai.reasoningEffort,
+    model: config.openai.supportModel,
+    reasoning_effort: "low",
     messages: [
       { role: "developer", content: `${CHECK_INSTRUCTIONS}\n\n# Knowledge documents\n\n${loadKnowledge()}` },
       {

@@ -21,6 +21,9 @@ export const config = {
     // How much the model "thinks" before answering. Thinking tokens are billed,
     // and shop questions need little of it. Values: minimal | low | medium | high
     reasoningEffort: optional("OPENAI_REASONING_EFFORT", "low") as "none" | "minimal" | "low" | "medium" | "high",
+    // Background work (the check before a reply goes out, follow-ups, lessons, order drafts, chat reviews):
+    // a cheaper model, so only the customer replies pay for the big one.
+    supportModel: optional("OPENAI_SUPPORT_MODEL", "gpt-5-mini"),
   },
 
   // WhatsApp Cloud API with Coexistence (number stays in the WhatsApp Business app).
@@ -116,3 +119,19 @@ export const config = {
   // How many recent messages of the conversation the AI sees.
   historyLimit: Number(optional("HISTORY_LIMIT", "20")),
 };
+
+// OpenAI list prices in US$ per 1M tokens, by model name prefix (the API answers with e.g. "gpt-5.5-2026-04-23").
+// Models not listed use the OPENAI_PRICE_* values.
+const MODEL_PRICES: Record<string, { input: number; cachedInput: number; output: number }> = {
+  "gpt-5.5": { input: 5, cachedInput: 0.5, output: 30 },
+  "gpt-5-mini": { input: 0.25, cachedInput: 0.025, output: 2 },
+};
+
+// What one AI call cost. completion includes the thinking tokens.
+export function aiCostUsd(model: string | null | undefined, prompt: number, cached: number, completion: number): number {
+  const key = Object.keys(MODEL_PRICES)
+    .filter((k) => model?.startsWith(k))
+    .sort((a, b) => b.length - a.length)[0];
+  const p = key ? MODEL_PRICES[key]! : config.dashboard.price;
+  return ((prompt - cached) * p.input + cached * p.cachedInput + completion * p.output) / 1_000_000;
+}
