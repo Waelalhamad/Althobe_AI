@@ -13,6 +13,7 @@ import { Knowledge } from "./pages/Knowledge";
 import { Catalog } from "./pages/Catalog";
 import { Orders } from "./pages/Orders";
 import { Leads } from "./pages/Leads";
+import { Stock } from "./pages/Stock";
 import { Supervisor } from "./pages/Supervisor";
 import { Playground } from "./pages/Playground";
 import { SettingsPage } from "./pages/Settings";
@@ -46,6 +47,7 @@ function App() {
           <Route path="/inbox/:customer?" component={Inbox} />
           <Route path="/orders" component={Orders} />
           <Route path="/leads" component={Leads} />
+          <Route path="/stock" component={Stock} />
           <Route path="/supervisor" component={Supervisor} />
           <Route path="/handoffs" component={Handoffs} />
           <Route path="/learning" component={Learning} />

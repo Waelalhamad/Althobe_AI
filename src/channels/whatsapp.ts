@@ -33,6 +33,7 @@ import { notifyHandoff, notifyOrder, orderOneLine } from "../orders.js";
 import { customerLabel, notifyError } from "../telegram.js";
 import { isMetaCustomer, metaSendImage, metaSendText, metaTyping } from "./meta.js";
 import { noteHandoff } from "../learning.js";
+import { missingStock } from "../stock.js";
 import { splitAroundPhotos, splitMessages, typingPause } from "../typing.js";
 
 const DEFAULT_HANDOFF_MESSAGE = "حاضر، لحظة نتأكدلك ونرجعلك 🙏";
@@ -533,6 +534,17 @@ async function respond(customer: string) {
         const wamid = await sendText(customer, text);
         saveMessage({ customer, role: "business", source: "ai", text, wamid });
         log(key, `same order as #${same} sent again by the AI; not saved twice`);
+        return;
+      }
+      const missing = missingStock(decision.order.items);
+      if (missing.length) {
+        // A color/size we don't have: no order, the team tells the customer what's left.
+        const reason = `الزبون أكّد طلب على شي خلص بالمخزون: ${missing.join("، ")}. ${orderOneLine(decision.order)}`;
+        const text = DEFAULT_HANDOFF_MESSAGE;
+        saveMessage({ customer, role: "business", source: "ai", text, wamid: await sendText(customer, text) });
+        pauseAi(customer, `AI handoff: ${reason}`);
+        log(key, `order not saved, out of stock: ${missing.join(", ")}`);
+        notifyHandoff(customer, reason);
         return;
       }
       const id = saveOrder({ customer, channel: channelOf(customer), ...decision.order });

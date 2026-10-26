@@ -5,6 +5,7 @@ import clsx from "clsx";
 import {
   Activity,
   BookOpen,
+  Boxes,
   FlaskConical,
   GraduationCap,
   Hand,
@@ -25,6 +26,7 @@ const NAV = [
   { href: "/", label: "نظرة عامة", icon: LayoutDashboard },
   { href: "/inbox", label: "المحادثات", icon: MessagesSquare },
   { href: "/orders", label: "الطلبات", icon: ShoppingBag },
+  { href: "/stock", label: "المخزون", icon: Boxes },
   { href: "/leads", label: "الزباين", icon: Users },
   { href: "/supervisor", label: "المشرف العام", icon: ShieldCheck },
   { href: "/handoffs", label: "التحويلات للفريق", icon: Hand },

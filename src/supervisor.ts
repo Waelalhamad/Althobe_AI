@@ -8,6 +8,7 @@ import { background } from "./agent.js";
 import { learningStats } from "./learning.js";
 import { config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
+import { stockForPrompt } from "./stock.js";
 import { catalogForPrompt } from "./catalog.js";
 import { db, getSetting, setSetting } from "./store.js";
 import { log } from "./scheduler.js";
@@ -353,7 +354,7 @@ let client: OpenAI | undefined;
 
 function supervisorPrompt(): string {
   const s = supervisorSettings();
-  return `${SUPERVISOR.replace("{WORK}", `${s.workStart}:00 to ${s.workEnd}:00 Libya time`)}\n\n# Product photos${catalogForPrompt()}\n\n# Knowledge documents\n\n${loadKnowledge()}`;
+  return `${SUPERVISOR.replace("{WORK}", `${s.workStart}:00 to ${s.workEnd}:00 Libya time`)}\n\n# Product photos${catalogForPrompt()}\n\n# Knowledge documents\n\n${loadKnowledge()}${stockForPrompt()}`;
 }
 
 type Row = { id: number; role: string; source: string; text: string; created_at: number; history: number };

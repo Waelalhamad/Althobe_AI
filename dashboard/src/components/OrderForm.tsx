@@ -67,6 +67,14 @@ export function OrderForm({
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: api.catalog, staleTime: 60_000 });
   const products = [...new Set(catalog.data?.map((c) => c.product).filter((p): p is string => Boolean(p)))];
   const colors = [...new Set(catalog.data?.map((c) => c.name.replace(/^اللون:\s*/, "")).filter(Boolean))];
+  // A new order for a color/size that ran out: warn (the team may still have one the count missed).
+  const filled = o.items.filter((i) => i.color && i.size);
+  const stock = useQuery({
+    queryKey: ["stock-check", JSON.stringify(filled)],
+    queryFn: () => api.checkStock(filled),
+    enabled: !orderId && filled.length > 0,
+    staleTime: 30_000,
+  });
 
   const save = useMutation({
     mutationFn: () =>
@@ -203,6 +211,9 @@ export function OrderForm({
           </div>
         )}
 
+        {!orderId && stock.data?.missing.length ? (
+          <p className="rounded-xl bg-bad/10 p-3 text-sm text-bad">⚠️ خلص بالمخزون: {stock.data.missing.join("، ")}. تأكدو قبل ما تسجلو.</p>
+        ) : null}
         <ErrorNote error={save.error} />
         {messageError ? (
           <div className="flex flex-col gap-2">

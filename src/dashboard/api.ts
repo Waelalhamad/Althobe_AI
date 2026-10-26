@@ -19,10 +19,17 @@ import {
   writeKnowledgeFile,
 } from "../knowledge.js";
 import { log } from "../scheduler.js";
+import { missingStock } from "../stock.js";
 import { aiRepliesEnabled, channelRepliesEnabled, META_CHANNELS, setAiReplies, setChannelReplies, setTestNumbers, testNumbers } from "../settings.js";
 import {
   channelOf,
   db,
+  deleteProductStock,
+  listStock,
+  setProductStock,
+  stockName,
+  stockRowFor,
+  type OrderItem,
   getSetting,
   ORDER_STATUSES,
   pauseAi,
@@ -488,6 +495,78 @@ dashboardApi.delete("/catalog/:id", (req, res) => {
     return;
   }
   log("dashboard", `product photo deleted: ${req.params.id}`);
+  res.json({ ok: true });
+});
+
+// --- Stock -------------------------------------------------------------------------
+
+// Each product kept in stock with its colors, sizes and pieces left, plus what open orders (new / confirmed,
+// not sent yet) hold of each. Suggestions: the products and colors of the product photos.
+dashboardApi.get("/stock", (_req, res) => {
+  const rows = listStock();
+  const held = new Map<string, number>();
+  const open = db.prepare("SELECT items FROM orders WHERE status IN ('new', 'confirmed') AND stock_applied = 1").all() as { items: string }[];
+  for (const o of open) {
+    for (const item of JSON.parse(o.items) as OrderItem[]) {
+      const row = stockRowFor(item, rows);
+      if (row) held.set(`${row.product}|${row.color}|${row.size}`, (held.get(`${row.product}|${row.color}|${row.size}`) ?? 0) + item.quantity);
+    }
+  }
+  const products = [...new Set(rows.map((r) => r.product))].map((product) => {
+    const mine = rows.filter((r) => r.product === product);
+    return {
+      product,
+      colors: [...new Set(mine.map((r) => r.color))],
+      sizes: [...new Set(mine.map((r) => r.size))],
+      cells: mine.map((r) => ({ color: r.color, size: r.size, quantity: r.quantity, held: held.get(`${product}|${r.color}|${r.size}`) ?? 0 })),
+      updatedAt: Math.max(...mine.map((r) => r.updatedAt)),
+    };
+  });
+  const catalog = listCatalog();
+  const suggestions = [...new Set(catalog.map((c) => c.product?.trim() ?? "").filter(Boolean))].map((product) => ({
+    product,
+    colors: [...new Set(catalog.filter((c) => c.product?.trim() === product).map((c) => c.name.replace(/^اللون\s*[:：]?\s*/, "").trim()))],
+  }));
+  res.json({ products, suggestions });
+});
+
+// Saves one product's whole table: { colors, sizes, cells: [{ color, size, quantity }] }.
+dashboardApi.put("/stock/:product", (req, res) => {
+  const product = String(req.params.product).trim().slice(0, 100);
+  const cells = Array.isArray(req.body?.cells) ? (req.body.cells as Record<string, unknown>[]) : [];
+  const seen = new Set<string>();
+  const rows = cells
+    .map((c) => ({ color: String(c?.color ?? "").trim().slice(0, 60), size: String(c?.size ?? "").trim().slice(0, 20), quantity: Number(c?.quantity) }))
+    .filter((c) => c.color && c.size && Number.isFinite(c.quantity) && Math.abs(c.quantity) < 100_000)
+    .filter((c) => {
+      const key = `${stockName(c.color)}|${stockName(c.size)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  if (!product || !rows.length) {
+    res.status(400).json({ error: "اكتب اسم المنتج، ولون ومقاس واحد على الأقل" });
+    return;
+  }
+  setProductStock(product, rows);
+  log("dashboard", `stock saved for ${product}: ${rows.reduce((n, r) => n + Math.max(0, r.quantity), 0)} pieces in ${rows.length} color/size`);
+  res.json({ ok: true });
+});
+
+// What of these items we don't have (the team's order form warns before saving).
+dashboardApi.post("/stock/check", (req, res) => {
+  const items = (Array.isArray(req.body?.items) ? (req.body.items as Record<string, unknown>[]) : []).map((i) => ({
+    product: String(i?.product ?? ""),
+    color: String(i?.color ?? ""),
+    size: String(i?.size ?? ""),
+    quantity: Math.max(1, Math.round(Number(i?.quantity) || 1)),
+  }));
+  res.json({ missing: missingStock(items) });
+});
+
+dashboardApi.delete("/stock/:product", (req, res) => {
+  deleteProductStock(String(req.params.product));
+  log("dashboard", `stock no longer kept for ${req.params.product}`);
   res.json({ ok: true });
 });
 

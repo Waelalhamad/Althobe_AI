@@ -128,6 +128,15 @@ export type Order = {
 export type Payment = "cash" | "transfer";
 export const PAYMENT_LABEL: Record<Payment, string> = { cash: "كاش عند الاستلام", transfer: "تحويل مصرفي" };
 
+// Stock: pieces left per color and size; held = pieces in open orders not sent yet.
+export type StockProduct = {
+  product: string;
+  colors: string[];
+  sizes: string[];
+  cells: { color: string; size: string; quantity: number; held: number }[];
+  updatedAt: number;
+};
+
 export type DarbZone = { city: string; areas: string[] };
 export type DarbPreview = {
   zones: DarbZone[];
@@ -264,6 +273,11 @@ export const api = {
   saveKnowledge: (name: string, body: string) =>
     request(`/knowledge/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ body }) }),
   deleteKnowledge: (name: string) => request(`/knowledge/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  stock: () => request<{ products: StockProduct[]; suggestions: { product: string; colors: string[] }[] }>("/stock"),
+  saveStock: (product: string, cells: { color: string; size: string; quantity: number }[]) =>
+    request(`/stock/${encodeURIComponent(product)}`, { method: "PUT", body: JSON.stringify({ cells }) }),
+  checkStock: (items: OrderItem[]) => post<{ missing: string[] }>("/stock/check", { items }),
+  deleteStock: (product: string) => request(`/stock/${encodeURIComponent(product)}`, { method: "DELETE" }),
   playground: (messages: ChatTurn[], customerType: "new" | "returning" | "order" = "new") =>
     post<Decision>("/playground", { messages, customerType }),
   orders: (status?: OrderStatus) =>

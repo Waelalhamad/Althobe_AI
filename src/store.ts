@@ -359,7 +359,9 @@ export function saveOrder(o: NewOrder): number {
     o.customer, o.channel, o.name, o.phone, o.city, o.address, JSON.stringify(o.items), o.total, o.notes, o.payment ?? "",
     o.source ?? "ai", o.status ?? "new", now, now,
   );
-  return Number(result.lastInsertRowid);
+  const id = Number(result.lastInsertRowid);
+  if ((o.status ?? "new") !== "cancelled") takeStock(id, o.items);
+  return id;
 }
 
 // The same items already ordered by this customer and still open: the AI re-sending an order it took earlier in the chat.
@@ -374,18 +376,141 @@ export type OrderFields = Pick<NewOrder, "name" | "phone" | "city" | "address" |
 
 // The team corrects an order (a wrong number, a changed size...).
 export function updateOrder(id: number, o: OrderFields): boolean {
-  return (
+  // Changed items (another color or size) move the stock with them.
+  const before = stockState(id);
+  if (before?.applied) returnStock(id, before.items);
+  const changed =
     db
       .prepare("UPDATE orders SET name = ?, phone = ?, city = ?, address = ?, items = ?, total = ?, notes = ?, payment = ?, updated_at = ? WHERE id = ?")
-      .run(o.name, o.phone, o.city, o.address, JSON.stringify(o.items), o.total, o.notes, o.payment ?? "", Date.now(), id).changes > 0
-  );
+      .run(o.name, o.phone, o.city, o.address, JSON.stringify(o.items), o.total, o.notes, o.payment ?? "", Date.now(), id).changes > 0;
+  if (before?.applied) takeStock(id, changed ? o.items : before.items);
+  return changed;
 }
 
 export const ORDER_STATUSES = ["new", "confirmed", "delivered", "cancelled"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 export function setOrderStatus(id: number, status: OrderStatus): boolean {
-  return db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(status, Date.now(), id).changes > 0;
+  const before = stockState(id);
+  const changed = db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(status, Date.now(), id).changes > 0;
+  // A cancelled order gives its pieces back; un-cancelling takes them again.
+  if (changed && before) {
+    if (status === "cancelled" && before.applied) returnStock(id, before.items);
+    else if (status !== "cancelled" && before.status === "cancelled" && !before.applied) takeStock(id, before.items);
+  }
+  return changed;
+}
+
+// --- Stock: pieces left per product, color and size (set by the team in the dashboard) ---
+// An order takes its pieces when it is saved and gives them back when it is cancelled. Orders from before stock
+// was kept never took any (stock_applied 0), so cancelling them changes nothing.
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS stock (
+    product     TEXT    NOT NULL,
+    color       TEXT    NOT NULL,
+    size        TEXT    NOT NULL,
+    quantity    INTEGER NOT NULL,          -- may go below 0 when more was sold than counted
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (product, color, size)
+  );
+`);
+if (!(db.prepare("PRAGMA table_info(orders)").all() as { name: string }[]).some((c) => c.name === "stock_applied")) {
+  db.exec("ALTER TABLE orders ADD COLUMN stock_applied INTEGER NOT NULL DEFAULT 0");
+}
+
+export type StockRow = { product: string; color: string; size: string; quantity: number; updatedAt: number };
+
+export function listStock(): StockRow[] {
+  return db.prepare("SELECT product, color, size, quantity, updated_at AS updatedAt FROM stock ORDER BY product, color, size").all() as StockRow[];
+}
+
+// Replaces one product's whole table (its colors and sizes).
+export function setProductStock(product: string, rows: { color: string; size: string; quantity: number }[]) {
+  const now = Date.now();
+  db.exec("BEGIN");
+  try {
+    db.prepare("DELETE FROM stock WHERE product = ?").run(product);
+    const insert = db.prepare("INSERT OR REPLACE INTO stock (product, color, size, quantity, updated_at) VALUES (?, ?, ?, ?, ?)");
+    for (const r of rows) insert.run(product, r.color, r.size, Math.round(r.quantity), now);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function deleteProductStock(product: string) {
+  db.prepare("DELETE FROM stock WHERE product = ?").run(product);
+}
+
+// "الأسود" / "أسود" / "اللون: اسود" → "اسود"; Arabic digits → 0-9.
+export function stockName(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/^اللون\s*[:：]?\s*/, "")
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u064B-\u0652\u0640]/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة$/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/^ال(?=\S{3,})/, "")
+    .replace(/\s+/g, " ");
+}
+
+// The stock row an ordered item counts against. The product name the AI writes can differ from the dashboard's
+// ("الثوب العربي" / "طقم عربي ثلاث قطع"): with one product kept in stock, every item is that product.
+// Undefined: that item isn't kept in stock.
+export function stockRowFor(item: OrderItem, rows = listStock()): StockRow | undefined {
+  const products = [...new Set(rows.map((r) => r.product))];
+  const product = item.product?.trim()
+    ? (products.find((p) => stockName(p) === stockName(item.product!)) ?? (products.length === 1 ? products[0] : undefined))
+    : products.length === 1
+      ? products[0]
+      : undefined;
+  if (!product) return undefined;
+  const size = stockName(item.size).replace(/\D/g, "") || stockName(item.size);
+  return rows.find(
+    (r) => r.product === product && stockName(r.color) === stockName(item.color) && (stockName(r.size).replace(/\D/g, "") || stockName(r.size)) === size,
+  );
+}
+
+// Called when a piece runs out (stock.ts sends the Telegram alert).
+let onStockOut: ((row: StockRow) => void) | undefined;
+export function whenStockRunsOut(fn: (row: StockRow) => void) {
+  onStockOut = fn;
+}
+
+function stockState(id: number): { items: OrderItem[]; status: OrderStatus; applied: boolean } | undefined {
+  const row = db.prepare("SELECT items, status, stock_applied FROM orders WHERE id = ?").get(id) as
+    | { items: string; status: OrderStatus; stock_applied: number }
+    | undefined;
+  return row && { items: JSON.parse(row.items) as OrderItem[], status: row.status, applied: row.stock_applied === 1 };
+}
+
+function moveStock(items: OrderItem[], sign: 1 | -1) {
+  const rows = listStock();
+  const update = db.prepare("UPDATE stock SET quantity = quantity + ?, updated_at = ? WHERE product = ? AND color = ? AND size = ?");
+  for (const item of items) {
+    const row = stockRowFor(item, rows);
+    if (!row) continue;
+    const delta = sign * item.quantity;
+    update.run(delta, Date.now(), row.product, row.color, row.size);
+    const before = row.quantity;
+    row.quantity += delta;
+    if (before > 0 && row.quantity <= 0) onStockOut?.(row);
+  }
+}
+
+function takeStock(id: number, items: OrderItem[]) {
+  moveStock(items, -1);
+  db.prepare("UPDATE orders SET stock_applied = 1 WHERE id = ?").run(id);
+}
+
+function returnStock(id: number, items: OrderItem[]) {
+  moveStock(items, 1);
+  db.prepare("UPDATE orders SET stock_applied = 0 WHERE id = ?").run(id);
 }
 
 // The customer's latest WhatsApp message id (to mark it read / show "typing…").

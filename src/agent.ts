@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { aiCostUsd, config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
 import { catalogForPrompt, listCatalog } from "./catalog.js";
+import { stockForPrompt } from "./stock.js";
 import type { AiUsage, OrderItem, Payment } from "./store.js";
 
 // Created on first use, so the server can start (e.g. in listen-only mode) before OPENAI_API_KEY is set.
@@ -261,7 +262,8 @@ function chatMessages(history: ChatTurn[], context: CustomerContext): OpenAI.Cha
   return [
     {
       role: "developer",
-      content: `${INSTRUCTIONS}${catalogForPrompt()}\n\n# Knowledge documents\n\n${loadKnowledge()}${aboutCustomer}`,
+      // The stock comes after the knowledge: it changes often, and what's before it stays cached.
+      content: `${INSTRUCTIONS}${catalogForPrompt()}\n\n# Knowledge documents\n\n${loadKnowledge()}${stockForPrompt()}${aboutCustomer}`,
     },
     ...history.map((turn): OpenAI.Chat.Completions.ChatCompletionMessageParam => {
       if (turn.role === "business") return { role: "assistant", content: turn.text };
@@ -770,7 +772,7 @@ async function checkReply(history: ChatTurn[], context: CustomerContext, text: s
     prompt_cache_key: "check",
     reasoning_effort: "low",
     messages: [
-      { role: "developer", content: `${CHECK_INSTRUCTIONS}\n\n# Knowledge documents\n\n${loadKnowledge()}` },
+      { role: "developer", content: `${CHECK_INSTRUCTIONS}\n\n# Knowledge documents\n\n${loadKnowledge()}${stockForPrompt()}` },
       {
         role: "user",
         content: `${about ? `This customer:\n${about}\n\n` : ""}The chat so far:\n${chat}\n\nThe reply to check:\n${text.replace(/^\s*\[photos\]\s*$/gim, "[product photos]")}`,
