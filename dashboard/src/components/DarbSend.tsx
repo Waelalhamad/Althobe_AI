@@ -124,9 +124,15 @@ export function DarbSend({ order, onClose }: { order: Order; onClose: () => void
             )}
 
             <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted">العنوان والملاحظات للمندوب</span>
+              <span className="text-xs text-muted">العنوان والملاحظات للمندوب (بتنبعت لدرب السبيل)</span>
               <textarea value={s.notes} onChange={(e) => setS({ ...s, notes: e.target.value })} rows={3} className={inputClass} />
             </label>
+            {preview.data.internalNotes && (
+              <div className="rounded-xl border border-dashed border-line p-3 text-xs text-muted">
+                <div className="mb-1 font-semibold">ملاحظات داخلية (ما بتنبعت)</div>
+                <p className="whitespace-pre-wrap">{preview.data.internalNotes}</p>
+              </div>
+            )}
 
             <div className="rounded-xl bg-card-2 p-3 text-sm">
               <div className="mb-1 text-xs text-muted">المنتجات</div>

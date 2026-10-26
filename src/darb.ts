@@ -134,7 +134,9 @@ export async function shipmentPreview(orderId: number) {
   return {
     zones,
     guess: guessZone(zones, order.city, order.address),
-    notes: [order.address, order.notes].filter((s) => s.trim()).join("\n"),
+    // Only the address goes to the courier; the order's notes are the team's own (sizes talk, weight, ...).
+    notes: order.address.trim(),
+    internalNotes: order.notes.trim(),
     total: amount(order.total) ?? 0,
     phone: intlPhone(order.phone) ?? intlPhone(order.customer) ?? "",
     lines: items.map((i) => ({ title: productTitle(i), quantity: i.quantity })),

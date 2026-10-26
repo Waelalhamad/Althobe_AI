@@ -117,6 +117,7 @@ export type DarbPreview = {
   zones: DarbZone[];
   guess?: { city: string; area: string };
   notes: string;
+  internalNotes: string;
   total: number;
   phone: string;
   lines: { title: string; quantity: number }[];
