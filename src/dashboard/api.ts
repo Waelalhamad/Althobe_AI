@@ -310,6 +310,7 @@ function orderFields(body: Record<string, unknown> | undefined): OrderFields | s
     items,
     total: str(body?.total, 100),
     notes: str(body?.notes, 2000),
+    payment: body?.payment === "transfer" ? ("transfer" as const) : ("cash" as const),
   };
   if (!fields.phone.replace(/\D/g, "")) return "اكتب رقم الزبون";
   if (!items.length) return "اكتب شو طلب (اللون والمقاس)";
@@ -396,7 +397,7 @@ function darbInput(body: Record<string, unknown> | undefined): ShipmentInput {
     area: String(body?.area ?? "").trim(),
     notes: String(body?.notes ?? "").trim(),
     total: Number(body?.total),
-    payment: String(body?.payment ?? "").trim().slice(0, 100),
+    payment: body?.payment === "cash" || body?.payment === "transfer" ? body.payment : "",
   };
 }
 

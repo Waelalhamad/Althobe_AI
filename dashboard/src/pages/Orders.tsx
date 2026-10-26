@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { MessageCircle, Pencil, Phone, Plus, ShoppingBag, Truck } from "lucide-react";
-import { api, type Order, type OrderStatus } from "../api";
+import { api, PAYMENT_LABEL, type Order, type OrderStatus } from "../api";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { emptyOrder, OrderForm } from "../components/OrderForm";
 import { OrdersExport } from "../components/OrdersExport";
@@ -80,7 +80,7 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
       {editing && (
         <OrderForm
           orderId={o.id}
-          initial={{ name: o.name, phone: o.phone, city: o.city, address: o.address, items: o.items, total: o.total, notes: o.notes }}
+          initial={{ name: o.name, phone: o.phone, city: o.city, address: o.address, items: o.items, total: o.total, notes: o.notes, payment: o.payment }}
           onClose={() => setEditing(false)}
         />
       )}
@@ -150,6 +150,9 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
           }
         />
         <Field k="الاجمالي" v={<span className="font-semibold">{o.total}</span>} />
+        {o.payment && (
+          <Field k="الدفع" v={o.payment === "transfer" ? <span className="font-semibold text-info">{PAYMENT_LABEL.transfer}</span> : PAYMENT_LABEL.cash} />
+        )}
         {o.notes && <Field k="ملاحظات" v={o.notes} wide />}
       </dl>
 

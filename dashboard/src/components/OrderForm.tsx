@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, X } from "lucide-react";
-import { api, type OrderInput, type OrderItem, type OrderStatus } from "../api";
+import { api, PAYMENT_LABEL, type OrderInput, type OrderItem, type OrderStatus, type Payment } from "../api";
 import { Button, ErrorNote } from "./ui";
 
 const inputClass = "w-full rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary";
@@ -17,6 +17,7 @@ function confirmation(o: OrderInput): string {
     ...items,
     place && `التوصيل: ${place}`,
     o.total.trim() && `الإجمالي: ${o.total.trim()}`,
+    o.payment && `الدفع: ${PAYMENT_LABEL[o.payment]}`,
     "تقدر تقيسو وقت يجيك المندوب قبل ما تستلم 👌",
   ]
     .filter(Boolean)
@@ -37,6 +38,7 @@ export const emptyOrder = (): OrderInput => ({
   items: [{ product: "", color: "", size: "", quantity: 1 }],
   total: "",
   notes: "",
+  payment: "cash",
 });
 
 // Adds an order the team closed (orderId missing), or corrects an existing one.
@@ -157,6 +159,16 @@ export function OrderForm({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Label text="الاجمالي">
             <input value={o.total} onChange={(e) => set({ total: e.target.value })} placeholder="مثلاً 385 دينار" className={inputClass} />
+          </Label>
+          <Label text="الدفع">
+            <select value={o.payment || ""} onChange={(e) => set({ payment: e.target.value as Payment })} className={inputClass} required>
+              {!o.payment && <option value="">اختار…</option>}
+              {(Object.keys(PAYMENT_LABEL) as Payment[]).map((p) => (
+                <option key={p} value={p}>
+                  {PAYMENT_LABEL[p]}
+                </option>
+              ))}
+            </select>
           </Label>
           {!orderId && (
             <Label text="الحالة">

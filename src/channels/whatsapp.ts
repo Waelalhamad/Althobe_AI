@@ -54,6 +54,8 @@ type WaMessage = {
   document?: WaMedia & { filename?: string };
   audio?: WaMedia & { voice?: boolean };
   sticker?: WaMedia;
+  // A pin the customer shared from WhatsApp's location button.
+  location?: { latitude?: number; longitude?: number; name?: string; address?: string; url?: string };
   // The customer edited an earlier message (Coexistence only): the new content is in edit.message.
   edit?: { original_message_id?: string; message?: Omit<WaMessage, "id"> };
   // An emoji on one of the messages in the chat (empty emoji = reaction removed).
@@ -651,6 +653,13 @@ function describeContent(m: WaMessage): string {
       return describeMedia(m.type, m[m.type] ?? {});
     case "edit":
       return m.edit?.message ? `[edited] ${describeContent({ ...m.edit.message, id: m.id })}` : "[edited a message]";
+    case "location": {
+      // As a Google Maps link: it goes with the address to the courier.
+      const l = m.location;
+      if (l?.latitude === undefined || l.longitude === undefined) return "[sent a location]";
+      const place = [l.name, l.address].filter(Boolean).join(" - ");
+      return `[sent a location: https://maps.google.com/?q=${l.latitude},${l.longitude}${place ? ` (${place})` : ""}]`;
+    }
     case "media_placeholder": // history sync leaves out media contents
       return "[sent a media file]";
     default:

@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Truck, X } from "lucide-react";
-import { api, type DarbShipment, type Order } from "../api";
+import { api, PAYMENT_LABEL, type DarbShipment, type Order, type Payment } from "../api";
 import { Button, ErrorNote } from "./ui";
 import { num } from "../format";
-
-const PAYMENTS = ["كاش عند الاستلام", "حوالة مصرفية عند الاستلام"];
 
 const inputClass = "w-full rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary";
 
@@ -34,15 +32,15 @@ export function DarbSend({ order, onClose }: { order: Order; onClose: () => void
   const [s, setS] = useState<DarbShipment>({ city: "", area: "", notes: "", total: 0 });
   useEffect(() => {
     const p = preview.data;
-    // The payment is always chosen by the team.
-    if (p) setS({ city: p.guess?.city ?? "", area: p.guess?.area ?? "", notes: p.notes, total: p.total, payment: "" });
+    // The payment comes from the order; an order from before it was asked has the team choose it.
+    if (p) setS({ city: p.guess?.city ?? "", area: p.guess?.area ?? "", notes: p.notes, total: p.total, payment: order.payment || "" });
   }, [preview.data]);
   const areas = useMemo(() => preview.data?.zones.find((z) => z.city === s.city)?.areas ?? [], [preview.data, s.city]);
 
   // Darb's price for this place, asked again when the city, area or amount changes.
   const quote = useQuery({
-    queryKey: ["darb-quote", order.id, s.city, s.area, s.total],
-    // The price doesn't depend on the note or the payment line.
+    queryKey: ["darb-quote", order.id, s.city, s.area, s.total, s.payment],
+    // The price doesn't depend on the note.
     queryFn: () => api.darbQuote(order.id, s),
     enabled: Boolean(s.city && s.area && s.total > 0),
     staleTime: 5 * 60_000,
@@ -140,15 +138,20 @@ export function DarbSend({ order, onClose }: { order: Order; onClose: () => void
 
             <label className="flex flex-col gap-1">
               <span className="text-xs text-muted">طريقة الدفع (بتنكتب أول سطر بملاحظة المندوب)</span>
-              <select value={s.payment ?? ""} onChange={(e) => setS({ ...s, payment: e.target.value })} className={inputClass} required>
+              <select value={s.payment ?? ""} onChange={(e) => setS({ ...s, payment: e.target.value as Payment })} className={inputClass} required>
                 <option value="">اختار طريقة الدفع…</option>
-                {PAYMENTS.map((p) => (
+                {(Object.keys(PAYMENT_LABEL) as Payment[]).map((p) => (
                   <option key={p} value={p}>
-                    {p}
+                    {PAYMENT_LABEL[p]}
                   </option>
                 ))}
               </select>
             </label>
+            {s.payment === "transfer" && (
+              <p className="rounded-xl bg-info/10 p-3 text-xs text-info">
+                تحويل مصرفي: المندوب ما بيقبض شي (المبلغ لدرب 0)، والتوصيل علينا. بالملاحظة بينكتب "تحويل مصرفي - السعر {s.total || "…"} دينار".
+              </p>
+            )}
 
             <label className="flex flex-col gap-1">
               <span className="text-xs text-muted">العنوان والملاحظات للمندوب (بتنبعت لدرب السبيل)</span>
@@ -174,14 +177,13 @@ export function DarbSend({ order, onClose }: { order: Order; onClose: () => void
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted">المبلغ يلي بيقبضو المندوب (دينار)</span>
+                <span className="text-xs text-muted">{s.payment === "transfer" ? "سعر الطلب (للملاحظة بس، دينار)" : "المبلغ يلي بيقبضو المندوب (دينار)"}</span>
                 <input
                   type="number"
                   min={1}
                   value={s.total || ""}
                   onChange={(e) => setS({ ...s, total: Number(e.target.value) })}
                   className={`${inputClass} num`}
-                  disabled={editing}
                   required
                 />
               </label>
@@ -193,7 +195,7 @@ export function DarbSend({ order, onClose }: { order: Order; onClose: () => void
                   ) : quote.data ? (
                     <span className="num">
                       {num(quote.data.shipping)} د{quote.data.charges ? ` + ${quote.data.charges} رسوم` : ""}
-                      <span className="text-xs text-muted"> · من المبيعات</span>
+                      <span className="text-xs text-muted">{s.payment === "transfer" ? " · علينا" : " · من المبيعات"}</span>
                     </span>
                   ) : (
                     <span className="text-muted">—</span>

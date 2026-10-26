@@ -1,7 +1,7 @@
 // Darb Assabil (درب السبيل), our courier: a confirmed order becomes a shipment from the dashboard, the way the team
 // used to enter it by hand in their app (same service, product titles, free box, delivery paid from the sales).
 import { config } from "./config.js";
-import { db, setOrderStatus, type OrderItem, type OrderStatus } from "./store.js";
+import { db, PAYMENT_LABEL, setOrderStatus, type OrderItem, type OrderStatus, type Payment } from "./store.js";
 import { log } from "./scheduler.js";
 
 const MALE_DELIVERY = "6783c612dcf305c9e775c987"; // "توصيل رجالي", the account's default service
@@ -103,6 +103,8 @@ type OrderRow = {
   total: string;
   notes: string;
   status: OrderStatus;
+  payment: Payment | "";
+  darb_id: string | null;
   darb_ref: string | null;
 };
 
@@ -125,9 +127,14 @@ function amount(total: string): number | undefined {
   return m ? Number(m[0]) : undefined;
 }
 
-// payment: how the customer pays the courier; it goes first in the courier's note.
-export type ShipmentInput = { city: string; area: string; notes: string; total: number; payment?: string };
-export const PAYMENTS = ["كاش عند الاستلام", "حوالة مصرفية عند الاستلام"] as const;
+// payment: how the customer pays; it goes first in the courier's note.
+// Cash: the courier collects the total. Bank transfer: the courier collects nothing (amount 0, delivery on
+// our account) and the note tells him it's paid by transfer and its price.
+export type ShipmentInput = { city: string; area: string; notes: string; total: number; payment?: Payment | "" };
+
+function charge(input: ShipmentInput) {
+  return input.payment === "transfer" ? { paymentBy: "sender", collect: 0 } : { paymentBy: "sales", collect: input.total };
+}
 
 // What the dashboard shows before sending: the guessed place, the product lines and the amount to collect.
 export async function shipmentPreview(orderId: number) {
@@ -141,7 +148,7 @@ export async function shipmentPreview(orderId: number) {
     // Only the address goes to the courier; the order's notes are the team's own (sizes talk, weight, ...).
     notes: order.address.trim(),
     internalNotes: order.notes.trim(),
-    payment: /حوال|تحويل|مصرف/.test(`${order.notes} ${order.total}`) ? PAYMENTS[1] : PAYMENTS[0],
+    payment: (order.payment || (/حوال|تحويل|مصرف/.test(`${order.notes} ${order.total}`) ? "transfer" : "cash")) as Payment,
     total: amount(order.total) ?? 0,
     phone: intlPhone(order.phone) ?? intlPhone(order.customer) ?? "",
     lines: items.map((i) => ({ title: productTitle(i), quantity: i.quantity })),
@@ -175,27 +182,30 @@ function products(items: OrderItem[], total: number) {
 
 // The payment line first, then the address and anything the team adds for the courier.
 function courierNote(input: ShipmentInput): string {
-  return [input.payment && `الدفع: ${input.payment}`, input.notes].filter(Boolean).join("\n").slice(0, 1000);
+  const payment =
+    input.payment === "transfer" ? `الدفع: ${PAYMENT_LABEL.transfer} - السعر ${input.total} دينار (المندوب ما بيقبض شي)` : input.payment && `الدفع: ${PAYMENT_LABEL[input.payment]}`;
+  return [payment, input.notes].filter(Boolean).join("\n").slice(0, 1000);
 }
 
 function checkPlace(input: ShipmentInput) {
   if (!input.city) throw new Error("اختار المدينة");
   if (!input.area) throw new Error("اختار المنطقة");
   if (!input.payment) throw new Error("اختار طريقة الدفع");
+  if (!(input.total > 0)) throw new Error("المبلغ لازم يكون أكبر من صفر");
 }
 
 function destination(input: ShipmentInput) {
   return { countryCode: "lby", city: input.city, area: input.area, address: "" };
 }
 
-// Darb's own price for this delivery (taken from the sales when it's paid by "sales").
+// Darb's own price for this delivery (taken from the sales when it's paid by "sales", charged to us for a transfer).
 export async function shipmentQuote(orderId: number, input: ShipmentInput): Promise<{ shipping: number; charges: number }> {
   const order = loadOrder(orderId);
   if (!order) throw new Error("Unknown order");
   const data = await darb<{ invoices: { items: { type: string; amount: number }[] }[] }>("POST", "/api/local/shipments/calculate/shipping", {
     service: MALE_DELIVERY,
-    products: products(JSON.parse(order.items) as OrderItem[], input.total),
-    paymentBy: "sales",
+    products: products(JSON.parse(order.items) as OrderItem[], charge(input).collect),
+    paymentBy: charge(input).paymentBy,
     to: destination(input),
   });
   const items = data.invoices.flatMap((inv) => inv.items);
@@ -222,7 +232,6 @@ export async function sendToDarb(orderId: number, input: ShipmentInput): Promise
   if (order.darb_ref) throw new Error(`الطلب مبعوت من قبل لدرب السبيل (#${order.darb_ref})`);
   if (order.status === "cancelled") throw new Error("الطلب ملغي");
   checkPlace(input);
-  if (!(input.total > 0)) throw new Error("المبلغ لازم يكون أكبر من صفر");
   const phone = intlPhone(order.phone) ?? intlPhone(order.customer);
   if (!phone) throw new Error("رقم الزبون مش صحيح");
 
@@ -231,9 +240,9 @@ export async function sendToDarb(orderId: number, input: ShipmentInput): Promise
     service: MALE_DELIVERY,
     notes: courierNote(input),
     contacts: [contact],
-    products: products(JSON.parse(order.items) as OrderItem[], input.total),
+    products: products(JSON.parse(order.items) as OrderItem[], charge(input).collect),
     allowSplitting: false,
-    paymentBy: "sales",
+    paymentBy: charge(input).paymentBy,
     to: destination(input),
     tags: [order.name.trim(), `#${order.id}`].filter(Boolean),
   });
@@ -246,17 +255,22 @@ export async function sendToDarb(orderId: number, input: ShipmentInput): Promise
     orderId,
   );
   if (order.status === "new") setOrderStatus(orderId, "confirmed");
-  log("darb", `order #${orderId} sent to Darb Assabil: shipment ${shipment.reference} (${input.city} / ${input.area})`);
+  log("darb", `order #${orderId} sent to Darb Assabil: shipment ${shipment.reference} (${input.city} / ${input.area}, ${input.payment})`);
   return { id: shipment._id, reference: shipment.reference, status: shipment.status };
 }
 
-// Fixes a shipment already sent: its city/area and the courier's note with the payment line
+// Fixes a shipment already sent: its city/area, the payment (amount to collect) and the courier's note
 // (Darb accepts it while the courier hasn't picked it up).
 export async function updateDarbShipment(orderId: number, input: ShipmentInput) {
-  const row = db.prepare("SELECT darb_id, darb_ref FROM orders WHERE id = ?").get(orderId) as { darb_id: string | null; darb_ref: string | null } | undefined;
-  if (!row?.darb_id) throw new Error("الطلب مش مبعوت لدرب السبيل");
+  const order = loadOrder(orderId);
+  if (!order?.darb_id) throw new Error("الطلب مش مبعوت لدرب السبيل");
   checkPlace(input);
-  await darb("PATCH", `/api/local/shipments/${row.darb_id}`, { to: destination(input), notes: courierNote(input) });
-  log("darb", `order #${orderId}: shipment ${row.darb_ref} updated (${input.city} / ${input.area}, ${input.payment})`);
+  await darb("PATCH", `/api/local/shipments/${order.darb_id}`, {
+    to: destination(input),
+    notes: courierNote(input),
+    products: products(JSON.parse(order.items) as OrderItem[], charge(input).collect),
+    paymentBy: charge(input).paymentBy,
+  });
+  log("darb", `order #${orderId}: shipment ${order.darb_ref} updated (${input.city} / ${input.area}, ${input.payment})`);
   return { ok: true };
 }

@@ -1,5 +1,6 @@
 // Text forms of an order the AI collected, for the team (logs, Chatwoot notes).
 import type { CollectedOrder } from "./agent.js";
+import { PAYMENT_LABEL } from "./store.js";
 import { customerLabel, dashboardLink, esc, notify } from "./telegram.js";
 
 export function orderItemsText(order: CollectedOrder): string {
@@ -10,7 +11,7 @@ export function orderItemsText(order: CollectedOrder): string {
 
 // One line, e.g. for the activity log and handoff reasons.
 export function orderOneLine(order: CollectedOrder): string {
-  return `${order.name} · ${order.phone} · ${order.city} ${order.address} · ${orderItemsText(order)} · ${order.total}`;
+  return `${order.name} · ${order.phone} · ${order.city} ${order.address} · ${orderItemsText(order)} · ${order.total}${order.payment ? ` · ${PAYMENT_LABEL[order.payment]}` : ""}`;
 }
 
 // The team's usual order format, for a Chatwoot private note.
@@ -22,6 +23,7 @@ export function orderNote(id: number, order: CollectedOrder): string {
     `العنوان: ${order.city} - ${order.address}`,
     `الطلب: ${orderItemsText(order)}`,
     `الاجمالي: ${order.total}`,
+    ...(order.payment ? [`الدفع: ${PAYMENT_LABEL[order.payment]}`] : []),
     ...(order.notes ? [`ملاحظات: ${order.notes}`] : []),
   ].join("\n");
 }
@@ -39,6 +41,7 @@ export function notifyOrder(id: number, customer: string, order: CollectedOrder,
       `العنوان: ${esc(order.city)} - ${esc(order.address)}`,
       `الطلب: ${esc(orderItemsText(order))}`,
       `الاجمالي: <b>${esc(order.total)}</b>`,
+      ...(order.payment ? [`الدفع: ${order.payment === "transfer" ? "<b>تحويل مصرفي</b>" : PAYMENT_LABEL.cash}`] : []),
       ...(order.notes ? [`ملاحظات: ${esc(order.notes)}`] : []),
       `${esc(customerLabel(customer))} ${link}`,
     ].join("\n"),

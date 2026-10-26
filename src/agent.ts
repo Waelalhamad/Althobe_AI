@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { aiCostUsd, config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
 import { catalogForPrompt, listCatalog } from "./catalog.js";
-import type { AiUsage, OrderItem } from "./store.js";
+import type { AiUsage, OrderItem, Payment } from "./store.js";
 
 // Created on first use, so the server can start (e.g. in listen-only mode) before OPENAI_API_KEY is set.
 let client: OpenAI | undefined;
@@ -18,6 +18,7 @@ export type CollectedOrder = {
   items: OrderItem[];
   total: string;
   notes: string;
+  payment?: Payment;
 };
 
 // photos: ids of catalog photos, sent before the text (see catalog.ts).
@@ -77,7 +78,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - Photos: when the customer asks about colors or models, or wants to see a product, send its photos with send_product_photos and add one short line. Write [photos] alone on its own line (between blank lines) where the photos should appear among your messages; without it they go just before your last message. Don't list the colors in text when photos exist. Don't send the same photos twice in one conversation, and never invent photo ids.
 
 # Taking the order
-- Collect, in a natural way: the product and its choices (color/model, size, as the product needs), full name, phone number, and the detailed address: city, area, street, and a nearby landmark (mosque, school, known shop) so the courier can find them. If they give only the city or only the area, ask once for the rest in a friendly way (e.g. "وين بالزبط؟ المنطقة والشارع وأقرب معلم 🙏"). Quantity is 1 unless the customer says more: don't ask about it. Like our team, you may ask for a second phone number ("ممكن رقم تاني للتواصل؟"), but don't insist.
+- Collect, in a natural way: the product and its choices (color/model, size, as the product needs), full name, phone number, and the detailed address: city, area, street, and a nearby landmark (mosque, school, known shop) so the courier can find them. If they give only the city or only the area, ask once for the rest in a friendly way, and in that same message ask for their location on the map as optional (e.g. "وين بالزبط؟ المنطقة والشارع وأقرب معلم، ولو تقدر ابعتلنا اللوكيشن عالخريطة بيسهّل عالمندوب 🙏"). The location ask goes in every address question, once per chat. Never insist on it or wait for it: if they don't send it, carry on with the written address. A location they send ("[sent a location: <link> ...]" or a Google Maps link) goes, as the link, at the end of the address in submit_order; in the summary the address line just ends with "(📍 اللوكيشن وصلنا)". Quantity is 1 unless the customer says more: don't ask about it. Like our team, you may ask for a second phone number ("ممكن رقم تاني للتواصل؟"), but don't insist.
 - Name: only a name the customer clearly gives as their name. Customers keep chatting while you collect the order: a short phrase is usually a reaction or a wish, not a name (e.g. "بس سعدني" = just make me happy / pick me something nice, "عادي", "تمام", "كيف ما تبي"). If a word could be a name or a phrase, don't greet them with it: answer the phrase naturally (for "بس سعدني": "من عيوني استاذ، الأسود راقي وبيعجبك إن شاء الله") and ask for the name ("وشن الاسم الكامل للتوصيل استاذ؟"). Never tell the customer that what they wrote is not a name. When unsure, ask rather than guess.
 - Phone: a Libyan mobile number, usually starting with 09 (e.g. 0912345678). If the customer says to use this WhatsApp number, use it.
 - Our contact: we have no other phone number to give. If they ask for our number or how to reach us, this WhatsApp chat is our number ("تقدر تتواصل معانا على هالرقم نفسه استاذ"). Never give any phone number as ours: the number in "This customer" is the customer's own.
@@ -86,12 +87,14 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
   المنتج: ...
   الاسم: ...
   الرقم: ...
-  العنوان: المدينة - المنطقة - الشارع - أقرب معلم
+  العنوان: المدينة - المنطقة - الشارع - أقرب معلم (only the parts they gave, never an empty "- -")
   عدد القطع: ...
   اللون: ...
   المقاس: ...
   الاجمالي: ...
+  الدفع: كاش عند الاستلام
   نأكدلك الحجز؟
+- Payment: we prefer cash on delivery, so the summary says "الدفع: كاش عند الاستلام" unless the customer asked for a bank transfer. If they say they can't pay cash or want to pay by transfer, accept it without pushing back ("تمام استاذ، ينفع تحويل مصرفي") and write "الدفع: تحويل مصرفي" in the summary. Payment is not a detail to collect: never ask "كاش ولا تحويل؟" and never wait for it. Assume cash and put it in the summary; the customer confirms it with the rest. Every summary has the payment line.
 - Only after the customer clearly confirms (e.g. "تمام", "اكيد", "اي", "نعم", "توكل على الله"), call submit_order. Never before.
 - Call submit_order once per order. If the order was already taken in this chat (we said "تم الحجز", or "This customer" lists an order), don't call it again for the same thing: just answer what they ask now. Call it again only for a new or changed order.
 - Don't promise a delivery date beyond what the knowledge documents say.
@@ -167,13 +170,18 @@ const ORDER_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
           },
         },
         total: { type: "string", description: "Total price as told to the customer, with the currency." },
+        payment: {
+          type: "string",
+          enum: ["cash", "transfer"],
+          description: "How the customer pays, as in the confirmed summary: cash on delivery (the default) or bank transfer.",
+        },
         notes: { type: "string", description: "Anything else the team should know (height/weight, delivery wishes). Empty if nothing." },
         message_to_customer: {
           type: "string",
           description: "Short warm thank-you saying the booking is registered and we will contact them to confirm delivery, e.g. \"تمام استاذ، تم الحجز 🙏 شويه ونتواصلو معاك لتأكيد التوصيل\".",
         },
       },
-      required: ["customer_name", "phone", "city", "address", "items", "total", "notes", "message_to_customer"],
+      required: ["customer_name", "phone", "city", "address", "items", "total", "payment", "notes", "message_to_customer"],
       additionalProperties: false,
     },
   },
@@ -413,6 +421,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     }
 
     const decision = readDecision(message);
+    if (decision.action === "order") return { ...decision, order: withLocation(decision.order, history), usage };
     if (decision.action === "reply") {
       if (!decision.text) return { ...decision, photos, usage };
       const check = await checkReply(history, context, decision.text, usage, startedAt);
@@ -437,7 +446,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
         usage,
       };
     }
-    if (decision.action === "order" || decision.action === "none") return { ...decision, usage };
+    if (decision.action === "none") return { ...decision, usage };
     const emptyReply = decision.reason === EMPTY;
     if (!emptyReply) return { ...decision, usage }; // a real handoff wins over photos
     if (!photoCalls.length) {
@@ -604,6 +613,7 @@ export async function draftOrder(transcript: string, customerPhone: string): Pro
         })),
         total: str(a.total),
         notes: str(a.notes),
+        payment: a.payment === "transfer" ? "transfer" : "cash",
       },
       usage,
     };
@@ -623,6 +633,19 @@ const FOLLOW_UP_SCHEMA = {
 };
 
 const EMPTY = "AI returned an empty reply";
+
+// A map location the customer sent (a WhatsApp pin or a Google Maps link) ends the address, so it reaches
+// the courier even when the AI left it out.
+const MAP_LINK = /https?:\/\/(?:www\.)?(?:maps\.google\.[a-z.]+|google\.[a-z.]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps)\S*/i;
+function withLocation(order: CollectedOrder, history: ChatTurn[]): CollectedOrder {
+  const link = history
+    .filter((t) => t.role === "customer")
+    .map((t) => t.text.match(MAP_LINK)?.[0].replace(/[)\]]+$/, ""))
+    .findLast(Boolean);
+  const address = order.address.replace(/\s*\(?📍[^)]*\)?/u, "").trim();
+  if (!link || address.includes(link)) return { ...order, address };
+  return { ...order, address: [address.replace(/\s*\(?https?:\/\/\S*\)?/g, "").trim(), link].filter(Boolean).join(" - ") };
+}
 
 function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | undefined): AgentDecision {
   if (!message) {
@@ -653,6 +676,7 @@ function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | u
         items: OrderItem[];
         total: string;
         notes: string;
+        payment?: string;
         message_to_customer: string;
       };
       return {
@@ -665,6 +689,7 @@ function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | u
           items: a.items,
           total: a.total,
           notes: a.notes,
+          payment: a.payment === "transfer" ? "transfer" : "cash",
         },
         messageToCustomer: a.message_to_customer,
       };
@@ -710,7 +735,7 @@ const MIN_CONFIDENCE = 80;
 
 const CHECK_INSTRUCTIONS = `You check a reply our sales assistant wants to send a customer on WhatsApp, before it is sent. The knowledge documents below are the only source of truth about the store and its products.
 1. not_in_knowledge: every claim in the reply about the product, stock or availability, sizes, fabric, care, delivery, payment, policies, discounts or the company that the knowledge does not back (guessed, assumed, or added), e.g. "not 100% cotton" when the fabric is only described as autumn fabric, or "the navy is available in 58" when the knowledge doesn't confirm stock.
-   These are backed, don't list them: a specific case of a general rule in the knowledge (free delivery to all Libyan cities → free delivery to Tripoli); plain rewording of the knowledge; anything said earlier in the chat by us or the customer (their name, color, size, city, what we sent); [sent product photo: ...] / [product photos] lines, which are our catalog photos; greetings and questions to the customer. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, asking for missing details, asking which color, size, country or address.
+   These are backed, don't list them: a specific case of a general rule in the knowledge (free delivery to all Libyan cities → free delivery to Tripoli); plain rewording of the knowledge; anything said earlier in the chat by us or the customer (their name, color, size, city, what we sent); [sent product photo: ...] / [product photos] lines, which are our catalog photos; greetings and questions to the customer. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, the summary's payment line ("الدفع: كاش عند الاستلام" by default, "الدفع: تحويل مصرفي" when the customer asked to pay by transfer, accepting a transfer), asking for missing details, asking for their location on the map, asking which color, size, country or address.
    Always list: any phone number or contact given as ours (we have none to give; the customer's number in their details is theirs).
 2. missed_questions: questions or requests in the customer's latest messages (after our last message) that the reply ignores or doesn't answer (the ad button's automatic text, e.g. "هل يمكنني الحصول على مزيد من المعلومات حول هذا؟" or "Can I get more info?", is only a hello: any answer about the product or price covers it), e.g. they asked the price and the reply only asks about the color. Empty if everything was answered, or if the customer asked nothing. Only what the customer asked: a question our rules say we should ask them (country, size, color) is not a missed question.
 3. confidence 0-100 that the reply is right to send as it is. Anything in either list means below ${MIN_CONFIDENCE}.

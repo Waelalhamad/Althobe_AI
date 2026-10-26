@@ -322,6 +322,14 @@ db.exec(`UPDATE orders SET customer = (
   WHERE source = 'team' AND customer NOT GLOB '*[^0-9]*'
     AND EXISTS (SELECT 1 FROM messages m WHERE m.customer GLOB '[A-Z][A-Z].*' AND substr(m.customer, 4) = orders.customer)`);
 
+// How the customer pays: "cash" on delivery (what we prefer) or bank "transfer"; empty on older orders.
+if (!(db.prepare("PRAGMA table_info(orders)").all() as { name: string }[]).some((c) => c.name === "payment")) {
+  db.exec("ALTER TABLE orders ADD COLUMN payment TEXT NOT NULL DEFAULT ''");
+}
+export const PAYMENTS = ["cash", "transfer"] as const;
+export type Payment = (typeof PAYMENTS)[number];
+export const PAYMENT_LABEL: Record<Payment, string> = { cash: "كاش عند الاستلام", transfer: "تحويل مصرفي" };
+
 // product: which product (empty on orders saved before there could be several).
 export type OrderItem = { product?: string; color: string; size: string; quantity: number };
 
@@ -335,19 +343,20 @@ export type NewOrder = {
   items: OrderItem[];
   total: string;
   notes: string;
+  payment?: Payment;
   source?: "ai" | "team";
   status?: OrderStatus;
 };
 
 const insertOrder = db.prepare(
-  `INSERT INTO orders (customer, channel, name, phone, city, address, items, total, notes, source, status, created_at, updated_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  `INSERT INTO orders (customer, channel, name, phone, city, address, items, total, notes, payment, source, status, created_at, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 );
 
 export function saveOrder(o: NewOrder): number {
   const now = Date.now();
   const result = insertOrder.run(
-    o.customer, o.channel, o.name, o.phone, o.city, o.address, JSON.stringify(o.items), o.total, o.notes,
+    o.customer, o.channel, o.name, o.phone, o.city, o.address, JSON.stringify(o.items), o.total, o.notes, o.payment ?? "",
     o.source ?? "ai", o.status ?? "new", now, now,
   );
   return Number(result.lastInsertRowid);
@@ -361,14 +370,14 @@ export function findSameOrder(customer: string, items: OrderItem[], since: numbe
   return row?.id;
 }
 
-export type OrderFields = Pick<NewOrder, "name" | "phone" | "city" | "address" | "items" | "total" | "notes">;
+export type OrderFields = Pick<NewOrder, "name" | "phone" | "city" | "address" | "items" | "total" | "notes" | "payment">;
 
 // The team corrects an order (a wrong number, a changed size...).
 export function updateOrder(id: number, o: OrderFields): boolean {
   return (
     db
-      .prepare("UPDATE orders SET name = ?, phone = ?, city = ?, address = ?, items = ?, total = ?, notes = ?, updated_at = ? WHERE id = ?")
-      .run(o.name, o.phone, o.city, o.address, JSON.stringify(o.items), o.total, o.notes, Date.now(), id).changes > 0
+      .prepare("UPDATE orders SET name = ?, phone = ?, city = ?, address = ?, items = ?, total = ?, notes = ?, payment = ?, updated_at = ? WHERE id = ?")
+      .run(o.name, o.phone, o.city, o.address, JSON.stringify(o.items), o.total, o.notes, o.payment ?? "", Date.now(), id).changes > 0
   );
 }
 

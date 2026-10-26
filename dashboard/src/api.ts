@@ -102,6 +102,8 @@ export type Order = {
   items: OrderItem[];
   total: string;
   notes: string;
+  // How the customer pays (empty on orders from before it was asked).
+  payment?: Payment | "";
   status: OrderStatus;
   source?: "ai" | "team";
   // The Darb Assabil shipment made from it.
@@ -112,22 +114,25 @@ export type Order = {
   updatedAt: number;
 };
 
+export type Payment = "cash" | "transfer";
+export const PAYMENT_LABEL: Record<Payment, string> = { cash: "كاش عند الاستلام", transfer: "تحويل مصرفي" };
+
 export type DarbZone = { city: string; areas: string[] };
 export type DarbPreview = {
   zones: DarbZone[];
   guess?: { city: string; area: string };
   notes: string;
   internalNotes: string;
-  payment: string;
+  payment: Payment;
   total: number;
   phone: string;
   lines: { title: string; quantity: number }[];
   darbRef: string | null;
 };
-export type DarbShipment = { city: string; area: string; notes: string; total: number; payment?: string };
+export type DarbShipment = { city: string; area: string; notes: string; total: number; payment?: Payment | "" };
 
 // What the team fills in the order form (and what the AI drafts from a chat).
-export type OrderInput = Pick<Order, "name" | "phone" | "city" | "address" | "items" | "total" | "notes">;
+export type OrderInput = Pick<Order, "name" | "phone" | "city" | "address" | "items" | "total" | "notes" | "payment">;
 
 export type CatalogItem = {
   id: string;
