@@ -315,6 +315,13 @@ if (!(db.prepare("PRAGMA table_info(orders)").all() as { name: string }[]).some(
     ALTER TABLE orders ADD COLUMN darb_at INTEGER;`);
 }
 
+// Team orders for customers who write from a WhatsApp username were saved without the "LY." of their id
+// (fixed in the dashboard route): link them back to their chat.
+db.exec(`UPDATE orders SET customer = (
+    SELECT m.customer FROM messages m WHERE m.customer GLOB '[A-Z][A-Z].*' AND substr(m.customer, 4) = orders.customer LIMIT 1)
+  WHERE source = 'team' AND customer NOT GLOB '*[^0-9]*'
+    AND EXISTS (SELECT 1 FROM messages m WHERE m.customer GLOB '[A-Z][A-Z].*' AND substr(m.customer, 4) = orders.customer)`);
+
 // product: which product (empty on orders saved before there could be several).
 export type OrderItem = { product?: string; color: string; size: string; quantity: number };
 

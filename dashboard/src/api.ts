@@ -250,7 +250,8 @@ export const api = {
   darbPreview: (id: number) => request<DarbPreview>(`/orders/${id}/darb`),
   darbQuote: (id: number, s: DarbShipment) => post<{ shipping: number; charges: number }>(`/orders/${id}/darb/quote`, s),
   sendToDarb: (id: number, s: DarbShipment) => post<{ reference: string; status: string }>(`/orders/${id}/darb`, s),
-  createOrder: (order: OrderInput & { customer?: string; status: OrderStatus }) => post<{ id: number }>("/orders", order),
+  createOrder: (order: OrderInput & { customer?: string; status: OrderStatus; message?: string }) =>
+    post<{ id: number; messageError?: string }>("/orders", order),
   updateOrder: (id: number, order: OrderInput) => request(`/orders/${id}`, { method: "PUT", body: JSON.stringify(order) }),
   ordersExportUrl: (q: { from?: string; to?: string; status?: OrderStatus }) =>
     `${BASE}/orders/export?${new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => Boolean(e[1])))}`,

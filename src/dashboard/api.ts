@@ -322,17 +322,31 @@ function customerFromPhone(phone: string): string {
   return /^09\d{8}$/.test(digits) ? `218${digits.slice(1)}` : digits;
 }
 
-dashboardApi.post("/orders", (req, res) => {
+dashboardApi.post("/orders", async (req, res) => {
   const fields = orderFields(req.body);
   if (typeof fields === "string") {
     res.status(400).json({ error: fields });
     return;
   }
-  const customer = String(req.body?.customer ?? "").replace(/\D/g, "") || customerFromPhone(fields.phone);
+  // A number, or the user ID of a customer who writes from a WhatsApp username ("LY.2863…"), kept as it is.
+  const given = String(req.body?.customer ?? "").trim();
+  const customer = (/^[A-Z]{2}\.\d+$/.test(given) ? given : given.replace(/\D/g, "")) || customerFromPhone(fields.phone);
   const status = ORDER_STATUSES.find((s) => s === req.body?.status) ?? "confirmed";
   const id = saveOrder({ customer, channel: "whatsapp", ...fields, source: "team", status });
   log(`wa:${customer}`, `order #${id} recorded by the team (${status})`);
   notifyOrder(id, customer, fields, true);
+  // The confirmation to the customer, written in the form, sent from our number like a team message
+  // (so the AI also sees the order was taken).
+  const message = typeof req.body?.message === "string" ? req.body.message.trim().slice(0, 2000) : "";
+  if (message) {
+    try {
+      await sendTeamMessage(customer, message);
+      log(`wa:${customer}`, `order #${id}: confirmation sent to the customer`);
+    } catch (error) {
+      res.json({ id, messageError: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+  }
   res.json({ id });
 });
 

@@ -6,6 +6,23 @@ import { Button, ErrorNote } from "./ui";
 
 const inputClass = "w-full rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary";
 
+// The confirmation the customer gets when the team records the order (they can edit it in the form).
+function confirmation(o: OrderInput): string {
+  const items = o.items
+    .filter((i) => i.color || i.size || i.product)
+    .map((i) => `${i.quantity} × ${[i.product || "الثوب العربي", i.color, i.size && `مقاس ${i.size}`].filter(Boolean).join(" ")}`);
+  const place = [o.city, o.address].filter((s) => s.trim()).join(" - ");
+  return [
+    "تم تثبيت طلبك استاذ 🙏",
+    ...items,
+    place && `التوصيل: ${place}`,
+    o.total.trim() && `الإجمالي: ${o.total.trim()}`,
+    "تقدر تقيسو وقت يجيك المندوب قبل ما تستلم 👌",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 const NEW_STATUSES: { id: OrderStatus; label: string }[] = [
   { id: "confirmed", label: "متأكد" },
   { id: "new", label: "جديد، بدو تأكيد" },
@@ -40,16 +57,25 @@ export function OrderForm({
   const queryClient = useQueryClient();
   const [o, setO] = useState<OrderInput>(initial.items.length ? initial : { ...initial, items: emptyOrder().items });
   const [status, setStatus] = useState<OrderStatus>("confirmed");
+  // From a chat, the customer gets a confirmation by default; the text follows the form until the team edits it.
+  const [notify, setNotify] = useState(Boolean(customer));
+  const [message, setMessage] = useState<string>();
+  const [messageError, setMessageError] = useState<string>();
   // Suggestions from the product photos (product names and colors).
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: api.catalog, staleTime: 60_000 });
   const products = [...new Set(catalog.data?.map((c) => c.product).filter((p): p is string => Boolean(p)))];
   const colors = [...new Set(catalog.data?.map((c) => c.name.replace(/^اللون:\s*/, "")).filter(Boolean))];
 
   const save = useMutation({
-    mutationFn: () => (orderId ? api.updateOrder(orderId, o) : api.createOrder({ ...o, customer, status })),
-    onSuccess: () => {
+    mutationFn: () =>
+      orderId
+        ? api.updateOrder(orderId, o)
+        : api.createOrder({ ...o, customer, status, message: notify ? (message ?? confirmation(o)) : undefined }),
+    onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
-      onClose();
+      const error = result && typeof result === "object" && "messageError" in result ? (result.messageError as string | undefined) : undefined;
+      if (error) setMessageError(error);
+      else onClose();
     },
   });
 
@@ -148,13 +174,39 @@ export function OrderForm({
           <textarea value={o.notes} onChange={(e) => set({ notes: e.target.value })} rows={2} className={inputClass} />
         </Label>
 
+        {!orderId && (
+          <div className="flex flex-col gap-2 rounded-xl border border-line p-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} className="accent-[var(--color-primary)]" />
+              ابعت رسالة تأكيد للزبون عالواتساب
+            </label>
+            {notify && (
+              <textarea
+                value={message ?? confirmation(o)}
+                onChange={(e) => setMessage(e.target.value)}
+                rows={6}
+                className={inputClass}
+              />
+            )}
+          </div>
+        )}
+
         <ErrorNote error={save.error} />
+        {messageError ? (
+          <div className="flex flex-col gap-2">
+            <p className="rounded-xl bg-warn/10 p-3 text-sm text-warn">الطلب انسجل، بس الرسالة ما انبعتت: {messageError}</p>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              سكّر
+            </Button>
+          </div>
+        ) : (
         <div className="flex gap-2">
-          <Button disabled={save.isPending}>{orderId ? "احفظ التعديل" : "سجّل الطلب"}</Button>
+          <Button disabled={save.isPending}>{orderId ? "احفظ التعديل" : notify ? "سجّل الطلب وابعت الرسالة" : "سجّل الطلب"}</Button>
           <Button type="button" variant="ghost" onClick={onClose}>
             إلغاء
           </Button>
         </div>
+        )}
       </form>
     </div>
   );

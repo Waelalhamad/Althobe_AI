@@ -342,8 +342,53 @@ export function answerIfWaiting(customer: string): boolean {
     .get(customer) as { role: string; created_at: number } | undefined;
   if (!last || last.role !== "customer" || last.created_at < Date.now() - 23 * 60 * 60 * 1000) return false;
   if (aiBlockedReason(customer) || isAiPaused(customer)) return false;
+  // "تمام" to the team's "تم تثبيت الطلب": nothing to answer.
+  if (!weAskedSomething(customer) && waitingAreAcknowledgements(customer)) return false;
   scheduleReply(`wa:${customer}`, 1000, () => respond(customer));
   return true;
+}
+
+// The customer's messages since our last one only acknowledge (or there are none).
+function waitingAreAcknowledgements(customer: string): boolean {
+  const rows = db
+    .prepare(
+      `SELECT role, text FROM messages WHERE customer = ? AND history = 0 AND text NOT LIKE '[sent a reaction%'
+       ORDER BY id DESC LIMIT 20`,
+    )
+    .all(customer) as { role: string; text: string }[];
+  const end = rows.findIndex((m) => m.role !== "customer");
+  return (end < 0 ? rows : rows.slice(0, end)).every((m) => isAcknowledgement(m.text));
+}
+
+// The team's words that close an order in the chat ("تم تثبيت الطلب", "تم الحجز", "ثبتنالك الطلب").
+const TEAM_CONFIRMED = /تم\s*(تثبيت|حجز|الحجز|تاكيد|تأكيد)|ثبت(نا|ناه|نالك)|انحجز/;
+
+// What the team did by hand in this chat, for the AI after it takes over again: since when the business messages
+// are theirs, and whether they already took the order.
+function teamContext(customer: string): { note: string; confirmed?: string } {
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  const rows = db
+    .prepare(
+      `SELECT source, text, created_at FROM messages WHERE customer = ? AND history = 0 AND role = 'business' AND created_at > ?
+       ORDER BY id ASC`,
+    )
+    .all(customer, since) as { source: string; text: string; created_at: number }[];
+  const lastAi = rows.map((r) => r.source).lastIndexOf("ai");
+  const team = rows.slice(lastAi + 1).filter((r) => r.source === "staff");
+  const confirmed = rows.filter((r) => r.source === "staff" && TEAM_CONFIRMED.test(r.text)).at(-1)?.text;
+  const lines: string[] = [];
+  if (team.length) {
+    const at = new Date(team[0]!.created_at + config.dashboard.timezoneOffsetHours * 3_600_000).toISOString().slice(11, 16);
+    lines.push(
+      `Our team (a person) handled this chat by hand from ${at}: our messages since then are theirs. Continue from where they stopped, in the same direction: don't ask again what they asked or settled (size, color, payment, address), and don't contradict them.`,
+    );
+  }
+  if (confirmed) {
+    lines.push(
+      `The team already took this customer's order in the chat ("${confirmed.replace(/\s+/g, " ").slice(0, 160)}") and records it themselves: never call submit_order for it and don't confirm it again. Only answer something new the customer asks; if they only acknowledge, call no_reply_needed.`,
+    );
+  }
+  return { note: lines.join("\n"), confirmed };
 }
 
 async function respond(customer: string) {
@@ -355,12 +400,16 @@ async function respond(customer: string) {
     await waitForMedia(customer);
     const lastSeen = lastCustomerMessageId(customer);
     void showTyping(customer);
+    const team = teamContext(customer);
     const decision = await decideReply(historyForAi(customer), {
       customerPhone: localPhone(customer),
-      background: isUserId(customer)
-        ? `${customerBackground(customer)}
-Writes from a WhatsApp username: we don't have their number, so ask for a phone number for the delivery.`
-        : customerBackground(customer),
+      background: [
+        customerBackground(customer),
+        isUserId(customer) && "Writes from a WhatsApp username: we don't have their number, so ask for a phone number for the delivery.",
+        team.note,
+      ]
+        .filter(Boolean)
+        .join("\n"),
     });
     recordAiCall({
       customer,
@@ -416,6 +465,11 @@ Writes from a WhatsApp username: we don't have their number, so ask for a phone 
       // through as text; fall back to the WhatsApp number.
       decision.order.phone = latinDigits(decision.order.phone);
       if (!/\d{6,}/.test(decision.order.phone.replace(/[\s-]/g, ""))) decision.order.phone = localPhone(customer);
+      if (team.confirmed) {
+        // The team closed this order in the chat and records it themselves: saving it too makes a duplicate.
+        log(key, `AI tried to take an order the team already confirmed in the chat; not saved, nothing sent`);
+        return;
+      }
       const same = findSameOrder(customer, decision.order.items, Date.now() - 7 * 24 * 60 * 60 * 1000);
       if (same) {
         // Already saved: just send the message, don't record it twice or stop the AI again.
