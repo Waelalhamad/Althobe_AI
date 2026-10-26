@@ -50,7 +50,7 @@ async function respond(accountId: number, conversationId: number) {
       channel: "chatwoot",
       action: decision.action,
       reason:
-        decision.action === "handoff"
+        decision.action === "handoff" || decision.action === "none"
           ? decision.reason
           : decision.action === "order"
             ? orderOneLine(decision.order)
@@ -58,7 +58,9 @@ async function respond(accountId: number, conversationId: number) {
       usage: decision.usage,
     });
 
-    if (decision.action === "reply") {
+    if (decision.action === "none") {
+      log(key, `nothing to answer: ${decision.reason || "the customer only acknowledged"}`);
+    } else if (decision.action === "reply") {
       for (const [i, part] of splitAroundPhotos(decision.text, false).before.entries()) {
         if (i > 0) await typingPause(part);
         await sendReply(accountId, conversationId, part);

@@ -213,7 +213,7 @@ const insertAiCall = db.prepare(
 export function recordAiCall(call: {
   customer: string;
   channel: "whatsapp" | "chatwoot";
-  action: "reply" | "handoff" | "order" | "error" | "followup" | "lesson" | "draft";
+  action: "reply" | "handoff" | "order" | "none" | "error" | "followup" | "lesson" | "draft";
   reason?: string;
   usage?: AiUsage;
 }) {
@@ -410,4 +410,28 @@ export function lastCustomerMessageId(customer: string): number | undefined {
     .prepare("SELECT MAX(id) AS id FROM messages WHERE customer = ? AND role = 'customer' AND history = 0")
     .get(customer) as { id: number | null };
   return row.id ?? undefined;
+}
+
+// --- Customers' WhatsApp profile (name, username), from the webhook's contacts -------
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS customers (
+    customer    TEXT PRIMARY KEY,          -- WhatsApp number, or the user ID of a customer without one
+    wa_name     TEXT NOT NULL DEFAULT '',  -- the name on their WhatsApp profile
+    username    TEXT NOT NULL DEFAULT '',  -- WhatsApp username, when they have one
+    first_seen  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+  );
+`);
+
+// Keeps what we had when WhatsApp sends an empty value.
+export function saveContact(customer: string, waName = "", username = "") {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO customers (customer, wa_name, username, first_seen, updated_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (customer) DO UPDATE SET
+       wa_name = CASE WHEN excluded.wa_name <> '' THEN excluded.wa_name ELSE wa_name END,
+       username = CASE WHEN excluded.username <> '' THEN excluded.username ELSE username END,
+       updated_at = excluded.updated_at`,
+  ).run(customer, waName.trim(), username.trim(), now, now);
 }

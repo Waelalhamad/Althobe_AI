@@ -169,6 +169,7 @@ export type ChatTurn = { role: "customer" | "business"; text: string; image?: st
 export type Decision =
   | (
       | { action: "reply"; text: string; photos: string[]; confidence?: number }
+      | { action: "none"; reason: string }
       | { action: "handoff"; reason: string; messageToCustomer: string; silent?: boolean }
       | {
           action: "order";

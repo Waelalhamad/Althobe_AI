@@ -50,6 +50,8 @@ export function Playground() {
       const reply =
         decision.action === "reply"
           ? decision.text || "(صور بس)"
+          : decision.action === "none"
+            ? `(ما بيرد، ما في شي يجاوب عليه${decision.reason ? `: ${decision.reason}` : ""})`
           : decision.action === "handoff" && decision.silent
             ? "(بدون رد للزبون، الفريق بيرد)"
             : decision.messageToCustomer || (decision.action === "order" ? "(رسالة الطلب الافتراضية)" : "(رسالة التحويل الافتراضية)");

@@ -16,6 +16,7 @@ import {
   db,
   pauseAi,
   recordAiCall,
+  saveContact,
   saveHistory,
   saveMessage,
   saveOrder,
@@ -80,6 +81,8 @@ type WebhookPayload = {
       value?: {
         metadata?: { phone_number_id?: string };
         messages?: WaMessage[];
+        // Who wrote: wa_id is the number; user_id when they write from a username without sharing it.
+        contacts?: { wa_id?: string; user_id?: string; username?: string; profile?: { name?: string } }[];
         message_echoes?: WaMessage[];
         history?: HistoryChunk[];
       };
@@ -99,6 +102,10 @@ export function handleWhatsAppWebhook(payload: WebhookPayload) {
       }
 
       if (change.field === "messages") {
+        for (const contact of value.contacts ?? []) {
+          const customer = contact.wa_id ?? contact.user_id;
+          if (customer) saveContact(customer, contact.profile?.name, contact.username);
+        }
         for (const message of value.messages ?? []) onCustomerMessage(message);
       } else if (change.field === "smb_message_echoes") {
         // A team member replied from the WhatsApp Business app on the phone.
@@ -127,6 +134,9 @@ function onCustomerMessage(message: WaMessage) {
     const quoted = target ? ` to: «${target.text.replace(/\s+/g, " ").slice(0, 200)}»` : "";
     text = `[sent a reaction ${emoji}${quoted}]`;
     needsReply = Boolean(target?.isOurLast && /[؟?]/.test(target.text));
+  } else if (message.type === "text" && isAcknowledgement(text) && !weAskedSomething(customer)) {
+    // "تمام" / "شكرا" to a message of ours that asked nothing: a seller doesn't answer it with another "تمام".
+    needsReply = false;
   }
 
   const isNew = saveMessage({
@@ -151,11 +161,50 @@ function onCustomerMessage(message: WaMessage) {
   }
 
   if (!needsReply) {
-    log(`wa:${customer}`, "customer reacted; no reply needed");
+    log(`wa:${customer}`, message.type === "reaction" ? "customer reacted; no reply needed" : "customer only acknowledged; no reply needed");
     return;
   }
 
   scheduleReply(`wa:${customer}`, config.debounceMs, () => respond(customer));
+}
+
+// Words that only acknowledge or thank, in how our customers write them.
+const ACK_WORDS = new Set(
+  "تمام تمم تم اوكي اوك اوكيه ok okay okey k حاضر ماشي طيب باهي هكي زين خلاص تسلم تسلمي تسلمو يسلمو يسلموا مشكور مشكورين مشكوره شكرا يعطيك العافيه الله يسلمك يبارك فيك بارك ان شاء انشاء انشالله ان‌شاءالله استاذ اخي خوي يا حبيبي".split(" "),
+);
+
+// "تمام", "شكرا استاذ", "تماااام 👍", or only emojis.
+export function isAcknowledgement(text: string): boolean {
+  const words = text
+    .toLowerCase()
+    .replace(/[\u064B-\u0652\u0640]/g, "") // harakat, tatweel
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/(.)\1{2,}/gu, "$1") // تماااام
+    .replace(/(.)\1+$/u, "$1") // تمامم
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length) return /\p{Extended_Pictographic}/u.test(text);
+  return words.length <= 6 && words.every((w) => ACK_WORDS.has(w));
+}
+
+// Does the chat wait for the customer's answer? Looks at our last messages (those after the customer message
+// before them). If the customer wrote more than acknowledgements since, or we never wrote, the AI decides.
+function weAskedSomething(customer: string): boolean {
+  const rows = db
+    .prepare(
+      `SELECT role, text FROM messages WHERE customer = ? AND history = 0 AND text NOT LIKE '[sent a reaction%'
+       ORDER BY id DESC LIMIT 20`,
+    )
+    .all(customer) as { role: string; text: string }[];
+  const lastOurs = rows.findIndex((m) => m.role === "business");
+  if (lastOurs < 0) return true;
+  if (rows.slice(0, lastOurs).some((m) => !isAcknowledgement(m.text))) return true;
+  const ours = rows.slice(lastOurs);
+  const end = ours.findIndex((m) => m.role !== "business");
+  return (end < 0 ? ours : ours.slice(0, end)).some((m) => /[؟?]/.test(m.text));
 }
 
 function onStaffMessage(echo: WaMessage) {
@@ -318,7 +367,7 @@ Writes from a WhatsApp username: we don't have their number, so ask for a phone 
       channel: "whatsapp",
       action: decision.action,
       reason:
-        decision.action === "handoff"
+        decision.action === "handoff" || decision.action === "none"
           ? decision.reason
           : decision.action === "order"
             ? orderOneLine(decision.order)
@@ -326,6 +375,10 @@ Writes from a WhatsApp username: we don't have their number, so ask for a phone 
       usage: decision.usage,
     });
 
+    if (decision.action === "none") {
+      log(key, `nothing to answer: ${decision.reason || "the customer only acknowledged"}`);
+      return;
+    }
     if (isAiPaused(customer)) {
       log(key, "team replied while the AI was thinking; AI reply dropped");
       return;

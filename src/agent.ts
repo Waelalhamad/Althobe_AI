@@ -31,6 +31,8 @@ export type AgentDecision = (
   // kind: why it went to the team; "dont_know" ones are what the team can teach (see learning.ts).
   | { action: "handoff"; reason: string; messageToCustomer: string; silent?: boolean; kind?: HandoffKind }
   | { action: "order"; order: CollectedOrder; messageToCustomer: string }
+  // Nothing to answer: the customer only acknowledged ("تمام", "شكرا") and nothing is open.
+  | { action: "none"; reason: string }
 ) & { usage?: AiUsage };
 
 const INSTRUCTIONS = `You are part of the sales team of our store, chatting with customers on WhatsApp, Instagram and Facebook Messenger. The knowledge documents below describe the store, every product we sell (price, what's included, sizes, colors, delivery, payment) and how our team talks. Most customers saw one of our ads and want that product. Your goal: be the best salesperson on the team. Answer like a friendly, confident seller and take the customer from the first message to a confirmed order.
@@ -93,6 +95,10 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - Only after the customer clearly confirms (e.g. "تمام", "اكيد", "اي", "نعم", "توكل على الله"), call submit_order. Never before.
 - Call submit_order once per order. If the order was already taken in this chat (we said "تم الحجز", or "This customer" lists an order), don't call it again for the same thing: just answer what they ask now. Call it again only for a new or changed order.
 - Don't promise a delivery date beyond what the knowledge documents say.
+
+# When not to answer
+- When the customer only acknowledges or closes ("تمام", "تمام هكي", "اوكي", "حاضر", "شكرا", "مشكور", 👍) and they ask nothing new and nothing is waiting for their answer, call no_reply_needed. Don't confirm again what you already confirmed (the order, the payment, the delivery): a seller doesn't answer every "تمام" with another "تمام استاذ".
+- Never say the same thing twice in a chat in other words. If the customer adds something new (e.g. asks to send the account number with the courier), answer only that, in one short line.
 
 # When to hand off (call handoff_to_human instead of replying)
 - the answer is not in the knowledge documents, or you are not sure;
@@ -203,6 +209,22 @@ const HANDOFF_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
         },
       },
       required: ["reason", "kind", "message_to_customer", "silent"],
+      additionalProperties: false,
+    },
+  },
+};
+
+const NO_REPLY_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "no_reply_needed",
+    description:
+      "Send nothing: the customer only acknowledged or thanked us (\"تمام\", \"شكرا\", 👍), asked nothing new, and nothing waits for their answer.",
+    strict: true,
+    parameters: {
+      type: "object",
+      properties: { reason: { type: "string", description: "Short note in Arabic: why no answer is needed." } },
+      required: ["reason"],
       additionalProperties: false,
     },
   },
@@ -346,7 +368,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       model: config.openai.model,
       reasoning: { effort: config.openai.reasoningEffort },
       input,
-      tools: (knownPhotos.size ? [HANDOFF_TOOL, ORDER_TOOL, PHOTOS_TOOL] : [HANDOFF_TOOL, ORDER_TOOL]).map(responseTool),
+      tools: (knownPhotos.size ? [HANDOFF_TOOL, ORDER_TOOL, NO_REPLY_TOOL, PHOTOS_TOOL] : [HANDOFF_TOOL, ORDER_TOOL, NO_REPLY_TOOL]).map(responseTool),
       // Once photos are queued, the next step is the text that goes with them.
       tool_choice: photos.length && !rejected ? "none" : "auto",
       // Nothing is kept at OpenAI; the encrypted reasoning comes back so the next round can continue from it.
@@ -402,7 +424,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
         usage,
       };
     }
-    if (decision.action === "order") return { ...decision, usage };
+    if (decision.action === "order" || decision.action === "none") return { ...decision, usage };
     const emptyReply = decision.reason === EMPTY;
     if (!emptyReply) return { ...decision, usage }; // a real handoff wins over photos
     if (!photoCalls.length) {
@@ -590,6 +612,17 @@ const EMPTY = "AI returned an empty reply";
 function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | undefined): AgentDecision {
   if (!message) {
     return handoff("AI returned no answer");
+  }
+
+  const noReplyCall = message.tool_calls?.find(
+    (call) => call.type === "function" && call.function.name === "no_reply_needed",
+  );
+  if (noReplyCall && noReplyCall.type === "function" && !message.tool_calls?.some((c) => c.type === "function" && c.function.name !== "no_reply_needed")) {
+    let reason = "";
+    try {
+      reason = String((JSON.parse(noReplyCall.function.arguments) as { reason?: unknown }).reason ?? "");
+    } catch {}
+    return { action: "none", reason };
   }
 
   const orderCall = message.tool_calls?.find(

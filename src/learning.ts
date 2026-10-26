@@ -341,7 +341,7 @@ async function retest(id: number): Promise<string | undefined> {
   if (!history.length) return undefined;
   try {
     const decision = await decideReply(history, { background: customerBackground(row.customer) });
-    const text = decision.action === "reply" ? decision.text : decision.action === "order" ? decision.messageToCustomer : `(لسا بيحوّل للفريق: ${decision.reason})`;
+    const text = decision.action === "reply" ? decision.text : decision.action === "order" ? decision.messageToCustomer : decision.action === "none" ? "(ما بيرد: ما في شي يجاوب عليه)" : `(لسا بيحوّل للفريق: ${decision.reason})`;
     const clean = text.replace(/^\s*\[photos\]\s*$/gim, "[صور]").trim();
     setRow(id, { retest: clean });
     return clean;

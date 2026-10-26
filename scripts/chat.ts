@@ -28,6 +28,9 @@ while (true) {
     console.log(`AI → ORDER (not saved in this test): ${JSON.stringify(decision.order, null, 2)}`);
     console.log(`AI: ${decision.messageToCustomer}\n`);
     history.push({ role: "business", text: decision.messageToCustomer });
+  } else if (decision.action === "none") {
+    console.log(`AI → no reply (${decision.reason})
+`);
   } else {
     console.log(`AI → HANDOFF to human (${decision.reason})`);
     console.log(`AI: ${decision.messageToCustomer}\n`);
