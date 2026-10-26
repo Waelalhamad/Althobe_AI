@@ -251,6 +251,7 @@ export const api = {
     request<{ counts: Partial<Record<OrderStatus, number>>; orders: Order[]; darb: boolean }>(`/orders${status ? `?status=${status}` : ""}`),
   darbPreview: (id: number) => request<DarbPreview>(`/orders/${id}/darb`),
   darbQuote: (id: number, s: DarbShipment) => post<{ shipping: number; charges: number }>(`/orders/${id}/darb/quote`, s),
+  updateDarb: (id: number, s: DarbShipment) => post<{ ok: boolean }>(`/orders/${id}/darb/update`, s),
   sendToDarb: (id: number, s: DarbShipment) => post<{ reference: string; status: string }>(`/orders/${id}/darb`, s),
   createOrder: (order: OrderInput & { customer?: string; status: OrderStatus; message?: string }) =>
     post<{ id: number; messageError?: string }>("/orders", order),

@@ -8,7 +8,7 @@ import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } fro
 import { dataPath, transcribe } from "../media.js";
 import { answerIfWaiting, answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
 import { notifyOrder } from "../orders.js";
-import { sendToDarb, shipmentPreview, shipmentQuote, type ShipmentInput } from "../darb.js";
+import { sendToDarb, shipmentPreview, shipmentQuote, updateDarbShipment, type ShipmentInput } from "../darb.js";
 import { leadsWorkbook, ordersWorkbook, sendDailySheet, sheetName, type SheetRange } from "../ordersSheet.js";
 import { approveLesson, ignoreLesson, lessonsView } from "../learning.js";
 import {
@@ -415,6 +415,7 @@ async function darbRoute(res: express.Response, run: () => Promise<unknown>) {
 dashboardApi.get("/orders/:id/darb", (req, res) => darbRoute(res, () => shipmentPreview(Number(req.params.id))));
 dashboardApi.post("/orders/:id/darb/quote", (req, res) => darbRoute(res, () => shipmentQuote(Number(req.params.id), darbInput(req.body))));
 dashboardApi.post("/orders/:id/darb", (req, res) => darbRoute(res, () => sendToDarb(Number(req.params.id), darbInput(req.body))));
+dashboardApi.post("/orders/:id/darb/update", (req, res) => darbRoute(res, () => updateDarbShipment(Number(req.params.id), darbInput(req.body))));
 
 dashboardApi.patch("/orders/:id", (req, res) => {
   const status = ORDER_STATUSES.find((s) => s === req.body?.status) as OrderStatus | undefined;

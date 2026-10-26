@@ -10,7 +10,7 @@ const DEFAULT_PRODUCT = "الثوب العربي متكون من ثلاث قطع
 
 type DarbResponse<T> = { status: boolean; data?: T; messages?: { message?: string; location?: string }[] };
 
-async function darb<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+async function darb<T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown): Promise<T> {
   if (!config.darb.enabled) throw new Error("درب السبيل مش مربوط (DARB_API_KEY و DARB_ACCOUNT_ID)");
   const res = await fetch(`${config.darb.baseUrl}${path}`, {
     method,
@@ -83,7 +83,9 @@ export function guessZone(zones: Zone[], city: string, address: string): { city:
   if (c) {
     for (const z of zones) for (const a of z.areas) if (norm(a) === c && norm(z.city) !== c) return { city: z.city, area: a };
     const zone = zones.find((z) => norm(z.city) === c);
-    if (zone) return (words && inAddress([zone])) || { city: zone.city, area: zone.areas.find((a) => norm(a) === c) ?? "" };
+    // A city with several areas (بنغازي, سبها...) needs the real one: the city's own name as area is too vague,
+    // so it stays empty and the team picks it. Only a city with a single area gets it.
+    if (zone) return (words && inAddress([zone])) || { city: zone.city, area: zone.areas.length === 1 ? zone.areas[0]! : "" };
   }
   return words ? inAddress(zones) : undefined;
 }
@@ -171,8 +173,19 @@ function products(items: OrderItem[], total: number) {
   }));
 }
 
+// The payment line first, then the address and anything the team adds for the courier.
+function courierNote(input: ShipmentInput): string {
+  return [input.payment && `الدفع: ${input.payment}`, input.notes].filter(Boolean).join("\n").slice(0, 1000);
+}
+
+function checkPlace(input: ShipmentInput) {
+  if (!input.city) throw new Error("اختار المدينة");
+  if (!input.area) throw new Error("اختار المنطقة");
+  if (!input.payment) throw new Error("اختار طريقة الدفع");
+}
+
 function destination(input: ShipmentInput) {
-  return { countryCode: "lby", city: input.city, area: input.area || input.city, address: "" };
+  return { countryCode: "lby", city: input.city, area: input.area, address: "" };
 }
 
 // Darb's own price for this delivery (taken from the sales when it's paid by "sales").
@@ -208,7 +221,7 @@ export async function sendToDarb(orderId: number, input: ShipmentInput): Promise
   if (!order) throw new Error("Unknown order");
   if (order.darb_ref) throw new Error(`الطلب مبعوت من قبل لدرب السبيل (#${order.darb_ref})`);
   if (order.status === "cancelled") throw new Error("الطلب ملغي");
-  if (!input.city) throw new Error("اختار المدينة");
+  checkPlace(input);
   if (!(input.total > 0)) throw new Error("المبلغ لازم يكون أكبر من صفر");
   const phone = intlPhone(order.phone) ?? intlPhone(order.customer);
   if (!phone) throw new Error("رقم الزبون مش صحيح");
@@ -216,7 +229,7 @@ export async function sendToDarb(orderId: number, input: ShipmentInput): Promise
   const contact = await contactId(phone, order.name);
   const shipment = await darb<{ _id: string; reference: string; status: string }>("POST", "/api/local/shipments", {
     service: MALE_DELIVERY,
-    notes: [input.payment && `الدفع: ${input.payment}`, input.notes].filter(Boolean).join("\n").slice(0, 1000),
+    notes: courierNote(input),
     contacts: [contact],
     products: products(JSON.parse(order.items) as OrderItem[], input.total),
     allowSplitting: false,
@@ -235,4 +248,15 @@ export async function sendToDarb(orderId: number, input: ShipmentInput): Promise
   if (order.status === "new") setOrderStatus(orderId, "confirmed");
   log("darb", `order #${orderId} sent to Darb Assabil: shipment ${shipment.reference} (${input.city} / ${input.area})`);
   return { id: shipment._id, reference: shipment.reference, status: shipment.status };
+}
+
+// Fixes a shipment already sent: its city/area and the courier's note with the payment line
+// (Darb accepts it while the courier hasn't picked it up).
+export async function updateDarbShipment(orderId: number, input: ShipmentInput) {
+  const row = db.prepare("SELECT darb_id, darb_ref FROM orders WHERE id = ?").get(orderId) as { darb_id: string | null; darb_ref: string | null } | undefined;
+  if (!row?.darb_id) throw new Error("الطلب مش مبعوت لدرب السبيل");
+  checkPlace(input);
+  await darb("PATCH", `/api/local/shipments/${row.darb_id}`, { to: destination(input), notes: courierNote(input) });
+  log("darb", `order #${orderId}: shipment ${row.darb_ref} updated (${input.city} / ${input.area}, ${input.payment})`);
+  return { ok: true };
 }

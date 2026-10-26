@@ -109,6 +109,11 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
               <Truck size={16} /> ابعت لدرب السبيل
             </button>
           )}
+          {darb && o.darbRef && o.status !== "delivered" && o.status !== "cancelled" && (
+            <button onClick={() => setShipping(true)} className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
+              <Truck size={16} /> عدّل شحنة درب السبيل
+            </button>
+          )}
           <button onClick={() => setEditing(true)} className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
             <Pencil size={16} /> تعديل
           </button>
