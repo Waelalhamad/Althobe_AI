@@ -166,6 +166,27 @@ export type LessonsView = { pending: Lesson[]; unanswered: Lesson[]; waiting: nu
 export type KnowledgeFile = { name: string; size: number; updatedAt: number };
 export type EventRow = { id: number; conversation: string; message: string; at: number };
 export type ChatTurn = { role: "customer" | "business"; text: string; image?: string };
+export type LeadFilter = "all" | "ordered" | "no_order" | "ad";
+export type Lead = {
+  customer: string;
+  name: string;
+  waName: string;
+  username: string;
+  phone: string;
+  city: string;
+  firstAt: number;
+  lastAt: number;
+  lastText: string;
+  messages: number;
+  fromAd: boolean;
+  orders: number;
+  lastStatus: OrderStatus | null;
+  spent: number;
+  stage: "ordered" | "cancelled" | "no_order";
+};
+export type LeadsQuery = { filter: LeadFilter; q?: string; from?: string; to?: string };
+const leadsParams = (q: LeadsQuery) => new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => Boolean(e[1])));
+
 export type Decision =
   | (
       | { action: "reply"; text: string; photos: string[]; confidence?: number }
@@ -215,6 +236,8 @@ export const api = {
   ordersExportUrl: (q: { from?: string; to?: string; status?: OrderStatus }) =>
     `${BASE}/orders/export?${new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => Boolean(e[1])))}`,
   sendOrdersSheet: () => post<{ orders: number }>("/orders/export/telegram"),
+  leads: (q: LeadsQuery) => request<{ counts: Record<LeadFilter, number>; leads: Lead[] }>(`/leads?${leadsParams(q)}`),
+  leadsExportUrl: (q: LeadsQuery) => `${BASE}/leads/export?${leadsParams(q)}`,
   orderDraft: (customer: string) => post<OrderInput>(`/conversations/${encodeURIComponent(customer)}/order-draft`),
   setOrderStatus: (id: number, status: OrderStatus) =>
     request(`/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),

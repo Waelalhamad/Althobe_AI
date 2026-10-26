@@ -2,8 +2,8 @@
 // Two sheets, right to left: the orders (one row per order) and a summary (totals, by status, city, color and size).
 import ExcelJS from "exceljs";
 import { config } from "./config.js";
-import { latinDigits } from "./channels/whatsapp.js";
-import { localDay } from "./dashboard/queries.js";
+import { latinDigits, localPhone } from "./channels/whatsapp.js";
+import { localDay, type Lead, type LeadStage } from "./dashboard/queries.js";
 import { db, getSetting, setSetting, type OrderItem, type OrderStatus } from "./store.js";
 import { log } from "./scheduler.js";
 import { notifyDocument, notify } from "./telegram.js";
@@ -349,3 +349,135 @@ export async function maybeSendDailySheet(hour: number, localHour: number) {
   await sendDailySheet();
 }
 
+
+// --- Leads: everyone who wrote to us or ordered -----------------------------------------------------
+
+const STAGE: Record<LeadStage, { label: string; fill: string; font: string }> = {
+  ordered: { label: "طلب", fill: "FFDFF5EA", font: "FF17683F" },
+  cancelled: { label: "طلب وألغى", fill: "FFEFEFEF", font: "FF7A7A7A" },
+  no_order: { label: "ما طلب", fill: "FFFFF4DE", font: "FF9A6400" },
+};
+
+export async function leadsWorkbook(list: Lead[], period: string): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "الثوب العربي";
+  wb.created = new Date();
+  const sheet = wb.addWorksheet("الزباين", {
+    views: [{ rightToLeft: true, state: "frozen", ySplit: 7, xSplit: 1, showGridLines: false }],
+    pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 },
+  });
+  const columns: { header: string; key: string; width: number }[] = [
+    { header: "الاسم", key: "name", width: 22 },
+    { header: "الرقم", key: "phone", width: 15 },
+    { header: "اسم الواتساب", key: "waName", width: 20 },
+    { header: "المدينة", key: "city", width: 13 },
+    { header: "الحالة", key: "stage", width: 12 },
+    { header: "الطلبات", key: "orders", width: 9 },
+    { header: "المشتريات (دينار)", key: "spent", width: 15 },
+    { header: "آخر طلب", key: "lastStatus", width: 15 },
+    { header: "من إعلان", key: "fromAd", width: 10 },
+    { header: "أول تواصل", key: "firstAt", width: 17 },
+    { header: "آخر تواصل", key: "lastAt", width: 17 },
+    { header: "رسائلو", key: "messages", width: 9 },
+    { header: "آخر رسالة", key: "lastText", width: 40 },
+    { header: "واتساب", key: "whatsapp", width: 18 },
+  ];
+  sheet.columns = columns.map((c) => ({ key: c.key, width: c.width }));
+  const ordered = list.filter((l) => l.stage === "ordered").length;
+  title(sheet, columns.length, "زباين الثوب العربي", `${period} · ${list.length} زبون · طُلع ${localDay(Date.now())} ${localDate(Date.now()).toISOString().slice(11, 16)}`);
+
+  // Key numbers as cards in rows 4-5, two columns each.
+  const kpis: [string, number, string?][] = [
+    ["كل الزباين", list.length],
+    ["طلبو", ordered],
+    ["ما طلبو", list.length - ordered],
+    ["من الإعلانات", list.filter((l) => l.fromAd).length],
+    ["نسبة الطلب", list.length ? ordered / list.length : 0, "0%"],
+    ["المشتريات (دينار)", list.reduce((sum, l) => sum + l.spent, 0), "#,##0"],
+  ];
+  kpis.forEach(([label, value, fmt], n) => {
+    const col = 1 + n * 2;
+    sheet.mergeCells(4, col, 4, col + 1);
+    sheet.mergeCells(5, col, 5, col + 1);
+    const head = sheet.getCell(4, col);
+    head.value = label;
+    head.font = { name: FONT, size: 10, color: { argb: "FF5E6B6A" } };
+    head.alignment = { horizontal: "center", vertical: "middle", readingOrder: "rtl" };
+    const cell = sheet.getCell(5, col);
+    cell.value = value;
+    cell.numFmt = fmt ?? "#,##0";
+    cell.font = { name: FONT, size: 18, bold: true, color: { argb: BRAND } };
+    cell.alignment = { horizontal: "center", vertical: "middle" };
+    for (const r of [4, 5])
+      for (const c of [col, col + 1]) {
+        const x = sheet.getCell(r, c);
+        x.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_SOFT } };
+        x.border = box;
+      }
+  });
+  sheet.getRow(4).height = 22;
+  sheet.getRow(5).height = 36;
+
+  styleHeader(sheet.getRow(7), 1, columns.length);
+  columns.forEach((c, n) => (sheet.getCell(7, n + 1).value = c.header));
+
+  list.forEach((l, n) => {
+    const stage = STAGE[l.stage];
+    const hasNumber = /^\d+$/.test(l.customer);
+    const row = sheet.getRow(8 + n);
+    const values: Record<string, ExcelJS.CellValue> = {
+      name: l.name || "—",
+      phone: l.phone && l.phone !== l.customer ? l.phone : hasNumber ? localPhone(l.customer) : "بدون رقم",
+      waName: l.waName,
+      city: l.city,
+      stage: stage.label,
+      orders: l.orders,
+      spent: l.spent || null,
+      lastStatus: l.lastStatus ? (STATUS[l.lastStatus as OrderStatus]?.label ?? l.lastStatus) : "",
+      fromAd: l.fromAd ? "✓" : "",
+      firstAt: localDate(l.firstAt),
+      lastAt: localDate(l.lastAt),
+      messages: l.messages,
+      lastText: l.lastText.replace(/\s+/g, " ").slice(0, 200),
+      whatsapp: hasNumber ? `+${l.customer}` : l.customer.startsWith("cw:") ? "Instagram/Messenger" : l.username ? `@${l.username}` : "بدون رقم",
+    };
+    columns.forEach((c, i) => (row.getCell(i + 1).value = values[c.key] ?? null));
+    row.height = 22;
+    row.eachCell({ includeEmpty: true }, (cell, col) => {
+      const key = columns[col - 1]?.key;
+      cell.font = { name: FONT, size: 11 };
+      cell.border = box;
+      cell.alignment = { vertical: "middle", horizontal: "right", readingOrder: "rtl" };
+      if (n % 2 === 1) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ZEBRA } };
+      if (key === "orders" || key === "messages" || key === "fromAd") cell.alignment = { vertical: "middle", horizontal: "center" };
+      if (key === "phone" || key === "whatsapp") cell.alignment = { vertical: "middle", horizontal: "center", readingOrder: "ltr" };
+      if (key === "firstAt" || key === "lastAt") {
+        cell.numFmt = "yyyy-mm-dd  hh:mm";
+        cell.alignment = { vertical: "middle", horizontal: "center", readingOrder: "ltr" };
+      }
+      if (key === "spent") {
+        cell.numFmt = "#,##0";
+        cell.font = { name: FONT, size: 11, bold: true };
+        cell.alignment = { vertical: "middle", horizontal: "center" };
+      }
+      if (key === "stage") {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: stage.fill } };
+        cell.font = { name: FONT, size: 11, bold: true, color: { argb: stage.font } };
+        cell.alignment = { vertical: "middle", horizontal: "center", readingOrder: "rtl" };
+      }
+      if (key === "lastText") cell.font = { name: FONT, size: 10, color: { argb: "FF5E6B6A" } };
+    });
+  });
+
+  if (list.length) {
+    sheet.autoFilter = { from: { row: 7, column: 1 }, to: { row: 7 + list.length, column: columns.length } };
+  } else {
+    sheet.mergeCells(8, 1, 8, columns.length);
+    const empty = sheet.getCell(8, 1);
+    empty.value = "ما في زباين بهالفترة";
+    empty.font = { name: FONT, size: 12, color: { argb: "FF7A8584" } };
+    empty.alignment = { horizontal: "center", vertical: "middle", readingOrder: "rtl" };
+    sheet.getRow(8).height = 32;
+  }
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}

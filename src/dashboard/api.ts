@@ -8,7 +8,7 @@ import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } fro
 import { dataPath, transcribe } from "../media.js";
 import { answerIfWaiting, answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
 import { notifyOrder } from "../orders.js";
-import { ordersWorkbook, sendDailySheet, sheetName, type SheetRange } from "../ordersSheet.js";
+import { leadsWorkbook, ordersWorkbook, sendDailySheet, sheetName, type SheetRange } from "../ordersSheet.js";
 import { approveLesson, ignoreLesson, lessonsView } from "../learning.js";
 import {
   deleteKnowledgeFile,
@@ -247,6 +247,37 @@ dashboardApi.get("/orders/export", async (req, res) => {
   const { file } = await ordersWorkbook(range);
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", `attachment; filename="${sheetName(range)}"`);
+  res.send(file);
+});
+
+// Leads: everyone who wrote to us or ordered. filter: all | ordered | no_order | ad; from / to as for the orders sheet
+// (on the last activity).
+const LEAD_FILTERS: queries.LeadFilter[] = ["all", "ordered", "no_order", "ad"];
+function leadsQuery(query: Record<string, unknown>) {
+  const range = sheetRange(query);
+  return {
+    filter: LEAD_FILTERS.find((f) => f === query.filter) ?? "all",
+    q: typeof query.q === "string" ? query.q.slice(0, 100) : "",
+    from: range.from || undefined,
+    to: query.to ? range.to : undefined,
+    range,
+  };
+}
+
+dashboardApi.get("/leads", (req, res) => {
+  res.json(queries.leads(leadsQuery(req.query)));
+});
+
+dashboardApi.get("/leads/export", async (req, res) => {
+  const opts = leadsQuery(req.query);
+  const { leads } = queries.leads(opts);
+  const { from, to } = opts.range;
+  const days = !from ? "كل الفترة" : queries.localDay(from) === queries.localDay(to - 1) ? queries.localDay(from) : `من ${queries.localDay(from)} لـ ${queries.localDay(to - 1)}`;
+  const label = { all: "", ordered: " · يلي طلبو", no_order: " · يلي ما طلبو", ad: " · من الإعلانات" }[opts.filter];
+  const file = await leadsWorkbook(leads, days + label);
+  const name = !from ? `leads-all-${queries.localDay(Date.now())}` : `leads-${queries.localDay(from)}_${queries.localDay(to - 1)}`;
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${name}.xlsx"`);
   res.send(file);
 });
 

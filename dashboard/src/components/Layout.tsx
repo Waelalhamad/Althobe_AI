@@ -16,6 +16,7 @@ import {
   Settings,
   ShieldCheck,
   ShoppingBag,
+  Users,
   X,
 } from "lucide-react";
 import { api } from "../api";
@@ -24,6 +25,7 @@ const NAV = [
   { href: "/", label: "نظرة عامة", icon: LayoutDashboard },
   { href: "/inbox", label: "المحادثات", icon: MessagesSquare },
   { href: "/orders", label: "الطلبات", icon: ShoppingBag },
+  { href: "/leads", label: "الزباين", icon: Users },
   { href: "/supervisor", label: "المشرف العام", icon: ShieldCheck },
   { href: "/handoffs", label: "التحويلات للفريق", icon: Hand },
   { href: "/learning", label: "التعلّم", icon: GraduationCap },

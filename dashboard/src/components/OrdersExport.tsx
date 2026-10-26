@@ -6,7 +6,7 @@ import { api, type OrderStatus } from "../api";
 import { Button, ErrorNote } from "./ui";
 
 // Local day as YYYY-MM-DD, `daysAgo` days back.
-const day = (daysAgo = 0) => {
+export const day = (daysAgo = 0) => {
   const d = new Date();
   d.setDate(d.getDate() - daysAgo);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;

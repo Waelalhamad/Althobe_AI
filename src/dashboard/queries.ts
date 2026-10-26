@@ -344,3 +344,102 @@ export function orders(opts: { status: string | undefined; limit: number }) {
   );
   return { counts, orders: rows.map((r) => ({ ...r, items: JSON.parse(r.items) as unknown })) };
 }
+
+export type LeadFilter = "all" | "ordered" | "no_order" | "ad";
+export type LeadStage = "ordered" | "cancelled" | "no_order";
+
+export type Lead = {
+  customer: string;
+  name: string;
+  waName: string;
+  username: string;
+  phone: string; // the order's phone, else the WhatsApp number (empty for a username without a number)
+  city: string;
+  firstAt: number;
+  lastAt: number;
+  lastText: string;
+  messages: number; // what the customer wrote
+  fromAd: boolean;
+  orders: number; // not counting cancelled ones
+  lastStatus: string | null;
+  spent: number; // dinars, orders not cancelled
+  stage: LeadStage;
+};
+
+// "385 دينار" / "١٬١٥٥" → the first number in it, 0 when there is none.
+function amount(total: string): number {
+  const match = total.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660)).replace(/[,٬]/g, "").match(/\d+(\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
+// Everyone who wrote to us or ordered: one row per customer, newest activity first.
+// from/to (ms) limit the last activity; q searches name, number, username and city.
+export function leads(opts: { filter: LeadFilter; q: string; from?: number; to?: number }) {
+  const chats = db
+    .prepare(
+      `SELECT customer, SUM(role = 'customer') AS messages, MIN(created_at) AS first_at, MAX(created_at) AS last_at,
+         MAX(role = 'customer' AND text LIKE '[from the ad%') AS from_ad, MAX(id) AS last_id
+       FROM messages GROUP BY customer`,
+    )
+    .all() as { customer: string; messages: number; first_at: number; last_at: number; from_ad: number; last_id: number }[];
+  const lastText = db.prepare("SELECT text FROM messages WHERE id = ?");
+  const contacts = new Map(
+    (db.prepare("SELECT customer, wa_name, username FROM customers").all() as { customer: string; wa_name: string; username: string }[]).map(
+      (c) => [c.customer, c],
+    ),
+  );
+  const orderRows = db
+    .prepare("SELECT customer, name, phone, city, total, status, created_at FROM orders ORDER BY id")
+    .all() as { customer: string; name: string; phone: string; city: string; total: string; status: string; created_at: number }[];
+  const ordersBy = new Map<string, typeof orderRows>();
+  for (const o of orderRows) ordersBy.set(o.customer, [...(ordersBy.get(o.customer) ?? []), o]);
+
+  const customers = new Set([...chats.map((c) => c.customer), ...ordersBy.keys()]);
+  const chatBy = new Map(chats.map((c) => [c.customer, c]));
+  const all: Lead[] = [...customers].map((customer) => {
+    const chat = chatBy.get(customer);
+    const os = ordersBy.get(customer) ?? [];
+    const last = os.at(-1);
+    const live = os.filter((o) => o.status !== "cancelled");
+    const contact = contacts.get(customer);
+    const firstAt = Math.min(chat?.first_at ?? Infinity, os[0]?.created_at ?? Infinity);
+    const lastAt = Math.max(chat?.last_at ?? 0, last?.created_at ?? 0);
+    return {
+      customer,
+      name: last?.name.trim() || contact?.wa_name || "",
+      waName: contact?.wa_name ?? "",
+      username: contact?.username ?? "",
+      phone: last?.phone.trim() || (/^\d+$/.test(customer) ? customer : ""),
+      city: last?.city.trim() ?? "",
+      firstAt,
+      lastAt,
+      lastText: chat ? ((lastText.get(chat.last_id) as { text: string } | undefined)?.text ?? "") : "",
+      messages: chat?.messages ?? 0,
+      fromAd: Boolean(chat?.from_ad),
+      orders: live.length,
+      lastStatus: last?.status ?? null,
+      spent: live.reduce((sum, o) => sum + amount(o.total), 0),
+      stage: live.length ? "ordered" : os.length ? "cancelled" : "no_order",
+    };
+  });
+
+  const q = opts.q.trim().toLowerCase();
+  const inRange = all.filter(
+    (l) =>
+      (opts.from === undefined || l.lastAt >= opts.from) &&
+      (opts.to === undefined || l.lastAt < opts.to) &&
+      (!q || [l.name, l.waName, l.username, l.phone, l.customer, l.city].some((v) => v.toLowerCase().includes(q))),
+  );
+  const counts: Record<LeadFilter, number> = {
+    all: inRange.length,
+    ordered: inRange.filter((l) => l.stage === "ordered").length,
+    no_order: inRange.filter((l) => l.stage !== "ordered").length,
+    ad: inRange.filter((l) => l.fromAd).length,
+  };
+  const leads = inRange
+    .filter((l) =>
+      opts.filter === "ordered" ? l.stage === "ordered" : opts.filter === "no_order" ? l.stage !== "ordered" : opts.filter === "ad" ? l.fromAd : true,
+    )
+    .sort((a, b) => b.lastAt - a.lastAt);
+  return { counts, leads };
+}
