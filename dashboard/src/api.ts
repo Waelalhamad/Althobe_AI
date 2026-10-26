@@ -67,8 +67,19 @@ export type Overview = {
 
 export type ConversationFilter = "all" | "unanswered" | "ai" | "paused" | "handoff";
 
+export type Channel = "whatsapp" | "messenger" | "instagram" | "chatwoot";
+export const CHANNEL_LABEL: Record<Channel, string> = { whatsapp: "واتساب", messenger: "ماسنجر", instagram: "إنستغرام", chatwoot: "Instagram / Messenger" };
+export function channelOf(customer: string): Channel {
+  if (customer.startsWith("fb:")) return "messenger";
+  if (customer.startsWith("ig:")) return "instagram";
+  if (customer.startsWith("cw:")) return "chatwoot";
+  return "whatsapp";
+}
+
 export type ConversationSummary = {
   customer: string;
+  // The WhatsApp / Facebook / Instagram profile name.
+  name: string;
   total: number;
   lastAt: number;
   lastText: string;
@@ -94,7 +105,7 @@ export type OrderItem = { product?: string; color: string; size: string; quantit
 export type Order = {
   id: number;
   customer: string;
-  channel: "whatsapp" | "chatwoot";
+  channel: Channel;
   name: string;
   phone: string;
   city: string;
@@ -149,6 +160,8 @@ export const mediaUrl = (file: string) => `${BASE}/media/${file}`;
 
 export type ConversationDetail = {
   customer: string;
+  name: string;
+  username: string;
   messages: Message[];
   aiCalls: { action: string; reason: string | null; latencyMs: number; promptTokens: number; completionTokens: number; at: number }[];
   pausedUntil: number | null;
@@ -166,7 +179,8 @@ export type Settings = {
   debounceMs: number;
   historyLimit: number;
   timezoneOffsetHours: number;
-  channels: { whatsapp: string | null; whatsappPhoneNumberId: string | null; chatwoot: boolean; openai: boolean };
+  channels: { whatsapp: string | null; whatsappPhoneNumberId: string | null; chatwoot: boolean; meta: boolean; metaWebhook: string | null; openai: boolean };
+  channelReplies: { messenger: boolean; instagram: boolean };
   historySync: { phase?: number; chunk?: number; progress?: number; error?: string; at: number } | null;
 };
 
@@ -243,7 +257,7 @@ export const api = {
   handoffs: (days: number) => request<(AiCallRow & { id: number; stillWithTeam: boolean })[]>(`/handoffs?days=${days}`),
   events: (q: string) => request<EventRow[]>(`/events?q=${encodeURIComponent(q)}&limit=300`),
   settings: () => request<Settings>("/settings"),
-  saveSettings: (patch: Partial<Pick<Settings, "aiReplies" | "testNumbers" | "teamPauseMinutes">>) =>
+  saveSettings: (patch: Partial<Pick<Settings, "aiReplies" | "testNumbers" | "teamPauseMinutes" | "channelReplies">>) =>
     request<Settings>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
   knowledge: () => request<KnowledgeFile[]>("/knowledge"),
   knowledgeFile: (name: string) => request<{ name: string; body: string }>(`/knowledge/${encodeURIComponent(name)}`),

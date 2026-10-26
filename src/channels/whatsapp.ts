@@ -1,4 +1,6 @@
 // WhatsApp Cloud API through Dualhook or 360dialog. Webhooks use Meta's Cloud API format.
+// The conversation part (receiving, waiting for more messages, the AI's reply, team pauses, orders) is shared
+// with Messenger and Instagram (meta.ts): sending goes to the customer's channel.
 import crypto from "node:crypto";
 import path from "node:path";
 import { config } from "../config.js";
@@ -7,6 +9,7 @@ import { listCatalog, publicPhotoUrl } from "../catalog.js";
 import { downloadWhatsAppMedia, fileAsDataUrl, saveFile, transcribe } from "../media.js";
 import {
   attachMedia,
+  channelOf,
   getHistory,
   isAiPaused,
   lastCustomerMessageId,
@@ -27,7 +30,8 @@ import {
 import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
 import { notifyHandoff, notifyOrder, orderOneLine } from "../orders.js";
-import { notifyError } from "../telegram.js";
+import { customerLabel, notifyError } from "../telegram.js";
+import { isMetaCustomer, metaSendImage, metaSendText, metaTyping } from "./meta.js";
 import { noteHandoff } from "../learning.js";
 import { splitAroundPhotos, splitMessages, typingPause } from "../typing.js";
 
@@ -124,19 +128,45 @@ function onCustomerMessage(message: WaMessage) {
   const customer = message.from ?? message.from_user_id;
   if (!customer) return;
   if (message.type === "unsupported") return;
+  receiveCustomerMessage({
+    customer,
+    id: message.id,
+    text: describe(message),
+    createdAt: toMs(message.timestamp),
+    isText: message.type === "text",
+    reaction: message.type === "reaction" ? { emoji: message.reaction?.emoji, messageId: message.reaction?.message_id } : undefined,
+    media: waMediaJob(message),
+    mediaPrefix: adNote(message),
+  });
+}
 
+// A customer message from any channel. reaction: an emoji on one of the chat's messages (messageId);
+// media: a photo / voice note to download and describe for the AI.
+export type IncomingMessage = {
+  customer: string;
+  id: string;
+  text: string;
+  createdAt: number;
+  isText?: boolean;
+  reaction?: { emoji?: string; messageId?: string };
+  media?: MediaJob;
+  mediaPrefix?: string;
+};
+
+export function receiveCustomerMessage(message: IncomingMessage) {
+  const { customer } = message;
   // A reaction is saved with the message it was on. Only a reaction to our latest message, when that message
   // asked something (e.g. 👍 on "نأكدلك الحجز؟"), is an answer that needs a reply.
-  let text = describe(message);
+  let text = message.text;
   let needsReply = true;
-  if (message.type === "reaction") {
-    const emoji = message.reaction?.emoji?.trim();
+  if (message.reaction) {
+    const emoji = message.reaction.emoji?.trim();
     if (!emoji) return;
-    const target = message.reaction?.message_id ? reactedMessage(customer, message.reaction.message_id) : undefined;
+    const target = message.reaction.messageId ? reactedMessage(customer, message.reaction.messageId) : undefined;
     const quoted = target ? ` to: «${target.text.replace(/\s+/g, " ").slice(0, 200)}»` : "";
     text = `[sent a reaction ${emoji}${quoted}]`;
     needsReply = Boolean(target?.isOurLast && /[؟?]/.test(target.text));
-  } else if (message.type === "text" && isAcknowledgement(text) && !weAskedSomething(customer)) {
+  } else if (message.isText && isAcknowledgement(text) && !weAskedSomething(customer)) {
     // "تمام" / "شكرا" to a message of ours that asked nothing: a seller doesn't answer it with another "تمام".
     needsReply = false;
   }
@@ -147,10 +177,10 @@ function onCustomerMessage(message: WaMessage) {
     source: "customer",
     text,
     wamid: message.id,
-    createdAt: toMs(message.timestamp),
+    createdAt: message.createdAt,
   });
   if (!isNew) return; // duplicate webhook delivery
-  trackMedia(customer, message);
+  if (message.media) trackMedia(customer, message.id, message.media, message.mediaPrefix ?? "");
 
   const blocked = aiBlockedReason(customer);
   if (blocked) {
@@ -163,7 +193,7 @@ function onCustomerMessage(message: WaMessage) {
   }
 
   if (!needsReply) {
-    log(`wa:${customer}`, message.type === "reaction" ? "customer reacted; no reply needed" : "customer only acknowledged; no reply needed");
+    log(`wa:${customer}`, message.reaction ? "customer reacted; no reply needed" : "customer only acknowledged; no reply needed");
     return;
   }
 
@@ -212,18 +242,22 @@ function weAskedSomething(customer: string): boolean {
 function onStaffMessage(echo: WaMessage) {
   const customer = echo.to ?? echo.to_user_id ?? echo.recipient_user_id;
   if (!customer || echo.type === "revoke" || echo.type === "edit") return;
-
-  const isNew = saveMessage({
+  receiveStaffMessage({
     customer,
-    role: "business",
-    source: "staff",
+    id: echo.id,
     text: describe(echo),
-    wamid: echo.id,
     createdAt: toMs(echo.timestamp),
+    media: waMediaJob(echo),
+    from: "the WhatsApp Business app",
   });
-  if (isNew) trackMedia(customer, echo); // so the dashboard shows the photos the team sent
-  pauseAi(customer, "team replied from the WhatsApp Business app", teamPauseMinutes() / 60);
-  log(`wa:${customer}`, `team replied from the app; AI paused for ${teamPauseMinutes()} min`);
+}
+
+// A team member wrote to the customer outside the dashboard (from: where): the AI steps back.
+export function receiveStaffMessage(m: { customer: string; id: string; text: string; createdAt: number; media?: MediaJob; from: string }) {
+  const isNew = saveMessage({ customer: m.customer, role: "business", source: "staff", text: m.text, wamid: m.id, createdAt: m.createdAt });
+  if (isNew && m.media) trackMedia(m.customer, m.id, m.media, ""); // so the dashboard shows the photos the team sent
+  pauseAi(m.customer, `team replied from ${m.from}`, teamPauseMinutes() / 60);
+  log(`wa:${m.customer}`, `team replied from ${m.from}; AI paused for ${teamPauseMinutes()} min`);
 }
 
 // Stores past chats so the AI knows what was already said. Never replies or pauses the AI.
@@ -267,26 +301,35 @@ function onHistoryChunk(chunk: HistoryChunk) {
 // Downloads still running per customer; a reply waits for them so the AI sees the photo / hears the voice note.
 const pendingMedia = new Map<string, Set<Promise<void>>>();
 
-function trackMedia(customer: string, message: WaMessage) {
+// A photo, voice note, ... to fetch from the customer's channel.
+export type MediaJob = { type: (typeof MEDIA_TYPES)[number]; mime?: string; caption?: string; download: () => Promise<{ data: Buffer; mime: string }> };
+
+function waMediaJob(message: WaMessage): MediaJob | undefined {
   const type = MEDIA_TYPES.find((t) => t === message.type);
   const media = type && message[type];
-  if (!type || !media?.id || !config.whatsapp.enabled) return;
-  const job = processMedia(customer, message.id, type, media, adNote(message)).finally(() => pending.delete(job));
+  if (!type || !media?.id || !config.whatsapp.enabled) return undefined;
+  return { type, mime: media.mime_type, caption: media.caption, download: () => downloadWhatsAppMedia(media.id!) };
+}
+
+function trackMedia(customer: string, wamid: string, media: MediaJob, prefix: string) {
+  const job = processMedia(customer, wamid, media, prefix).finally(() => pending.delete(job));
   const pending = pendingMedia.get(customer) ?? new Set();
   pending.add(job);
   pendingMedia.set(customer, pending);
 }
 
-async function processMedia(customer: string, wamid: string, type: (typeof MEDIA_TYPES)[number], media: WaMedia, prefix: string) {
+async function processMedia(customer: string, wamid: string, media: MediaJob, prefix: string) {
+  const { type } = media;
   try {
-    const { data, mime } = await downloadWhatsAppMedia(media.id!);
-    const file = saveFile("media", wamid, data, media.mime_type ?? mime);
+    const download = await media.download();
+    const mime = media.mime ?? download.mime;
+    const file = saveFile("media", wamid, download.data, mime);
     let text = describeMedia(type, media);
     if (type === "audio") {
-      const heard = await transcribe(data, media.mime_type ?? mime);
+      const heard = await transcribe(download.data, mime);
       text = heard ? `[voice note] ${heard}` : "[voice note, could not understand it]";
     }
-    attachMedia(wamid, prefix + text, { type, file, mime: media.mime_type ?? mime });
+    attachMedia(wamid, prefix + text, { type, file, mime });
   } catch (error) {
     log(`wa:${customer}`, `could not process the ${type}: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -393,6 +436,16 @@ function teamContext(customer: string): { note: string; confirmed?: string } {
   return { note: lines.join("\n"), confirmed };
 }
 
+// Messenger / Instagram: no phone number, customers from Libya and Syria, no WhatsApp formatting.
+function metaNote(channel: string): string {
+  return [
+    `Writes from ${channel === "instagram" ? "Instagram" : "Messenger (our Facebook page)"}, not WhatsApp: we don't have their number. Before the order summary, ask for a phone number for the delivery and check it: a Libyan mobile is 10 digits starting with 091 to 095 (or +218 9…); if it doesn't look right, ask again kindly.`,
+    `Customers here come from Libya and from Syria. If it isn't clear where they are, ask "من وين حضرتك؟" before giving a price or delivery details. A customer in Syria: we don't have Syrian prices yet, so hand off to the team with the reason "customer from Syria".`,
+    "We have no other number or chat to give: they can keep writing here.",
+    "Plain text only (no *bold*), and keep messages short.",
+  ].join("\n");
+}
+
 async function respond(customer: string) {
   // The team may have taken over while we were waiting.
   if (isAiPaused(customer)) return;
@@ -408,6 +461,7 @@ async function respond(customer: string) {
       background: [
         customerBackground(customer),
         isUserId(customer) && "Writes from a WhatsApp username: we don't have their number, so ask for a phone number for the delivery.",
+        isMetaCustomer(customer) && metaNote(channelOf(customer)),
         team.note,
       ]
         .filter(Boolean)
@@ -415,7 +469,7 @@ async function respond(customer: string) {
     });
     recordAiCall({
       customer,
-      channel: "whatsapp",
+      channel: channelOf(customer),
       action: decision.action,
       reason:
         decision.action === "handoff" || decision.action === "none"
@@ -481,7 +535,7 @@ async function respond(customer: string) {
         log(key, `same order as #${same} sent again by the AI; not saved twice`);
         return;
       }
-      const id = saveOrder({ customer, channel: "whatsapp", ...decision.order });
+      const id = saveOrder({ customer, channel: channelOf(customer), ...decision.order });
       const text = decision.messageToCustomer || DEFAULT_ORDER_MESSAGE;
       const wamid = await sendText(customer, text);
       saveMessage({ customer, role: "business", source: "ai", text, wamid });
@@ -503,9 +557,9 @@ async function respond(customer: string) {
   } catch (error) {
     // Never leave the customer stuck with the bot: stop the AI so the team answers in the app.
     pauseAi(customer, "AI error");
-    recordAiCall({ customer, channel: "whatsapp", action: "error", reason: errorText(error) });
+    recordAiCall({ customer, channel: channelOf(customer), action: "error", reason: errorText(error) });
     log(key, `error, AI paused for this customer: ${errorText(error)}`);
-    notifyError(`المساعد ما قدر يرد على +${customer} (توقف بهالمحادثة، ردو انتو)`, errorText(error));
+    notifyError(`المساعد ما قدر يرد على ${customerLabel(customer)} (توقف بهالمحادثة، ردو انتو)`, errorText(error));
   }
 }
 
@@ -531,9 +585,10 @@ export async function sendTeamMessage(customer: string, text: string, image?: { 
   if (image) {
     if (!config.publicUrl) throw new Error("PUBLIC_URL is not set, so WhatsApp can't fetch the photo");
     const file = saveFile("media", `team-${crypto.randomBytes(16).toString("hex")}`, image.data, image.mime);
-    const caption = text.length <= 1024 ? text : "";
+    // Messenger and Instagram photos have no caption: the text goes after it.
+    const caption = !isMetaCustomer(customer) && text.length <= 1024 ? text : "";
     const link = `${config.publicUrl}/sent/${path.basename(file)}`;
-    const wamid = await sendMessage(customer, { type: "image", image: caption ? { link, caption } : { link } });
+    const wamid = await sendImage(customer, link, caption);
     saveMessage({
       customer,
       role: "business",
@@ -570,7 +625,7 @@ async function sendPhotos(customer: string, ids: string[]) {
   for (const id of ids) {
     const item = catalog.find((i) => i.id === id);
     if (!item) continue;
-    const wamid = await sendMessage(customer, { type: "image", image: { link: publicPhotoUrl(item) } });
+    const wamid = await sendImage(customer, publicPhotoUrl(item));
     saveMessage({
       customer,
       role: "business",
@@ -583,7 +638,13 @@ async function sendPhotos(customer: string, ids: string[]) {
 }
 
 function sendText(to: string, body: string) {
+  if (isMetaCustomer(to)) return metaSendText(to, body);
   return sendMessage(to, { type: "text", text: { body, preview_url: false } });
+}
+
+function sendImage(to: string, link: string, caption = "") {
+  if (isMetaCustomer(to)) return metaSendImage(to, link);
+  return sendMessage(to, { type: "image", image: caption ? { link, caption } : { link } });
 }
 
 async function sendMessage(to: string, content: Record<string, unknown>): Promise<string | undefined> {
@@ -607,6 +668,7 @@ async function sendMessage(to: string, content: Record<string, unknown>): Promis
 let typingUnsupported = false;
 
 async function showTyping(customer: string) {
+  if (isMetaCustomer(customer)) return metaTyping(customer);
   const messageId = lastCustomerWamid(customer);
   if (!messageId || typingUnsupported) return;
   const { url, headers } = sendEndpoint();
@@ -680,11 +742,11 @@ export function isUserId(customer: string): boolean {
 // 218912345678 → 0912345678 (how Libyan customers write their number); other countries: +<number>.
 // Empty for a username customer: we don't have their number, so it must be asked.
 export function localPhone(waNumber: string): string {
-  if (isUserId(waNumber)) return "";
+  if (isUserId(waNumber) || isMetaCustomer(waNumber)) return "";
   return waNumber.startsWith("218") ? `0${waNumber.slice(3)}` : `+${waNumber}`;
 }
 
-function describeMedia(type: string, media: WaMedia): string {
+function describeMedia(type: string, media: { caption?: string }): string {
   const caption = media.caption?.trim();
   const label = type === "audio" ? "[voice note]" : `[sent ${type === "image" ? "a photo" : `a ${type}`}]`;
   return caption ? `${label} ${caption}` : label;

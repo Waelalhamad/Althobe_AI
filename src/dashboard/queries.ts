@@ -207,7 +207,7 @@ export function overview(days: number) {
 
 export type ConversationFilter = "all" | "unanswered" | "ai" | "paused" | "handoff";
 
-// WhatsApp conversations, newest activity first.
+// Conversations (WhatsApp, Messenger, Instagram), newest activity first.
 export function conversations(opts: { filter: ConversationFilter; q: string; limit: number }) {
   const now = Date.now();
   const where: string[] = [];
@@ -243,8 +243,8 @@ export function conversations(opts: { filter: ConversationFilter; q: string; lim
          SELECT l.customer, l.total, l.last_at, m.text AS last_text, m.source AS last_source
          FROM last l JOIN messages m ON m.id = l.last_id
        )
-       SELECT c.*, p.until AS paused_until, p.reason AS pause_reason
-       FROM c LEFT JOIN pauses p ON p.customer = c.customer
+       SELECT c.*, p.until AS paused_until, p.reason AS pause_reason, k.wa_name AS name
+       FROM c LEFT JOIN pauses p ON p.customer = c.customer LEFT JOIN customers k ON k.customer = c.customer
        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
        ORDER BY c.last_at DESC LIMIT ?`,
     )
@@ -252,6 +252,7 @@ export function conversations(opts: { filter: ConversationFilter; q: string; lim
 
   return rows.map((r) => ({
     customer: r.customer as string,
+    name: (r.name as string | null) ?? "",
     total: r.total as number,
     lastAt: r.last_at as number,
     lastText: r.last_text as string,
@@ -294,8 +295,13 @@ export function conversation(customer: string) {
   const lastCustomer = db
     .prepare("SELECT MAX(created_at) AS at FROM messages WHERE customer = ? AND source = 'customer'")
     .get(customer) as { at: number | null };
+  const contact = db.prepare("SELECT wa_name, username FROM customers WHERE customer = ?").get(customer) as
+    | { wa_name: string; username: string }
+    | undefined;
   return {
     customer,
+    name: contact?.wa_name ?? "",
+    username: contact?.username ?? "",
     messages,
     aiCalls,
     pausedUntil: pause && pause.until > Date.now() ? pause.until : null,

@@ -166,7 +166,7 @@ export function Overview() {
                   {d.recentHandoffs.slice(0, 8).map((h, i) => (
                     <li key={i}>
                       <Link
-                        href={h.channel === "whatsapp" ? `/inbox/${h.customer}` : "/handoffs"}
+                        href={h.channel !== "chatwoot" ? `/inbox/${h.customer}` : "/handoffs"}
                         className="flex flex-col gap-1 py-2.5 hover:text-primary"
                       >
                         <div className="flex items-center justify-between gap-2 text-sm">

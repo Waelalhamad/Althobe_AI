@@ -31,8 +31,8 @@ db.exec(`
   -- One row per AI decision, for the dashboard's numbers and cost.
   CREATE TABLE IF NOT EXISTS ai_calls (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    customer          TEXT    NOT NULL,    -- WhatsApp number, or "cw:<conversation id>" for Chatwoot
-    channel           TEXT    NOT NULL,    -- 'whatsapp' | 'chatwoot'
+    customer          TEXT    NOT NULL,    -- see Channel below
+    channel           TEXT    NOT NULL,    -- 'whatsapp' | 'messenger' | 'instagram' | 'chatwoot'
     action            TEXT    NOT NULL,    -- 'reply' | 'handoff' | 'order' | 'error' | 'followup'
     reason            TEXT,
     model             TEXT,
@@ -212,7 +212,7 @@ const insertAiCall = db.prepare(
 
 export function recordAiCall(call: {
   customer: string;
-  channel: "whatsapp" | "chatwoot";
+  channel: Channel;
   action: "reply" | "handoff" | "order" | "none" | "error" | "followup" | "lesson" | "draft";
   reason?: string;
   usage?: AiUsage;
@@ -288,8 +288,8 @@ if (getSetting("team_pause_minutes") === undefined) {
 db.exec(`
   CREATE TABLE IF NOT EXISTS orders (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    customer    TEXT    NOT NULL,          -- WhatsApp number, or "cw:<conversation id>"
-    channel     TEXT    NOT NULL,          -- 'whatsapp' | 'chatwoot'
+    customer    TEXT    NOT NULL,          -- see Channel below
+    channel     TEXT    NOT NULL,          -- 'whatsapp' | 'messenger' | 'instagram' | 'chatwoot'
     name        TEXT    NOT NULL,
     phone       TEXT    NOT NULL,
     city        TEXT    NOT NULL,
@@ -335,7 +335,7 @@ export type OrderItem = { product?: string; color: string; size: string; quantit
 
 export type NewOrder = {
   customer: string;
-  channel: "whatsapp" | "chatwoot";
+  channel: Channel;
   name: string;
   phone: string;
   city: string;
@@ -448,6 +448,16 @@ db.exec(`
 `);
 
 // Keeps what we had when WhatsApp sends an empty value.
+// Where a conversation happens, from its customer key: a WhatsApp number (or "LY.…" username id),
+// "fb:<PSID>" for Messenger, "ig:<IGSID>" for Instagram, "cw:<conversation id>" for Chatwoot.
+export type Channel = "whatsapp" | "messenger" | "instagram" | "chatwoot";
+export function channelOf(customer: string): Channel {
+  if (customer.startsWith("fb:")) return "messenger";
+  if (customer.startsWith("ig:")) return "instagram";
+  if (customer.startsWith("cw:")) return "chatwoot";
+  return "whatsapp";
+}
+
 export function saveContact(customer: string, waName = "", username = "") {
   const now = Date.now();
   db.prepare(

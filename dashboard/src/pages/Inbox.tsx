@@ -3,7 +3,7 @@ import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { ArrowRight, Bot, History, ImagePlus, ShoppingBag, Inbox as InboxIcon, Pause, Play, Search, Send, User, UserRound, X } from "lucide-react";
-import { api, mediaUrl, type ConversationFilter, type ConversationSummary, type Message } from "../api";
+import { api, CHANNEL_LABEL, channelOf, mediaUrl, type ConversationFilter, type ConversationSummary, type Message } from "../api";
 import { Badge, Button, Empty, ErrorNote } from "../components/ui";
 import { ago, country, pauseLabel, phone, time, until } from "../format";
 import { prepareImage } from "../image";
@@ -99,7 +99,10 @@ function Row({ c, active }: { c: ConversationSummary; active: boolean }) {
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="ltr num text-sm font-semibold">{phone(c.customer)}</span>
+        <span className="text-sm font-semibold">
+          {c.name && <span className="me-1">{c.name}</span>}
+          <span className={clsx("ltr num", c.name && "text-xs font-normal text-muted")}>{phone(c.customer)}</span>
+        </span>
         <span className="text-xs text-muted">{ago(c.lastAt)}</span>
       </div>
       <div className="flex items-center gap-2">
@@ -107,6 +110,7 @@ function Row({ c, active }: { c: ConversationSummary; active: boolean }) {
         <span className="line-clamp-1 flex-1 text-sm text-muted">{c.lastText}</span>
       </div>
       <div className="flex flex-wrap gap-1">
+        {channelOf(c.customer) !== "whatsapp" && <Badge tone="info">{CHANNEL_LABEL[channelOf(c.customer)]}</Badge>}
         {country(c.customer) && <Badge>{country(c.customer)}</Badge>}
         {c.pausedUntil ? <Badge tone="warn">{pauseLabel(c.pauseReason)}</Badge> : <Badge tone="primary">المساعد</Badge>}
         {c.lastSource === "customer" && <Badge tone="info">بلا رد</Badge>}
@@ -177,9 +181,14 @@ function Thread({ customer }: { customer: string }) {
           <ArrowRight />
         </button>
         <div className="flex-1">
-          <div className="ltr num text-start font-semibold">{phone(customer)}</div>
+          <div className="text-start font-semibold">
+            {d?.name && <span className="me-2">{d.name}</span>}
+            <span className="ltr num">{phone(customer)}</span>
+            {d?.username && <span className="ms-2 text-xs text-muted">@{d.username}</span>}
+            {channelOf(customer) !== "whatsapp" && <span className="ltr ms-2 select-all text-xs font-normal text-muted" title="للصقها بوضع التجربة">{customer}</span>}
+          </div>
           <div className="text-xs text-muted">
-            {country(customer)}
+            {channelOf(customer) === "whatsapp" ? country(customer) : CHANNEL_LABEL[channelOf(customer)]}
             {d && ` · ${d.messages.length} رسالة`}
             {d?.windowOpenUntil && (windowOpen ? ` · نافذة الرد مفتوحة ${until(d.windowOpenUntil)}` : " · نافذة الـ 24 ساعة مسكّرة")}
           </div>

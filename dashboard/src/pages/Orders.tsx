@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { MessageCircle, Pencil, Phone, Plus, ShoppingBag, Truck } from "lucide-react";
-import { api, PAYMENT_LABEL, type Order, type OrderStatus } from "../api";
+import { api, CHANNEL_LABEL, PAYMENT_LABEL, type Order, type OrderStatus } from "../api";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { emptyOrder, OrderForm } from "../components/OrderForm";
 import { OrdersExport } from "../components/OrdersExport";
@@ -100,7 +100,7 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
             )}
           </div>
           <div className="mt-1 text-xs text-muted">
-            {time(o.createdAt)} · {ago(o.createdAt)} · {o.channel === "whatsapp" ? "واتساب" : "Instagram / Messenger"}
+            {time(o.createdAt)} · {ago(o.createdAt)} · {CHANNEL_LABEL[o.channel]}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -117,7 +117,7 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
           <button onClick={() => setEditing(true)} className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
             <Pencil size={16} /> تعديل
           </button>
-          {o.channel === "whatsapp" && (
+          {o.channel !== "chatwoot" && (
             <Link href={`/inbox/${o.customer}`} className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
               <MessageCircle size={16} /> المحادثة
             </Link>

@@ -8,6 +8,8 @@ export const secs = (ms: number) => (ms ? `${(ms / 1000).toFixed(1)}ث` : "—")
 
 export function phone(n: string) {
   if (n.startsWith("cw:")) return `Chatwoot #${n.slice(3)}`;
+  if (n.startsWith("fb:")) return `ماسنجر · …${n.slice(-6)}`;
+  if (n.startsWith("ig:")) return `إنستغرام · …${n.slice(-6)}`;
   // WhatsApp username without a shared number: "LY.1234…" (country + id).
   if (/^[A-Z]{2}\./.test(n)) return `بدون رقم · ${n.slice(0, 10)}…`;
   return n.length > 6 ? `+${n.slice(0, 3)} ${n.slice(3, 5)} ${n.slice(5, 8)} ${n.slice(8)}` : n;

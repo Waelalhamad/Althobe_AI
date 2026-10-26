@@ -5,6 +5,8 @@ import express from "express";
 import { config } from "./config.js";
 import { handleWhatsAppWebhook } from "./channels/whatsapp.js";
 import { handleChatwootEvent } from "./channels/chatwoot.js";
+import { handleMetaWebhook, startMeta, validMetaSignature } from "./channels/meta.js";
+import { DATA_DELETION_PAGE, PRIVACY_PAGE } from "./legal.js";
 import { dashboardApi } from "./dashboard/api.js";
 import { dataPath } from "./media.js";
 import { startSupervisor } from "./supervisor.js";
@@ -15,7 +17,7 @@ const app = express();
 app.set("trust proxy", 1); // Railway's proxy: real client IP for the login limit
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, whatsapp: config.whatsapp.enabled, chatwoot: config.chatwoot.enabled });
+  res.json({ ok: true, whatsapp: config.whatsapp.enabled, meta: config.meta.enabled, chatwoot: config.chatwoot.enabled });
 });
 
 // Meta's webhook verification when the URL is registered (used by Dualhook's Webhook Override).
@@ -45,6 +47,41 @@ app.post("/whatsapp/:token", express.raw({ type: "*/*", limit: "50mb" }), (req, 
     console.error("WhatsApp webhook handling failed:", error);
   }
 });
+
+// Messenger + Instagram straight from Meta. Verification when the URL is registered in the app.
+app.get("/meta/webhook", (req, res) => {
+  const verifyToken = config.meta.verifyToken;
+  if (verifyToken && req.query["hub.mode"] === "subscribe" && safeEqual(String(req.query["hub.verify_token"] ?? ""), verifyToken)) {
+    res.status(200).type("text/plain").send(String(req.query["hub.challenge"] ?? ""));
+    return;
+  }
+  res.status(403).end();
+});
+
+// Every delivery is signed with the app secret; anything else is refused.
+app.post("/meta/webhook", express.raw({ type: "*/*", limit: "5mb" }), (req, res) => {
+  if (!config.meta.enabled || !validMetaSignature(rawBody(req), req.header("X-Hub-Signature-256"))) {
+    res.status(401).end();
+    return;
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawBody(req).toString("utf8"));
+  } catch {
+    res.status(400).end();
+    return;
+  }
+  res.status(200).json({ received: true });
+  try {
+    handleMetaWebhook(payload as Parameters<typeof handleMetaWebhook>[0]);
+  } catch (error) {
+    console.error("Meta webhook handling failed:", error);
+  }
+});
+
+// Public pages the Meta app needs (Basic settings: Privacy Policy URL, Data deletion instructions URL).
+app.get("/privacy", (_req, res) => res.type("html").send(PRIVACY_PAGE));
+app.get("/data-deletion", (_req, res) => res.type("html").send(DATA_DELETION_PAGE));
 
 // Instagram + Messenger (Chatwoot Agent Bot).
 app.post("/webhook/:token", express.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
@@ -132,7 +169,12 @@ app.listen(config.port, () => {
   startSupervisor();
   startFollowUps();
   startLearning();
-  const channels = [config.whatsapp.enabled && `WhatsApp (${config.whatsapp.provider})`, config.chatwoot.enabled && "Chatwoot"]
+  void startMeta();
+  const channels = [
+    config.whatsapp.enabled && `WhatsApp (${config.whatsapp.provider})`,
+    config.meta.enabled && "Messenger + Instagram",
+    config.chatwoot.enabled && "Chatwoot",
+  ]
     .filter(Boolean)
     .join(" + ");
   console.log(

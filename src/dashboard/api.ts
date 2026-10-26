@@ -19,8 +19,9 @@ import {
   writeKnowledgeFile,
 } from "../knowledge.js";
 import { log } from "../scheduler.js";
-import { aiRepliesEnabled, setAiReplies, setTestNumbers, testNumbers } from "../settings.js";
+import { aiRepliesEnabled, channelRepliesEnabled, META_CHANNELS, setAiReplies, setChannelReplies, setTestNumbers, testNumbers } from "../settings.js";
 import {
+  channelOf,
   db,
   getSetting,
   ORDER_STATUSES,
@@ -333,7 +334,7 @@ dashboardApi.post("/orders", async (req, res) => {
   const given = String(req.body?.customer ?? "").trim();
   const customer = (/^[A-Z]{2}\.\d+$/.test(given) ? given : given.replace(/\D/g, "")) || customerFromPhone(fields.phone);
   const status = ORDER_STATUSES.find((s) => s === req.body?.status) ?? "confirmed";
-  const id = saveOrder({ customer, channel: "whatsapp", ...fields, source: "team", status });
+  const id = saveOrder({ customer, channel: channelOf(customer), ...fields, source: "team", status });
   log(`wa:${customer}`, `order #${id} recorded by the team (${status})`);
   notifyOrder(id, customer, fields, true);
   // The confirmation to the customer, written in the form, sent from our number like a team message
@@ -379,7 +380,7 @@ dashboardApi.post("/conversations/:customer/order-draft", async (req, res) => {
   const transcript = rows.map((m) => `${label[m.source] ?? m.source}: ${m.text.replace(/\s+/g, " ").slice(0, 600)}`).join("\n");
   try {
     const { draft, usage } = await draftOrder(transcript, localPhone(customer));
-    recordAiCall({ customer, channel: "whatsapp", action: "draft", usage });
+    recordAiCall({ customer, channel: channelOf(customer), action: "draft", usage });
     if (!draft) {
       res.status(502).json({ error: "ما قدر يقرا المحادثة، عبّي الطلب بإيدك" });
       return;
@@ -499,6 +500,8 @@ function settingsView() {
   } catch {}
   return {
     aiReplies: aiRepliesEnabled(),
+    // Messenger and Instagram can be listen-only on their own.
+    channelReplies: Object.fromEntries(META_CHANNELS.map((c) => [c, channelRepliesEnabled(c)])),
     testNumbers: testNumbers(),
     model: config.openai.model,
     reasoningEffort: config.openai.reasoningEffort,
@@ -511,6 +514,8 @@ function settingsView() {
       whatsapp: config.whatsapp.enabled ? config.whatsapp.provider : null,
       whatsappPhoneNumberId: config.whatsapp.phoneNumberId ?? null,
       chatwoot: config.chatwoot.enabled,
+      meta: config.meta.enabled,
+      metaWebhook: config.meta.verifyToken && config.publicUrl ? `${config.publicUrl}/meta/webhook` : null,
       openai: Boolean(process.env.OPENAI_API_KEY?.trim()),
     },
     historySync,
@@ -532,11 +537,19 @@ dashboardApi.put("/settings", (req, res) => {
     setTeamPauseMinutes(pauseMinutes);
     log("dashboard", `AI waits ${pauseMinutes} min after a team reply`);
   }
+  for (const channel of META_CHANNELS) {
+    const on = body.channelReplies?.[channel];
+    if (typeof on === "boolean") {
+      setChannelReplies(channel, on);
+      log("dashboard", `AI replies on ${channel} turned ${on ? "on" : "off"}`);
+    }
+  }
   if (Array.isArray(body.testNumbers)) {
     // WhatsApp numbers as digits only, with country code (e.g. 218912345678).
-    // "00218..." is the same number as "+218...".
-    const digits = (body.testNumbers as unknown[]).map((n) => String(n).replace(/\D/g, "").replace(/^00/, ""));
-    const numbers = [...new Set(digits)].filter((n) => n.length >= 8 && n.length <= 15);
+    // "00218..." is the same number as "+218...". Messenger / Instagram chats as "fb:<id>" / "ig:<id>".
+    const ids = (body.testNumbers as unknown[]).map((n) => String(n).trim());
+    const digits = ids.map((n) => (/^(fb|ig):\d+$/.test(n) ? n : n.replace(/\D/g, "").replace(/^00/, "")));
+    const numbers = [...new Set(digits)].filter((n) => /^(fb|ig):\d+$/.test(n) || (n.length >= 8 && n.length <= 15));
     setTestNumbers(numbers);
     log("dashboard", numbers.length ? `test mode on for ${numbers.length} number(s)` : "test mode off");
   }

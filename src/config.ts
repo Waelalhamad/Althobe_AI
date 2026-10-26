@@ -57,6 +57,24 @@ export const config = {
     humanPauseHours: Number(optional("HUMAN_PAUSE_HOURS", "12")),
   },
 
+  // Messenger (the Facebook page) and Instagram (linked to the page), straight from Meta: our own app,
+  // a system user's token and webhooks on /meta/webhook.
+  meta: {
+    get enabled() {
+      return Boolean(this.accessToken && this.appSecret);
+    },
+    graphUrl: optional("META_GRAPH_URL", "https://graph.facebook.com/v25.0").replace(/\/+$/, ""),
+    appId: process.env.META_APP_ID?.trim() || undefined,
+    // Signs every webhook (X-Hub-Signature-256); deliveries without a valid signature are refused.
+    appSecret: process.env.META_APP_SECRET?.trim() ?? "",
+    // The system user's token (or the page token itself); the page token is read from it at startup.
+    accessToken: process.env.META_ACCESS_TOKEN?.trim() ?? "",
+    // Meta's webhook verification (GET hub.challenge) checks this value.
+    verifyToken: process.env.META_VERIFY_TOKEN?.trim() || undefined,
+    pageId: optional("META_PAGE_ID", "113663356959082"),
+    instagramId: optional("META_INSTAGRAM_ID", "17841451978447995"),
+  },
+
   // Instagram + Messenger through Chatwoot.
   chatwoot: {
     enabled: Boolean(process.env.CHATWOOT_BOT_TOKEN?.trim()),

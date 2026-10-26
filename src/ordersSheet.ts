@@ -439,7 +439,7 @@ export async function leadsWorkbook(list: Lead[], period: string): Promise<Buffe
       lastAt: localDate(l.lastAt),
       messages: l.messages,
       lastText: l.lastText.replace(/\s+/g, " ").slice(0, 200),
-      whatsapp: hasNumber ? `+${l.customer}` : l.customer.startsWith("cw:") ? "Instagram/Messenger" : l.username ? `@${l.username}` : "بدون رقم",
+      whatsapp: hasNumber ? `+${l.customer}` : l.customer.startsWith("cw:") ? "Instagram/Messenger" : l.customer.startsWith("fb:") ? "ماسنجر" : l.customer.startsWith("ig:") ? `إنستغرام${l.username ? ` @${l.username}` : ""}` : l.username ? `@${l.username}` : "بدون رقم",
     };
     columns.forEach((c, i) => (row.getCell(i + 1).value = values[c.key] ?? null));
     row.height = 22;

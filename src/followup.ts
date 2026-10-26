@@ -6,7 +6,7 @@
 // - when the AI judges a follow-up fits the chat (it answers SKIP otherwise).
 import { writeFollowUp } from "./agent.js";
 import { config } from "./config.js";
-import { customerBackground, db, getSetting, isAiPaused, recordAiCall, setSetting } from "./store.js";
+import { channelOf, customerBackground, db, getSetting, isAiPaused, recordAiCall, setSetting } from "./store.js";
 import { aiBlockedReason } from "./settings.js";
 import { inWorkingHours } from "./supervisor.js";
 import { log } from "./scheduler.js";
@@ -96,7 +96,7 @@ export async function runFollowUps(): Promise<number> {
           background: customerBackground(c.customer),
           silentHours,
         });
-        recordAiCall({ customer: c.customer, channel: "whatsapp", action: "followup", reason: text ? "sent" : `skipped (${stage ?? "no answer"})`, usage });
+        recordAiCall({ customer: c.customer, channel: channelOf(c.customer), action: "followup", reason: text ? "sent" : `skipped (${stage ?? "no answer"})`, usage });
         // Claim it first, so a crash or a second server never sends it twice.
         db.prepare("INSERT OR IGNORE INTO followups (customer, after_id, sent, text, created_at) VALUES (?, ?, ?, ?, ?)").run(
           c.customer, c.afterId, text ? 1 : 0, text ?? "", Date.now(),

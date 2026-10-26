@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CircleSlash, FlaskConical, Power, Timer } from "lucide-react";
+import { CheckCircle2, CircleSlash, FlaskConical, MessagesSquare, Power, Timer } from "lucide-react";
 import { api, type Settings } from "../api";
 import { Badge, Button, Card, ErrorNote, PageHeader, Toggle } from "../components/ui";
 import { ago } from "../format";
@@ -17,7 +17,7 @@ export function SettingsPage() {
   }, [s?.testNumbers.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = useMutation({
-    mutationFn: (patch: Partial<Pick<Settings, "aiReplies" | "testNumbers" | "teamPauseMinutes">>) => api.saveSettings(patch),
+    mutationFn: (patch: Partial<Pick<Settings, "aiReplies" | "testNumbers" | "teamPauseMinutes" | "channelReplies">>) => api.saveSettings(patch),
     onSuccess: (data) => queryClient.setQueryData(["settings"], data),
   });
 
@@ -27,7 +27,16 @@ export function SettingsPage() {
     if (on && !s.testNumbers.length && !window.confirm("المساعد رح يرد على كل الزباين بواتساب وإنستغرام وماسنجر. متأكد؟")) return;
     save.mutate({ aiReplies: on });
   };
-  const parsedNumbers = numbers.split(/[\s,]+/).map((n) => n.replace(/\D/g, "")).filter(Boolean);
+  // WhatsApp numbers as digits; Messenger / Instagram chats as fb:… / ig:… (copied from the inbox).
+  const parsedNumbers = numbers
+    .split(/[\s,]+/)
+    .map((n) => (/^(fb|ig):\d+$/.test(n.trim()) ? n.trim() : n.replace(/\D/g, "")))
+    .filter(Boolean);
+  const toggleChannel = (channel: "messenger" | "instagram", on: boolean) => {
+    const name = channel === "messenger" ? "ماسنجر" : "إنستغرام";
+    if (on && !s.testNumbers.length && !window.confirm(`المساعد رح يرد على كل زباين ${name}. متأكد؟`)) return;
+    save.mutate({ channelReplies: { ...s.channelReplies, [channel]: on } });
+  };
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
@@ -51,13 +60,42 @@ export function SettingsPage() {
 
       <Card className="flex flex-col gap-4">
         <div className="flex items-start gap-4">
+          <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-info/12 text-info">
+            <MessagesSquare size={20} />
+          </span>
+          <div className="flex-1">
+            <h2 className="font-semibold">ماسنجر وإنستغرام</h2>
+            <p className="mt-1 text-sm text-muted">
+              {s.channels.meta
+                ? "كل قناة إلها زر لحالها. مطفي = استماع فقط: الرسائل بتنحفظ وبتبين بالمحادثات، والمساعد ما بيرد."
+                : "لسا ما انربطو: ناقص مفاتيح Meta (META_ACCESS_TOKEN و META_APP_SECRET)."}
+            </p>
+          </div>
+        </div>
+        {s.channels.meta && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {(["messenger", "instagram"] as const).map((c) => (
+              <div key={c} className="flex items-center justify-between rounded-xl border border-line p-3">
+                <span className="text-sm font-semibold">
+                  {c === "messenger" ? "ماسنجر (صفحة الفيسبوك)" : "إنستغرام @arab_thobe"}
+                  <span className="ms-2 text-xs font-normal text-muted">{s.channelReplies[c] && s.aiReplies ? "المساعد بيرد" : "استماع فقط"}</span>
+                </span>
+                <Toggle checked={s.channelReplies[c]} onChange={(on) => toggleChannel(c, on)} disabled={save.isPending || !s.aiReplies} />
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card className="flex flex-col gap-4">
+        <div className="flex items-start gap-4">
           <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-warn/12 text-warn">
             <FlaskConical size={20} />
           </span>
           <div className="flex-1">
             <h2 className="font-semibold">وضع التجربة</h2>
             <p className="mt-1 text-sm text-muted">
-              إذا حطيت أرقام هون، المساعد بيرد بس على هالأرقام بواتساب (وبيسكت على إنستغرام وماسنجر). جرّبو من موبايلاتكن قبل ما تفتحوه للكل.
+              إذا حطيت أرقام هون، المساعد بيرد بس على هالأرقام بواتساب، وعلى محادثات ماسنجر وإنستغرام يلي بتحطها (fb:… أو ig:…، بتنسخها من صفحة المحادثة). جرّبو من موبايلاتكن قبل ما تفتحوه للكل.
               فاضي = بيرد على الكل.
             </p>
           </div>
@@ -94,7 +132,8 @@ export function SettingsPage() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Check ok={Boolean(s.channels.whatsapp)} label="واتساب" detail={s.channels.whatsapp ? `${s.channels.whatsapp} · ${s.channels.whatsappPhoneNumberId ?? ""}` : "مفتاح الإرسال ناقص"} />
           <Check ok={s.channels.openai} label="OpenAI" detail={s.channels.openai ? `${s.model} · تفكير ${s.reasoningEffort}` : "OPENAI_API_KEY ناقص"} />
-          <Check ok={s.channels.chatwoot} label="إنستغرام وماسنجر (Chatwoot)" detail={s.channels.chatwoot ? "مربوط" : "لسا ما انربط"} />
+          <Check ok={s.channels.meta} label="ماسنجر وإنستغرام (Meta)" detail={s.channels.meta ? s.channels.metaWebhook ?? "مربوط (META_VERIFY_TOKEN ناقص للتحقق)" : "لسا ما انربط"} />
+          {s.channels.chatwoot && <Check ok label="إنستغرام وماسنجر (Chatwoot)" detail="مربوط" />}
           <Check
             ok={Boolean(s.historySync && !s.historySync.error)}
             label="استيراد المحادثات القديمة"

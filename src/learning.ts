@@ -7,7 +7,7 @@ import { decideReply, writeLesson, type ChatTurn } from "./agent.js";
 import { config } from "./config.js";
 import { readKnowledgeFile, writeKnowledgeFile } from "./knowledge.js";
 import { log } from "./scheduler.js";
-import { customerBackground, db, recordAiCall } from "./store.js";
+import { channelOf, customerBackground, db, recordAiCall } from "./store.js";
 import { customerLabel, dashboardLink, editTeamMessage, esc, notify, notifyError, startTelegramUpdates, type TeamActions } from "./telegram.js";
 
 const MINUTE = 60 * 1000;
@@ -200,7 +200,7 @@ async function learnFrom(row: Row, teamReply: string) {
     question: string;
   }[];
   const { draft, usage } = await writeLesson(transcript(row.customer, row.after_id), row.reason, pending);
-  recordAiCall({ customer: row.customer, channel: "whatsapp", action: "lesson", reason: draft?.note, usage });
+  recordAiCall({ customer: row.customer, channel: channelOf(row.customer), action: "lesson", reason: draft?.note, usage });
   if (!draft) {
     setRow(row.id, { status: "skipped", team_reply: teamReply, note: "ما قدر يقرا الجواب" });
     return;
@@ -277,7 +277,7 @@ export const teamActions: TeamActions = {
         row.reason,
         [],
       );
-      recordAiCall({ customer: row.customer, channel: "whatsapp", action: "lesson", reason: draft?.note, usage });
+      recordAiCall({ customer: row.customer, channel: channelOf(row.customer), action: "lesson", reason: draft?.note, usage });
       if (!draft?.learnable || !draft.question) return "ما قدرت اطلّع منها جواب عام لكل الزباين. اكتبها من صفحة التعلّم بالداشبورد.";
       question = draft.question;
       answer = draft.answer || answer;

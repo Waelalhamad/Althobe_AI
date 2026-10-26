@@ -1,7 +1,7 @@
 // Team notifications in a Telegram group: new orders, handoffs, errors, and the supervisor's alerts and reports.
 // The bot token and group are set from the dashboard (Settings); TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID work too.
 import { config } from "./config.js";
-import { getSetting, setSetting } from "./store.js";
+import { db, getSetting, setSetting } from "./store.js";
 
 export const NOTIFY_KINDS = ["order", "handoff", "lesson", "error", "supervisor", "report", "sheet"] as const;
 export type NotifyKind = (typeof NOTIFY_KINDS)[number];
@@ -256,6 +256,10 @@ export function dashboardLink(path: string, label: string): string {
 
 export function customerLabel(customer: string): string {
   if (customer.startsWith("cw:")) return `Instagram/Messenger #${customer.slice(3)}`;
+  if (customer.startsWith("fb:") || customer.startsWith("ig:")) {
+    const name = (db.prepare("SELECT wa_name FROM customers WHERE customer = ?").get(customer) as { wa_name: string } | undefined)?.wa_name;
+    return `${customer.startsWith("fb:") ? "ماسنجر" : "إنستغرام"}${name ? ` · ${name}` : ""}`;
+  }
   // WhatsApp username without a shared number ("LY.1234…").
   if (/^[A-Z]{2}\./.test(customer)) return `بدون رقم (${customer.slice(0, 10)}…)`;
   return `+${customer}`;
