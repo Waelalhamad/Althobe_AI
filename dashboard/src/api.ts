@@ -118,12 +118,13 @@ export type DarbPreview = {
   guess?: { city: string; area: string };
   notes: string;
   internalNotes: string;
+  payment: string;
   total: number;
   phone: string;
   lines: { title: string; quantity: number }[];
   darbRef: string | null;
 };
-export type DarbShipment = { city: string; area: string; notes: string; total: number };
+export type DarbShipment = { city: string; area: string; notes: string; total: number; payment?: string };
 
 // What the team fills in the order form (and what the AI drafts from a chat).
 export type OrderInput = Pick<Order, "name" | "phone" | "city" | "address" | "items" | "total" | "notes">;

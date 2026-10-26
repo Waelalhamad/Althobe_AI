@@ -396,6 +396,7 @@ function darbInput(body: Record<string, unknown> | undefined): ShipmentInput {
     area: String(body?.area ?? "").trim(),
     notes: String(body?.notes ?? "").trim(),
     total: Number(body?.total),
+    payment: String(body?.payment ?? "").trim().slice(0, 100),
   };
 }
 

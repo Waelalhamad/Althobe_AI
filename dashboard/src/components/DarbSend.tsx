@@ -5,6 +5,8 @@ import { api, type DarbShipment, type Order } from "../api";
 import { Button, ErrorNote } from "./ui";
 import { num } from "../format";
 
+const PAYMENTS = ["كاش عند الاستلام", "حوالة مصرفية عند الاستلام"];
+
 const inputClass = "w-full rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary";
 
 // Darb Assabil's shipment statuses, in Arabic.
@@ -30,13 +32,14 @@ export function DarbSend({ order, onClose }: { order: Order; onClose: () => void
   const [s, setS] = useState<DarbShipment>({ city: "", area: "", notes: "", total: 0 });
   useEffect(() => {
     const p = preview.data;
-    if (p) setS({ city: p.guess?.city ?? "", area: p.guess?.area ?? "", notes: p.notes, total: p.total });
+    if (p) setS({ city: p.guess?.city ?? "", area: p.guess?.area ?? "", notes: p.notes, total: p.total, payment: p.payment });
   }, [preview.data]);
   const areas = useMemo(() => preview.data?.zones.find((z) => z.city === s.city)?.areas ?? [], [preview.data, s.city]);
 
   // Darb's price for this place, asked again when the city, area or amount changes.
   const quote = useQuery({
     queryKey: ["darb-quote", order.id, s.city, s.area, s.total],
+    // The price doesn't depend on the note or the payment line.
     queryFn: () => api.darbQuote(order.id, s),
     enabled: Boolean(s.city && s.area && s.total > 0),
     staleTime: 5 * 60_000,
@@ -122,6 +125,18 @@ export function DarbSend({ order, onClose }: { order: Order; onClose: () => void
             {!preview.data.guess && (
               <p className="rounded-xl bg-warn/10 p-3 text-xs text-warn">ما عرفت المدينة من العنوان، اختارها من القائمة.</p>
             )}
+
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted">طريقة الدفع (بتنكتب أول سطر بملاحظة المندوب)</span>
+              <select value={s.payment ?? ""} onChange={(e) => setS({ ...s, payment: e.target.value })} className={inputClass}>
+                {PAYMENTS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+                <option value="">بدون سطر للدفع</option>
+              </select>
+            </label>
 
             <label className="flex flex-col gap-1">
               <span className="text-xs text-muted">العنوان والملاحظات للمندوب (بتنبعت لدرب السبيل)</span>

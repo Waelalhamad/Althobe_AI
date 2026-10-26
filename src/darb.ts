@@ -123,7 +123,9 @@ function amount(total: string): number | undefined {
   return m ? Number(m[0]) : undefined;
 }
 
-export type ShipmentInput = { city: string; area: string; notes: string; total: number };
+// payment: how the customer pays the courier; it goes first in the courier's note.
+export type ShipmentInput = { city: string; area: string; notes: string; total: number; payment?: string };
+export const PAYMENTS = ["كاش عند الاستلام", "حوالة مصرفية عند الاستلام"] as const;
 
 // What the dashboard shows before sending: the guessed place, the product lines and the amount to collect.
 export async function shipmentPreview(orderId: number) {
@@ -137,6 +139,7 @@ export async function shipmentPreview(orderId: number) {
     // Only the address goes to the courier; the order's notes are the team's own (sizes talk, weight, ...).
     notes: order.address.trim(),
     internalNotes: order.notes.trim(),
+    payment: /حوال|تحويل|مصرف/.test(`${order.notes} ${order.total}`) ? PAYMENTS[1] : PAYMENTS[0],
     total: amount(order.total) ?? 0,
     phone: intlPhone(order.phone) ?? intlPhone(order.customer) ?? "",
     lines: items.map((i) => ({ title: productTitle(i), quantity: i.quantity })),
@@ -213,7 +216,7 @@ export async function sendToDarb(orderId: number, input: ShipmentInput): Promise
   const contact = await contactId(phone, order.name);
   const shipment = await darb<{ _id: string; reference: string; status: string }>("POST", "/api/local/shipments", {
     service: MALE_DELIVERY,
-    notes: input.notes.slice(0, 1000),
+    notes: [input.payment && `الدفع: ${input.payment}`, input.notes].filter(Boolean).join("\n").slice(0, 1000),
     contacts: [contact],
     products: products(JSON.parse(order.items) as OrderItem[], input.total),
     allowSplitting: false,
