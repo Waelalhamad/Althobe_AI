@@ -4,6 +4,7 @@
 // - once a day, a short report. Alerts and the report also go to the Telegram group.
 // It only reads chats and writes to the team; it never messages customers.
 import OpenAI from "openai";
+import { background } from "./agent.js";
 import { learningStats } from "./learning.js";
 import { config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
@@ -403,7 +404,8 @@ export async function reviewConversation(customer: string): Promise<number | und
   const toId = fresh[fresh.length - 1]!.id;
 
   client ??= new OpenAI();
-  const completion = await client.chat.completions.create({
+  const completion = await background((service_tier) => client!.chat.completions.create({
+    service_tier,
     model: config.openai.supportModel,
     reasoning_effort: "low",
     messages: [
@@ -411,7 +413,7 @@ export async function reviewConversation(customer: string): Promise<number | und
       { role: "user", content: `Chat with customer ${customerLabel(customer)}:\n\n${transcript(rows, fromId)}` },
     ],
     response_format: { type: "json_schema", json_schema: { name: "review", strict: true, schema: REVIEW_SCHEMA } },
-  });
+  }));
   const content = completion.choices[0]?.message.content;
   if (!content) throw new Error("supervisor returned an empty review");
   const review = JSON.parse(content) as ReviewResult;
@@ -626,14 +628,15 @@ export async function generateReport(): Promise<number | undefined> {
     let usage: OpenAI.CompletionUsage | undefined;
     if (process.env.OPENAI_API_KEY?.trim() && supervisorSettings().reviews) {
       client ??= new OpenAI();
-      const completion = await client.chat.completions.create({
+      const completion = await background((service_tier) => client!.chat.completions.create({
+        service_tier,
         model: config.openai.supportModel,
         reasoning_effort: "low",
         messages: [
           { role: "developer", content: REPORT },
           { role: "user", content: `Numbers (JSON):\n${JSON.stringify(stats)}\n\nChat reviews today (worst first):\n${reviewLines || "(none)"}` },
         ],
-      });
+      }));
       text = completion.choices[0]?.message.content?.trim() || "";
       usage = completion.usage;
     } else {

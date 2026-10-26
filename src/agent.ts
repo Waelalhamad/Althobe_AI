@@ -270,6 +270,17 @@ function chatMessages(history: ChatTurn[], context: CustomerContext): OpenAI.Cha
   ];
 }
 
+// Background work nobody waits for (follow-ups, lessons, the supervisor) runs on OpenAI's flex tier: half the
+// price, slower. When OpenAI is busy it refuses flex requests (429); then the call runs at the normal price.
+export async function background<T>(call: (tier: "flex" | "auto") => Promise<T>): Promise<T> {
+  try {
+    return await call("flex");
+  } catch (error) {
+    if (error instanceof OpenAI.APIError && (error.status === 429 || error.status === 408)) return call("auto");
+    throw error;
+  }
+}
+
 function emptyUsage(): AiUsage {
   return { model: config.openai.model, promptTokens: 0, cachedTokens: 0, completionTokens: 0, reasoningTokens: 0, latencyMs: 0, costUsd: 0 };
 }
@@ -280,7 +291,7 @@ function addUsage(usage: AiUsage, completion: OpenAI.Chat.Completions.ChatComple
   usage.cachedTokens += completion.usage?.prompt_tokens_details?.cached_tokens ?? 0;
   usage.completionTokens += completion.usage?.completion_tokens ?? 0;
   usage.reasoningTokens += completion.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
-  usage.costUsd += aiCostUsd(
+  usage.costUsd += (completion.service_tier === "flex" ? 0.5 : 1) * aiCostUsd(
     completion.model,
     completion.usage?.prompt_tokens ?? 0,
     completion.usage?.prompt_tokens_details?.cached_tokens ?? 0,
@@ -366,6 +377,8 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
   for (let round = 0; round < 4; round++) {
     const response = await client.responses.create({
       model: config.openai.model,
+      // Every reply starts with the same instructions + knowledge: one key keeps them on the same cache.
+      prompt_cache_key: "reply",
       reasoning: { effort: config.openai.reasoningEffort },
       input,
       tools: (knownPhotos.size ? [HANDOFF_TOOL, ORDER_TOOL, NO_REPLY_TOOL, PHOTOS_TOOL] : [HANDOFF_TOOL, ORDER_TOOL, NO_REPLY_TOOL]).map(responseTool),
@@ -461,12 +474,13 @@ Then "message": only for "choosing" (otherwise empty). Follow the "follow-up" pa
   client ??= new OpenAI();
   const startedAt = Date.now();
   const usage = emptyUsage();
-  const completion = await client.chat.completions.create({
+  const completion = await background((service_tier) => client!.chat.completions.create({
     model: config.openai.supportModel,
+    service_tier,
     reasoning_effort: "low",
     messages,
     response_format: { type: "json_schema", json_schema: { name: "follow_up", strict: true, schema: FOLLOW_UP_SCHEMA } },
-  });
+  }));
   addUsage(usage, completion, startedAt);
   try {
     const answer = JSON.parse(completion.choices[0]?.message?.content ?? "{}") as { stage?: string; message?: string };
@@ -513,7 +527,8 @@ export async function writeLesson(
   const startedAt = Date.now();
   const usage = emptyUsage();
   const list = waiting.map((w) => `#${w.id}: ${w.question}`).join("\n") || "(none)";
-  const completion = await client.chat.completions.create({
+  const completion = await background((service_tier) => client!.chat.completions.create({
+    service_tier,
     model: config.openai.supportModel,
     reasoning_effort: "low",
     messages: [
@@ -521,7 +536,7 @@ export async function writeLesson(
       { role: "user", content: `Why the assistant handed off: ${handoffReason}\n\nThe chat:\n${transcript}\n\nLessons waiting for approval:\n${list}` },
     ],
     response_format: { type: "json_schema", json_schema: { name: "lesson", strict: true, schema: LESSON_SCHEMA } },
-  });
+  }));
   addUsage(usage, completion, startedAt);
   try {
     const a = JSON.parse(completion.choices[0]?.message?.content ?? "{}") as Record<string, unknown>;
@@ -727,6 +742,7 @@ async function checkReply(history: ChatTurn[], context: CustomerContext, text: s
   const about = [context.customerPhone && `The customer's own WhatsApp number: ${context.customerPhone}`, context.background].filter(Boolean).join("\n");
   const completion = await client!.chat.completions.create({
     model: config.openai.supportModel,
+    prompt_cache_key: "check",
     reasoning_effort: "low",
     messages: [
       { role: "developer", content: `${CHECK_INSTRUCTIONS}\n\n# Knowledge documents\n\n${loadKnowledge()}` },
