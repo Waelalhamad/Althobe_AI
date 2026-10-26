@@ -104,9 +104,25 @@ export type Order = {
   notes: string;
   status: OrderStatus;
   source?: "ai" | "team";
+  // The Darb Assabil shipment made from it.
+  darbRef?: string | null;
+  darbStatus?: string | null;
+  darbAt?: number | null;
   createdAt: number;
   updatedAt: number;
 };
+
+export type DarbZone = { city: string; areas: string[] };
+export type DarbPreview = {
+  zones: DarbZone[];
+  guess?: { city: string; area: string };
+  notes: string;
+  total: number;
+  phone: string;
+  lines: { title: string; quantity: number }[];
+  darbRef: string | null;
+};
+export type DarbShipment = { city: string; area: string; notes: string; total: number };
 
 // What the team fills in the order form (and what the AI drafts from a chat).
 export type OrderInput = Pick<Order, "name" | "phone" | "city" | "address" | "items" | "total" | "notes">;
@@ -230,7 +246,10 @@ export const api = {
   playground: (messages: ChatTurn[], customerType: "new" | "returning" | "order" = "new") =>
     post<Decision>("/playground", { messages, customerType }),
   orders: (status?: OrderStatus) =>
-    request<{ counts: Partial<Record<OrderStatus, number>>; orders: Order[] }>(`/orders${status ? `?status=${status}` : ""}`),
+    request<{ counts: Partial<Record<OrderStatus, number>>; orders: Order[]; darb: boolean }>(`/orders${status ? `?status=${status}` : ""}`),
+  darbPreview: (id: number) => request<DarbPreview>(`/orders/${id}/darb`),
+  darbQuote: (id: number, s: DarbShipment) => post<{ shipping: number; charges: number }>(`/orders/${id}/darb/quote`, s),
+  sendToDarb: (id: number, s: DarbShipment) => post<{ reference: string; status: string }>(`/orders/${id}/darb`, s),
   createOrder: (order: OrderInput & { customer?: string; status: OrderStatus }) => post<{ id: number }>("/orders", order),
   updateOrder: (id: number, order: OrderInput) => request(`/orders/${id}`, { method: "PUT", body: JSON.stringify(order) }),
   ordersExportUrl: (q: { from?: string; to?: string; status?: OrderStatus }) =>

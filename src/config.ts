@@ -112,6 +112,14 @@ export const config = {
     },
   },
 
+  // Darb Assabil (درب السبيل), the courier: confirmed orders become shipments from the dashboard.
+  darb: {
+    enabled: Boolean(process.env.DARB_API_KEY?.trim() && process.env.DARB_ACCOUNT_ID?.trim()),
+    baseUrl: optional("DARB_BASE_URL", "https://v2.sabil.ly").replace(/\/+$/, ""),
+    apiKey: process.env.DARB_API_KEY?.trim() ?? "",
+    accountId: process.env.DARB_ACCOUNT_ID?.trim() ?? "",
+  },
+
   // Wait this long after the customer's last message before replying,
   // so several quick messages ("hi" / "price?" / "size M") get one answer.
   debounceMs: Number(optional("REPLY_DEBOUNCE_MS", "4000")),

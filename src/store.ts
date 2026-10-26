@@ -307,6 +307,13 @@ db.exec(`
 if (!(db.prepare("PRAGMA table_info(orders)").all() as { name: string }[]).some((c) => c.name === "source")) {
   db.exec("ALTER TABLE orders ADD COLUMN source TEXT NOT NULL DEFAULT 'ai'");
 }
+// The Darb Assabil shipment made from the order: its id, reference number (what the courier and customer see) and status.
+if (!(db.prepare("PRAGMA table_info(orders)").all() as { name: string }[]).some((c) => c.name === "darb_ref")) {
+  db.exec(`ALTER TABLE orders ADD COLUMN darb_id TEXT;
+    ALTER TABLE orders ADD COLUMN darb_ref TEXT;
+    ALTER TABLE orders ADD COLUMN darb_status TEXT;
+    ALTER TABLE orders ADD COLUMN darb_at INTEGER;`);
+}
 
 // product: which product (empty on orders saved before there could be several).
 export type OrderItem = { product?: string; color: string; size: string; quantity: number };

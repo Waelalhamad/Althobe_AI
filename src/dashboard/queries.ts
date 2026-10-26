@@ -333,6 +333,7 @@ export function orders(opts: { status: string | undefined; limit: number }) {
   const rows = db
     .prepare(
       `SELECT id, customer, channel, name, phone, city, address, items, total, notes, status, source,
+         darb_ref AS darbRef, darb_status AS darbStatus, darb_at AS darbAt,
          created_at AS createdAt, updated_at AS updatedAt
        FROM orders ${opts.status ? "WHERE status = ?" : ""} ORDER BY id DESC LIMIT ?`,
     )

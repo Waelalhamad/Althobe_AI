@@ -2,11 +2,12 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { MessageCircle, Pencil, Phone, Plus, ShoppingBag } from "lucide-react";
+import { MessageCircle, Pencil, Phone, Plus, ShoppingBag, Truck } from "lucide-react";
 import { api, type Order, type OrderStatus } from "../api";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { emptyOrder, OrderForm } from "../components/OrderForm";
 import { OrdersExport } from "../components/OrdersExport";
+import { DARB_STATUS, DarbSend } from "../components/DarbSend";
 import { ago, time } from "../format";
 
 const STATUSES: { id: OrderStatus; label: string; tone: "warn" | "info" | "ok" | "muted" }[] = [
@@ -58,13 +59,13 @@ export function Orders() {
         </Card>
       )}
       <div className="flex flex-col gap-4">
-        {q.data?.orders.map((o) => <OrderCard key={o.id} o={o} />)}
+        {q.data?.orders.map((o) => <OrderCard key={o.id} o={o} darb={q.data.darb} />)}
       </div>
     </div>
   );
 }
 
-function OrderCard({ o }: { o: Order }) {
+function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
   const queryClient = useQueryClient();
   const update = useMutation({
     mutationFn: (status: OrderStatus) => api.setOrderStatus(o.id, status),
@@ -72,6 +73,7 @@ function OrderCard({ o }: { o: Order }) {
   });
   const current = STATUSES.find((s) => s.id === o.status);
   const [editing, setEditing] = useState(false);
+  const [shipping, setShipping] = useState(false);
 
   return (
     <Card className="flex flex-col gap-4">
@@ -82,6 +84,7 @@ function OrderCard({ o }: { o: Order }) {
           onClose={() => setEditing(false)}
         />
       )}
+      {shipping && <DarbSend order={o} onClose={() => setShipping(false)} />}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -89,12 +92,23 @@ function OrderCard({ o }: { o: Order }) {
             <span className="text-lg font-semibold">{o.name}</span>
             {current && <Badge tone={current.tone}>{current.label}</Badge>}
             <Badge tone={o.source === "team" ? "primary" : "muted"}>{o.source === "team" ? "سجّلو الفريق" : "جمعه المساعد"}</Badge>
+            {o.darbRef && (
+              <Badge tone="info">
+                <Truck size={12} /> درب السبيل <span className="num">#{o.darbRef}</span>
+                {o.darbStatus && ` · ${DARB_STATUS[o.darbStatus] ?? o.darbStatus}`}
+              </Badge>
+            )}
           </div>
           <div className="mt-1 text-xs text-muted">
             {time(o.createdAt)} · {ago(o.createdAt)} · {o.channel === "whatsapp" ? "واتساب" : "Instagram / Messenger"}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {darb && !o.darbRef && o.status !== "cancelled" && o.status !== "delivered" && (
+            <button onClick={() => setShipping(true)} className="flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-sm font-semibold text-white hover:brightness-110">
+              <Truck size={16} /> ابعت لدرب السبيل
+            </button>
+          )}
           <button onClick={() => setEditing(true)} className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
             <Pencil size={16} /> تعديل
           </button>

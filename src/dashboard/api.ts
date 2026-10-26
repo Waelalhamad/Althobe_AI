@@ -8,6 +8,7 @@ import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } fro
 import { dataPath, transcribe } from "../media.js";
 import { answerIfWaiting, answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
 import { notifyOrder } from "../orders.js";
+import { sendToDarb, shipmentPreview, shipmentQuote, type ShipmentInput } from "../darb.js";
 import { leadsWorkbook, ordersWorkbook, sendDailySheet, sheetName, type SheetRange } from "../ordersSheet.js";
 import { approveLesson, ignoreLesson, lessonsView } from "../learning.js";
 import {
@@ -231,7 +232,7 @@ dashboardApi.get("/handoffs", (req, res) => {
 
 dashboardApi.get("/orders", (req, res) => {
   const status = ORDER_STATUSES.find((s) => s === req.query.status);
-  res.json(queries.orders({ status, limit: intParam(req.query.limit, 200, 1000) }));
+  res.json({ ...queries.orders({ status, limit: intParam(req.query.limit, 200, 1000) }), darb: config.darb.enabled });
 });
 
 // The orders as an Excel file. from / to: local days (YYYY-MM-DD, both included); status: one status or all.
@@ -373,6 +374,32 @@ dashboardApi.post("/conversations/:customer/order-draft", async (req, res) => {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
   }
 });
+
+// Darb Assabil: what would be sent (guessed city/area, product lines, amount), its delivery price, and sending it.
+function darbInput(body: Record<string, unknown> | undefined): ShipmentInput {
+  return {
+    city: String(body?.city ?? "").trim(),
+    area: String(body?.area ?? "").trim(),
+    notes: String(body?.notes ?? "").trim(),
+    total: Number(body?.total),
+  };
+}
+
+async function darbRoute(res: express.Response, run: () => Promise<unknown>) {
+  if (!config.darb.enabled) {
+    res.status(400).json({ error: "درب السبيل مش مربوط" });
+    return;
+  }
+  try {
+    res.json(await run());
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+dashboardApi.get("/orders/:id/darb", (req, res) => darbRoute(res, () => shipmentPreview(Number(req.params.id))));
+dashboardApi.post("/orders/:id/darb/quote", (req, res) => darbRoute(res, () => shipmentQuote(Number(req.params.id), darbInput(req.body))));
+dashboardApi.post("/orders/:id/darb", (req, res) => darbRoute(res, () => sendToDarb(Number(req.params.id), darbInput(req.body))));
 
 dashboardApi.patch("/orders/:id", (req, res) => {
   const status = ORDER_STATUSES.find((s) => s === req.body?.status) as OrderStatus | undefined;
