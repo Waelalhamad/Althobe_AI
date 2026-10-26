@@ -232,7 +232,7 @@ const NO_REPLY_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
   function: {
     name: "no_reply_needed",
     description:
-      "Send nothing: the customer only acknowledged or thanked us (\"تمام\", \"شكرا\", 👍), asked nothing new, and nothing waits for their answer.",
+      "Send NOTHING to the customer (it is not about the team: for the team use hand_off). Only when the customer just acknowledged or thanked us (\"تمام\", \"شكرا\", 👍), asked nothing new, and gave no answer or detail we asked for. If you wrote a message for the customer, don't call this.",
     strict: true,
     parameters: {
       type: "object",
@@ -747,7 +747,8 @@ function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | u
   const noReplyCall = message.tool_calls?.find(
     (call) => call.type === "function" && call.function.name === "no_reply_needed",
   );
-  if (noReplyCall && noReplyCall.type === "function" && !message.tool_calls?.some((c) => c.type === "function" && c.function.name !== "no_reply_needed")) {
+  // A message written next to no_reply_needed is sent: the model sometimes reads the tool as "nothing for the team".
+  if (noReplyCall && noReplyCall.type === "function" && !message.content?.trim() && !message.tool_calls?.some((c) => c.type === "function" && c.function.name !== "no_reply_needed")) {
     let reason = "";
     try {
       reason = String((JSON.parse(noReplyCall.function.arguments) as { reason?: unknown }).reason ?? "");
