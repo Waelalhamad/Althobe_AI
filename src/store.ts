@@ -213,7 +213,7 @@ const insertAiCall = db.prepare(
 export function recordAiCall(call: {
   customer: string;
   channel: Channel;
-  action: "reply" | "handoff" | "order" | "none" | "error" | "followup" | "lesson" | "draft";
+  action: "reply" | "handoff" | "order" | "none" | "error" | "followup" | "lesson" | "draft" | "photo";
   reason?: string;
   usage?: AiUsage;
 }) {

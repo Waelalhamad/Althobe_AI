@@ -4,7 +4,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { config } from "../config.js";
-import { decideReply, type ChatTurn } from "../agent.js";
+import { checkPhoto, decideReply, type ChatTurn } from "../agent.js";
 import { listCatalog, publicPhotoUrl } from "../catalog.js";
 import { downloadWhatsAppMedia, fileAsDataUrl, saveFile, transcribe } from "../media.js";
 import {
@@ -181,7 +181,7 @@ export function receiveCustomerMessage(message: IncomingMessage) {
     createdAt: message.createdAt,
   });
   if (!isNew) return; // duplicate webhook delivery
-  if (message.media) trackMedia(customer, message.id, message.media, message.mediaPrefix ?? "");
+  if (message.media) trackMedia(customer, message.id, message.media, message.mediaPrefix ?? "", true);
 
   const blocked = aiBlockedReason(customer);
   if (blocked) {
@@ -312,14 +312,15 @@ function waMediaJob(message: WaMessage): MediaJob | undefined {
   return { type, mime: media.mime_type, caption: media.caption, download: () => downloadWhatsAppMedia(media.id!) };
 }
 
-function trackMedia(customer: string, wamid: string, media: MediaJob, prefix: string) {
-  const job = processMedia(customer, wamid, media, prefix).finally(() => pending.delete(job));
+// fromCustomer: a product photo the customer sent is checked against our current products (old ads, other stores).
+function trackMedia(customer: string, wamid: string, media: MediaJob, prefix: string, fromCustomer = false) {
+  const job = processMedia(customer, wamid, media, prefix, fromCustomer).finally(() => pending.delete(job));
   const pending = pendingMedia.get(customer) ?? new Set();
   pending.add(job);
   pendingMedia.set(customer, pending);
 }
 
-async function processMedia(customer: string, wamid: string, media: MediaJob, prefix: string) {
+async function processMedia(customer: string, wamid: string, media: MediaJob, prefix: string, fromCustomer: boolean) {
   const { type } = media;
   try {
     const download = await media.download();
@@ -329,6 +330,16 @@ async function processMedia(customer: string, wamid: string, media: MediaJob, pr
     if (type === "audio") {
       const heard = await transcribe(download.data, mime);
       text = heard ? `[voice note] ${heard}` : "[voice note, could not understand it]";
+    }
+    if (type === "image" && fromCustomer) {
+      try {
+        const image = fileAsDataUrl(file, mime);
+        const check = image ? await checkPhoto(image) : undefined;
+        if (check?.usage.promptTokens) recordAiCall({ customer, channel: channelOf(customer), action: "photo", reason: check.note, usage: check.usage });
+        if (check?.note) text = `${text} ${check.note}`;
+      } catch (error) {
+        log(`wa:${customer}`, `photo not checked: ${errorText(error)}`);
+      }
     }
     attachMedia(wamid, prefix + text, { type, file, mime });
   } catch (error) {

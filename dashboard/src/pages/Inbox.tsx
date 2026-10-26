@@ -172,7 +172,7 @@ function Thread({ customer }: { customer: string }) {
       setPhotoError("ما قدرت افتح هالصورة، جرّب صورة JPG أو PNG.");
     }
   }
-  const handoffs = d?.aiCalls.filter((c) => c.action !== "reply" && c.action !== "none") ?? [];
+  const handoffs = d?.aiCalls.filter((c) => !["reply", "none", "photo", "draft"].includes(c.action)) ?? [];
 
   return (
     <>

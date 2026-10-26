@@ -1,7 +1,8 @@
 import OpenAI from "openai";
 import { aiCostUsd, config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
-import { catalogForPrompt, listCatalog } from "./catalog.js";
+import { catalogForPrompt, listCatalog, type CatalogItem } from "./catalog.js";
+import { fileAsDataUrl } from "./media.js";
 import { stockForPrompt } from "./stock.js";
 import type { AiUsage, OrderItem, Payment } from "./store.js";
 
@@ -114,7 +115,10 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 The message to the customer must sound like the same person continuing the chat, short and warm, e.g. "حاضر، لحظة نتأكدلك ونرجعلك 🙏" or for a problem with an order that arrived "سؤال مزبوط استاذ، توا نتأكدلك ونرجعلك 🙏". Apologize ("سامحنا على هذا 🙏 توا نتابعلك الموضوع ونرجعلك") only when the customer complains that something went wrong, never for a question. Never say "سيتم تحويلك" or mention a team or an agent taking over.
 
 # Photos and voice notes
-- You can see photos the customer sends. Often it's a screenshot of one of our product photos or ads, to show what they want: say which product and color it is (compare with the product photo list below) and continue.
+- You can see photos the customer sends. Often it's a screenshot of a product, to show what they want. Customers often send our OLD ads (our logo, a model we don't sell anymore) or photos from other stores, so each product photo was compared with our current product photos, and the result is on its line as "[photo check: ...]". Trust it over your own look at the photo:
+  - "our current product": say which product and color it is and continue.
+  - "NOT one of our current products": we don't sell that model now. Never give it a price, never say it's available or "from us", and never take an order for it. Say it plainly and kindly ("هاد الموديل مش متوفر عندنا حالياً استاذ"), then offer what we have: our set and its colors (send our current photos if they haven't seen them). If they asked "بكم", give our set's price only as the price of OUR set, after saying theirs isn't available. This is a clear case: answer it yourself, don't hand off.
+  - "can't tell": don't guess: say what we have and ask which color they like.
 - A line like "[sent a reaction 👍 to: «...»]" is the customer reacting to that message of ours. 👍 ❤️ ✅ 👌 🙏 on a question means yes (on "نأكدلك الحجز؟" it confirms the order, so submit it); 👎 or 😡 means no or unhappy. Answer it like the words it stands for.
 - Voice notes reach you as text, like "[voice note] ...". Answer them like normal messages. If the text is unclear, ask them to write it.
 
@@ -272,7 +276,8 @@ function chatMessages(history: ChatTurn[], context: CustomerContext): OpenAI.Cha
         role: "user",
         content: [
           { type: "text", text: turn.text },
-          // "low" detail is enough to tell colors and models apart, and costs a fraction of "high".
+          // "low" detail is enough to tell colors apart, and costs a fraction of "high" (the model was checked
+          // against our photos when the photo arrived: checkPhoto).
           { type: "image_url", image_url: { url: turn.image, detail: "low" } },
         ],
       };
@@ -583,6 +588,72 @@ const ORDER_DRAFT_SCHEMA = (() => {
   return { type: "object", properties, required: Object.keys(properties), additionalProperties: false };
 })();
 
+// --- Is the customer's photo one of our current products? ---
+// Customers send screenshots of our old ads (our logo, models we don't sell anymore) and other stores' photos.
+// Done once when the photo arrives, with all our product photos side by side; the verdict is written on the
+// message ("[photo check: ...]") for the reply and for the team.
+
+const PHOTO_CHECK_INSTRUCTIONS = `You compare a photo a customer sent to a clothing store with the store's current product photos. The current product photos show everything the store sells now.
+Decide if the customer's photo shows the SAME MODEL as one of them. Same model = same cut, same embroidery or none, same collar, same pockets and vest. The color, the logo, the person, the pose and the background don't count: one model comes in several colors.
+- "ours": the same model as our current photos (give the closest photo id and its color).
+- "other_model": a clothing product, but a different model: an old ad of the store (its logo on a different design) or another store's product (another logo or brand). Say in a few words what differs (e.g. "embroidered collar and chest", "another store's logo «...»").
+- "not_a_product": not a photo of clothing (a receipt, a text screenshot, a place, a person's face).
+- "unclear": too blurry, small or cut to tell the model.`;
+
+const PHOTO_CHECK_SCHEMA = {
+  type: "object",
+  properties: {
+    kind: { type: "string", enum: ["ours", "other_model", "not_a_product", "unclear"] },
+    photo_id: { type: "string", description: "The closest current product photo id when kind is ours, else empty." },
+    color: { type: "string", description: "The color as named in that photo, when kind is ours, else empty." },
+    reason: { type: "string", description: "A few words: what differs, or why it's unclear." },
+  },
+  required: ["kind", "photo_id", "color", "reason"],
+  additionalProperties: false,
+} as const;
+
+export async function checkPhoto(image: string): Promise<{ note?: string; usage: AiUsage }> {
+  const usage = emptyUsage();
+  const photos = listCatalog()
+    .map((item) => ({ item, url: fileAsDataUrl(item.file, item.mime) }))
+    .filter((p): p is { item: CatalogItem; url: string } => Boolean(p.url));
+  if (!photos.length) return { usage };
+  client ??= new OpenAI();
+  const startedAt = Date.now();
+  const completion = await client.chat.completions.create({
+    model: config.openai.supportModel,
+    reasoning_effort: "medium",
+    messages: [
+      { role: "developer", content: PHOTO_CHECK_INSTRUCTIONS },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Our current product photos:" },
+          ...photos.flatMap(({ item, url }) => [
+            { type: "text" as const, text: `${item.id}: ${[item.product, item.name].filter(Boolean).join(" · ")}` },
+            { type: "image_url" as const, image_url: { url, detail: "low" as const } },
+          ]),
+          { type: "text", text: "The customer's photo:" },
+          { type: "image_url", image_url: { url: image, detail: "high" } },
+        ],
+      },
+    ],
+    response_format: { type: "json_schema", json_schema: { name: "photo_check", strict: true, schema: PHOTO_CHECK_SCHEMA } },
+  });
+  addUsage(usage, completion, startedAt);
+  try {
+    const a = JSON.parse(completion.choices[0]?.message?.content ?? "{}") as { kind?: string; photo_id?: string; color?: string; reason?: string };
+    const item = photos.find((p) => p.item.id === a.photo_id)?.item;
+    const color = (a.color || item?.name || "").replace(/^اللون\s*[:：]?\s*/, "").trim();
+    if (a.kind === "ours") return { note: `[photo check: our current product${item?.product ? ` «${item.product}»` : ""}${color ? `, color ${color}` : ""}]`, usage };
+    if (a.kind === "other_model") return { note: `[photo check: NOT one of our current products (${a.reason?.trim() || "a different model"}); we don't sell this model now]`, usage };
+    if (a.kind === "unclear") return { note: "[photo check: can't tell the model]", usage };
+    return { usage };
+  } catch {
+    return { usage };
+  }
+}
+
 export async function draftOrder(transcript: string, customerPhone: string): Promise<{ draft?: OrderDraft; usage: AiUsage }> {
   client ??= new OpenAI();
   const startedAt = Date.now();
@@ -737,7 +808,7 @@ const MIN_CONFIDENCE = 80;
 
 const CHECK_INSTRUCTIONS = `You check a reply our sales assistant wants to send a customer on WhatsApp, before it is sent. The knowledge documents below are the only source of truth about the store and its products.
 1. not_in_knowledge: every claim in the reply about the product, stock or availability, sizes, fabric, care, delivery, payment, policies, discounts or the company that the knowledge does not back (guessed, assumed, or added), e.g. "not 100% cotton" when the fabric is only described as autumn fabric, or "the navy is available in 58" when the knowledge doesn't confirm stock.
-   These are backed, don't list them: a specific case of a general rule in the knowledge (free delivery to all Libyan cities → free delivery to Tripoli); plain rewording of the knowledge; anything said earlier in the chat by us or the customer (their name, color, size, city, what we sent); [sent product photo: ...] / [product photos] lines, which are our catalog photos; greetings and questions to the customer. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, the summary's payment line ("الدفع: كاش عند الاستلام" by default, "الدفع: تحويل مصرفي" when the customer asked to pay by transfer, accepting a transfer), asking for missing details, asking for their location on the map, asking which color, size, country or address.
+   These are backed, don't list them: a specific case of a general rule in the knowledge (free delivery to all Libyan cities → free delivery to Tripoli); plain rewording of the knowledge; anything said earlier in the chat by us or the customer (their name, color, size, city, what we sent); [sent product photo: ...] / [product photos] lines, which are our catalog photos; greetings and questions to the customer. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, the summary's payment line ("الدفع: كاش عند الاستلام" by default, "الدفع: تحويل مصرفي" when the customer asked to pay by transfer, accepting a transfer), asking for missing details, asking for their location on the map, what a photo the customer sent shows: which of our products and colors it is, or that its model isn't available now (the replier compared it with our product photos; you can't see photos, so don't question it), asking which color, size, country or address.
    Always list: any phone number or contact given as ours (we have none to give; the customer's number in their details is theirs).
 2. missed_questions: questions or requests in the customer's latest messages (after our last message) that the reply ignores or doesn't answer (the ad button's automatic text, e.g. "هل يمكنني الحصول على مزيد من المعلومات حول هذا؟" or "Can I get more info?", is only a hello: any answer about the product or price covers it), e.g. they asked the price and the reply only asks about the color. Empty if everything was answered, or if the customer asked nothing. Only what the customer asked: a question our rules say we should ask them (country, size, color) is not a missed question.
 3. confidence 0-100 that the reply is right to send as it is. Anything in either list means below ${MIN_CONFIDENCE}.
