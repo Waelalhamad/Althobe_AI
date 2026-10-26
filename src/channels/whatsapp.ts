@@ -38,6 +38,10 @@ const DEFAULT_ORDER_MESSAGE = "تمام، تم الحجز 🙏 شويه ونتو
 type WaMessage = {
   from?: string;
   to?: string;
+  // WhatsApp usernames: a customer who hides their number comes with a user id ("LY.1234…") instead of `from` / `to`.
+  from_user_id?: string;
+  to_user_id?: string;
+  recipient_user_id?: string;
   id: string;
   timestamp?: string;
   type: string;
@@ -108,7 +112,7 @@ export function handleWhatsAppWebhook(payload: WebhookPayload) {
 }
 
 function onCustomerMessage(message: WaMessage) {
-  const customer = message.from;
+  const customer = message.from ?? message.from_user_id;
   if (!customer) return;
   if (message.type === "unsupported") return;
 
@@ -155,7 +159,7 @@ function onCustomerMessage(message: WaMessage) {
 }
 
 function onStaffMessage(echo: WaMessage) {
-  const customer = echo.to;
+  const customer = echo.to ?? echo.to_user_id ?? echo.recipient_user_id;
   if (!customer || echo.type === "revoke" || echo.type === "edit") return;
 
   const isNew = saveMessage({
@@ -185,7 +189,7 @@ function onHistoryChunk(chunk: HistoryChunk) {
     for (const message of thread.messages ?? []) {
       if (message.type === "reaction" || message.type === "unsupported" || message.type === "revoke") continue;
       // The customer's own messages have from = their number; anything else was sent by the business.
-      const fromCustomer = message.from === customer;
+      const fromCustomer = (message.from ?? message.from_user_id) === customer;
       messages.push({
         customer,
         role: fromCustomer ? ("customer" as const) : ("business" as const),
@@ -304,7 +308,10 @@ async function respond(customer: string) {
     void showTyping(customer);
     const decision = await decideReply(historyForAi(customer), {
       customerPhone: localPhone(customer),
-      background: customerBackground(customer),
+      background: isUserId(customer)
+        ? `${customerBackground(customer)}
+Writes from a WhatsApp username: we don't have their number, so ask for a phone number for the delivery.`
+        : customerBackground(customer),
     });
     recordAiCall({
       customer,
@@ -475,7 +482,8 @@ async function sendMessage(to: string, content: Record<string, unknown>): Promis
   const res = await fetch(url, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to, ...content }),
+    // A customer known only by their user id (WhatsApp usernames) is addressed with `recipient`, not `to`.
+    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", ...(isUserId(to) ? { recipient: to } : { to }), ...content }),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
@@ -548,8 +556,15 @@ export function latinDigits(text: string): string {
   return text.replace(/[٠-٩۰-۹]/g, (d) => String((d.charCodeAt(0) - 0x0660) % 0x90));
 }
 
+// A customer who writes from a WhatsApp username without sharing their number: "LY.1234…" (country + id).
+export function isUserId(customer: string): boolean {
+  return /^[A-Z]{2}\./.test(customer);
+}
+
 // 218912345678 → 0912345678 (how Libyan customers write their number); other countries: +<number>.
+// Empty for a username customer: we don't have their number, so it must be asked.
 export function localPhone(waNumber: string): string {
+  if (isUserId(waNumber)) return "";
   return waNumber.startsWith("218") ? `0${waNumber.slice(3)}` : `+${waNumber}`;
 }
 

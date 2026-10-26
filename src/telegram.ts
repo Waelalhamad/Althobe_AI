@@ -255,7 +255,10 @@ export function dashboardLink(path: string, label: string): string {
 }
 
 export function customerLabel(customer: string): string {
-  return customer.startsWith("cw:") ? `Instagram/Messenger #${customer.slice(3)}` : `+${customer}`;
+  if (customer.startsWith("cw:")) return `Instagram/Messenger #${customer.slice(3)}`;
+  // WhatsApp username without a shared number ("LY.1234…").
+  if (/^[A-Z]{2}\./.test(customer)) return `بدون رقم (${customer.slice(0, 10)}…)`;
+  return `+${customer}`;
 }
 
 // --- Dashboard: status, finding the group, test message ----------------------------------
