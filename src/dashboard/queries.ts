@@ -92,6 +92,8 @@ export function totals(since: number): Totals {
 
   // Orders the team recorded from the dashboard (sales they closed themselves).
   const teamOrders = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE source = 'team' AND created_at >= ?").get(since) as { n: number };
+  // Saved orders, not the AI's order decisions: an order the AI sends again is not saved twice.
+  const aiOrders = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE source = 'ai' AND created_at >= ?").get(since) as { n: number };
 
   const prompt = ai.prompt ?? 0;
   const cached = ai.cached ?? 0;
@@ -103,7 +105,7 @@ export function totals(since: number): Totals {
     staffMessages: msg.staffMessages ?? 0,
     aiReplies: ai.replies ?? 0,
     handoffs: ai.handoffs ?? 0,
-    orders: ai.orders ?? 0,
+    orders: aiOrders.n,
     teamOrders: teamOrders.n,
     errors: ai.errors ?? 0,
     aiConversations: ai.conversations ?? 0,
@@ -160,20 +162,19 @@ export function overview(days: number) {
     if (!row) continue;
     row.aiReplies = r.aiReplies;
     row.handoffs = r.handoffs;
-    row.orders = r.orders;
     row.errors = r.errors;
     row.costUsd = r.cost ?? 0;
   }
-  // The chart's orders line counts the team's orders too.
-  const teamRows = db
+  // The chart's orders line: saved orders, the AI's and the team's.
+  const orderRows = db
     .prepare(
       `SELECT strftime('%Y-%m-%d', created_at / 1000 + ${offsetSec}, 'unixepoch') AS day, COUNT(*) AS n
-       FROM orders WHERE source = 'team' AND created_at >= ? GROUP BY day`,
+       FROM orders WHERE created_at >= ? GROUP BY day`,
     )
     .all(since) as { day: string; n: number }[];
-  for (const r of teamRows) {
+  for (const r of orderRows) {
     const row = daily.get(r.day);
-    if (row) row.orders = (row.orders ?? 0) + r.n;
+    if (row) row.orders = r.n;
   }
 
   // Customer messages per local hour of day, to see when the ads bring people in.

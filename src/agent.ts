@@ -91,6 +91,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
   الاجمالي: ...
   نأكدلك الحجز؟
 - Only after the customer clearly confirms (e.g. "تمام", "اكيد", "اي", "نعم", "توكل على الله"), call submit_order. Never before.
+- Call submit_order once per order. If the order was already taken in this chat (we said "تم الحجز", or "This customer" lists an order), don't call it again for the same thing: just answer what they ask now. Call it again only for a new or changed order.
 - Don't promise a delivery date beyond what the knowledge documents say.
 
 # When to hand off (call handoff_to_human instead of replying)
