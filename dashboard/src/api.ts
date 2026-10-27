@@ -121,6 +121,11 @@ export type Order = {
   darbRef?: string | null;
   darbStatus?: string | null;
   darbAt?: number | null;
+  // From Darb's copy (synced every 15 minutes): the latest event, and the money.
+  darbEvent?: string | null;
+  darbEventAt?: number | null;
+  darbPaidAt?: number | null;
+  darbAmount?: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -136,6 +141,10 @@ export type StockProduct = {
   cells: { color: string; size: string; quantity: number; held: number }[];
   updatedAt: number;
 };
+
+// Where an order's shipment is at Darb Assabil (the orders page filter).
+export type DarbFilter = "unsent" | "waiting" | "on_way" | "delayed" | "delivered" | "paid" | "returned";
+export type OrderFilters = { status?: OrderStatus; darb?: DarbFilter; payment?: Payment; source?: "ai" | "team"; q?: string };
 
 export type DarbZone = { city: string; areas: string[] };
 export type DarbPreview = {
@@ -313,11 +322,14 @@ export const api = {
   deleteStock: (product: string) => request(`/stock/${encodeURIComponent(product)}`, { method: "DELETE" }),
   playground: (messages: ChatTurn[], customerType: "new" | "returning" | "order" = "new") =>
     post<Decision>("/playground", { messages, customerType }),
-  // unsent: only the new/confirmed orders not sent to Darb Assabil yet.
-  orders: (status?: OrderStatus | "unsent") =>
-    request<{ counts: Partial<Record<OrderStatus, number>>; unsent: number; orders: Order[]; darb: boolean }>(
-      `/orders${status === "unsent" ? "?unsent=1" : status ? `?status=${status}` : ""}`,
-    ),
+  orders: (f: OrderFilters = {}) =>
+    request<{
+      counts: Partial<Record<OrderStatus, number>>;
+      darbCounts: Record<DarbFilter, number>;
+      unsent: number;
+      orders: Order[];
+      darb: boolean;
+    }>(`/orders?${new URLSearchParams(Object.entries(f).filter((e): e is [string, string] => Boolean(e[1])))}`),
   darbPreview: (id: number) => request<DarbPreview>(`/orders/${id}/darb`),
   darbQuote: (id: number, s: DarbShipment) => post<{ shipping: number; charges: number }>(`/orders/${id}/darb/quote`, s),
   updateDarb: (id: number, s: DarbShipment) => post<{ ok: boolean }>(`/orders/${id}/darb/update`, s),

@@ -241,8 +241,17 @@ dashboardApi.get("/handoffs", (req, res) => {
 
 dashboardApi.get("/orders", (req, res) => {
   const status = ORDER_STATUSES.find((s) => s === req.query.status);
+  // unsent=1 is the older form of darb=unsent.
+  const darb = queries.DARB_FILTERS.find((f) => f === req.query.darb) ?? (req.query.unsent === "1" ? "unsent" : undefined);
   res.json({
-    ...queries.orders({ status, limit: intParam(req.query.limit, 200, 1000), unsent: req.query.unsent === "1" }),
+    ...queries.orders({
+      status,
+      darb,
+      payment: req.query.payment === "cash" || req.query.payment === "transfer" ? req.query.payment : undefined,
+      source: req.query.source === "ai" || req.query.source === "team" ? req.query.source : undefined,
+      q: String(req.query.q ?? "").slice(0, 100),
+      limit: intParam(req.query.limit, 200, 1000),
+    }),
     darb: config.darb.enabled,
   });
 });

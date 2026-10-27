@@ -334,28 +334,91 @@ export function handoffs(days: number) {
   ).map(({ paused_until, ...h }) => ({ ...h, stillWithTeam: Boolean(paused_until && paused_until > now) }));
 }
 
-// Orders the AI collected, newest first, with how many there are per status.
+// Orders the AI collected and the team recorded, newest first, with how many there are per status.
 // Not sent to Darb Assabil yet: a new or confirmed order without a shipment.
-const UNSENT = "status IN ('new', 'confirmed') AND darb_ref IS NULL";
+const UNSENT = "o.status IN ('new', 'confirmed') AND o.darb_ref IS NULL";
 
-// unsent: only the orders not sent to Darb yet (status is ignored then).
-export function orders(opts: { status: string | undefined; limit: number; unsent?: boolean }) {
-  const where = opts.unsent ? `WHERE ${UNSENT}` : opts.status ? "WHERE status = ?" : "";
+// Where the order's shipment is at Darb (from the copy synced every 15 minutes).
+export const DARB_FILTERS = ["unsent", "waiting", "on_way", "delayed", "delivered", "paid", "returned"] as const;
+export type DarbFilter = (typeof DARB_FILTERS)[number];
+const DARB_WHERE: Record<DarbFilter, string> = {
+  unsent: UNSENT,
+  waiting: "COALESCE(d.status, o.darb_status) IN ('pending', 'booked')",
+  on_way: "COALESCE(d.status, o.darb_status) IN ('processing', 'on-branch', 'resent', 'released')",
+  delayed: "COALESCE(d.status, o.darb_status) = 'delayed'",
+  delivered: "COALESCE(d.status, o.darb_status) = 'completed' AND d.paid_at IS NULL",
+  paid: "d.paid_at IS NOT NULL",
+  returned: "COALESCE(d.status, o.darb_status) IN ('returning', 'returned', 'cancelled')",
+};
+
+export type OrdersQuery = {
+  status?: string;
+  darb?: DarbFilter;
+  payment?: string; // "cash" | "transfer"
+  source?: string; // "ai" | "team"
+  q?: string; // name, phone, city, address, order #, Darb number
+  limit: number;
+};
+
+export function orders(opts: OrdersQuery) {
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+  if (opts.status) {
+    where.push("o.status = ?");
+    params.push(opts.status);
+  }
+  if (opts.darb) where.push(DARB_WHERE[opts.darb]);
+  if (opts.payment) {
+    where.push("o.payment = ?");
+    params.push(opts.payment);
+  }
+  if (opts.source) {
+    where.push("o.source = ?");
+    params.push(opts.source);
+  }
+  const raw = opts.q?.trim() ?? "";
+  const q = raw.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+  if (/^#\d+$/.test(q)) {
+    // "#12": that order only.
+    where.push("o.id = ?");
+    params.push(Number(q.slice(1)));
+  } else if (q) {
+    // "0912345678" also finds "218912345678": the number is searched without its leading 0, from 4 digits up.
+    const digits = /^\+?\d{4,}$/.test(q.replace(/\s/g, "")) ? q.replace(/\D/g, "").replace(/^0+/, "") : "";
+    const like = `%${q}%`;
+    where.push(
+      `(o.name LIKE ? OR o.city LIKE ? OR o.address LIKE ? OR o.darb_ref LIKE ? OR d.sh LIKE ? OR CAST(o.id AS TEXT) = ?${digits ? " OR o.phone LIKE ? OR o.customer LIKE ?" : ""})`,
+    );
+    params.push(like, like, like, like, like, q);
+    if (digits) params.push(`%${digits}%`, `%${digits}%`);
+  }
   const rows = db
     .prepare(
-      `SELECT id, customer, channel, name, phone, city, address, items, total, notes, payment, status, source,
-         darb_ref AS darbRef, darb_status AS darbStatus, darb_at AS darbAt,
-         created_at AS createdAt, updated_at AS updatedAt
-       FROM orders ${where} ORDER BY id DESC LIMIT ?`,
+      `SELECT o.id, o.customer, o.channel, o.name, o.phone, o.city, o.address, o.items, o.total, o.notes, o.payment, o.status, o.source,
+         o.darb_ref AS darbRef, COALESCE(d.status, o.darb_status) AS darbStatus, o.darb_at AS darbAt,
+         d.last_event AS darbEvent, d.last_event_at AS darbEventAt, d.paid_at AS darbPaidAt, d.amount AS darbAmount,
+         o.created_at AS createdAt, o.updated_at AS updatedAt
+       FROM orders o LEFT JOIN darb_shipments d ON d.id = o.darb_id
+       ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY o.id DESC LIMIT ?`,
     )
-    .all(...(opts.status && !opts.unsent ? [opts.status, opts.limit] : [opts.limit])) as (Record<string, unknown> & { items: string })[];
+    .all(...params, opts.limit) as (Record<string, unknown> & { items: string })[];
   const counts = Object.fromEntries(
     (db.prepare("SELECT status, COUNT(*) AS n FROM orders GROUP BY status").all() as { status: string; n: number }[]).map(
       (r) => [r.status, r.n],
     ),
   );
-  const unsent = (db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE ${UNSENT}`).get() as { n: number }).n;
-  return { counts, unsent, orders: rows.map((r) => ({ ...r, items: JSON.parse(r.items) as unknown })) };
+  const darbCounts = Object.fromEntries(
+    DARB_FILTERS.map((f) => [
+      f,
+      (db.prepare(`SELECT COUNT(*) AS n FROM orders o LEFT JOIN darb_shipments d ON d.id = o.darb_id WHERE ${DARB_WHERE[f]}`).get() as { n: number }).n,
+    ]),
+  ) as Record<DarbFilter, number>;
+  return {
+    counts,
+    darbCounts,
+    unsent: darbCounts.unsent,
+    orders: rows.map((r) => ({ ...r, items: JSON.parse(r.items) as unknown })),
+  };
 }
 
 export type LeadFilter = "all" | "ordered" | "no_order" | "ad";
