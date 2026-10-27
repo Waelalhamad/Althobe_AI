@@ -431,6 +431,8 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     const decision = readDecision(message);
     if (decision.action === "order") return { ...decision, order: withLocation(decision.order, history), usage };
     if (decision.action === "reply") {
+      decision.text = withoutRepeatedCountry(decision.text, history);
+      if (!decision.text && !photos.length) return { action: "none", reason: "كان بدو يسأل عن البلد مرة تانية بس", usage };
       if (!decision.text) return { ...decision, photos, usage };
       const check = await checkReply(history, context, decision.text, usage, startedAt);
       if (check.confidence >= MIN_CONFIDENCE) return { ...decision, photos, confidence: check.confidence, usage };
@@ -737,6 +739,21 @@ function answersUs(history: ChatTurn[]): boolean {
   const theirs = history.slice(lastOurs + 1).filter((t) => t.role === "customer");
   if (!theirs.length) return false;
   return /[?؟]/.test(history[lastOurs]?.text ?? "") || theirs.some((t) => /[0-9٠-٩]{2,}/.test(t.text));
+}
+
+// "وانت من أي بلد؟" is asked once per chat: the model kept adding it to every message, so once we asked, it's cut.
+const COUNTRY_ASK = /[ \t]*[،,]?[ \t]*(?:و[ \t]*)?(?:(?:انت|إنت|انتا|حضرتك)[ \t]*)?(?:من[ \t]*وين[ \t]*[،,]?[ \t]*)?و?من[ \t]*(?:أي|اي)[ \t]*بلد(?:[ \t]*(?:حضرتك|انت|إنت|استاذ|أستاذ))*[ \t]*[؟?]?/g;
+export function withoutRepeatedCountry(text: string, history: ChatTurn[]): string {
+  if (!history.some((t) => t.role === "business" && /(?:أي|اي)\s*بلد/.test(t.text))) return text;
+  return text
+    // Mid-sentence ("اسمك ومن أي بلد وعنوانك") the words around it keep a space.
+    .replace(COUNTRY_ASK, (match, at: number, all: string) => (/^[ \t]*\S/.test(all.slice(at + match.length)) && !/[؟?]$/.test(match) ? " " : ""))
+    .replace(/[ \t]{2,}/g, " ")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | undefined): AgentDecision {
