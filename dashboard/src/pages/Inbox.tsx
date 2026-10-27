@@ -125,13 +125,16 @@ function SourceIcon({ source }: { source: string }) {
   return <User size={14} className="shrink-0 text-muted" />;
 }
 
+const MAX_PHOTOS = 10;
+
 function Thread({ customer }: { customer: string }) {
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const detail = useQuery({ queryKey: ["conversation", customer], queryFn: () => api.conversation(customer), refetchInterval: 5_000 });
   const [text, setText] = useState("");
-  // A photo to send with the reply (shrunk to JPEG in the browser); the text becomes its caption.
-  const [photo, setPhoto] = useState<string>();
+  // Photos to send with the reply (shrunk to JPEG in the browser), one message each; the text is the first one's caption.
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [sending, setSending] = useState<{ done: number; total: number }>();
   const [photoError, setPhotoError] = useState<string>();
   const fileInput = useRef<HTMLInputElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
@@ -152,24 +155,44 @@ function Thread({ customer }: { customer: string }) {
   const draft = useMutation({ mutationFn: () => api.orderDraft(customer), onSuccess: setOrderDraft });
   const resume = useMutation({ mutationFn: () => api.resume(customer), onSuccess: refresh });
   const send = useMutation({
-    mutationFn: () => api.send(customer, text.trim(), photo),
-    onSuccess: () => {
-      setText("");
-      setPhoto(undefined);
+    mutationFn: async () => {
+      if (!photos.length) {
+        await api.send(customer, text.trim());
+        setText("");
+        return;
+      }
+      // One by one, in order. A photo that went out leaves the list (and the caption with the first), so a
+      // failure halfway can be retried with what's left.
+      setSending({ done: 0, total: photos.length });
+      for (const [n, photo] of photos.entries()) {
+        await api.send(customer, n === 0 ? text.trim() : "", photo);
+        if (n === 0) setText("");
+        setPhotos((p) => p.slice(1));
+        setSending({ done: n + 1, total: photos.length });
+      }
+    },
+    onSettled: () => {
+      setSending(undefined);
       refresh();
     },
   });
 
   const windowOpen = d?.windowOpenUntil ? d.windowOpenUntil > Date.now() : false;
-  const canSend = Boolean(text.trim() || photo) && !send.isPending && windowOpen;
+  const canSend = Boolean(text.trim() || photos.length) && !send.isPending && windowOpen;
 
-  async function pickPhoto(file?: File | null) {
-    if (!file || !file.type.startsWith("image/")) return;
+  async function pickPhotos(files: File[]) {
+    const images = files.filter((f) => f.type.startsWith("image/"));
+    if (!images.length) return;
     setPhotoError(undefined);
-    try {
-      setPhoto((await prepareImage(file)).dataUrl);
-    } catch {
-      setPhotoError("ما قدرت افتح هالصورة، جرّب صورة JPG أو PNG.");
+    const room = MAX_PHOTOS - photos.length;
+    if (images.length > room) setPhotoError(`فيك تبعت ${MAX_PHOTOS} صور بالمرة.`);
+    for (const file of images.slice(0, Math.max(0, room))) {
+      try {
+        const { dataUrl } = await prepareImage(file);
+        setPhotos((p) => (p.length < MAX_PHOTOS ? [...p, dataUrl] : p));
+      } catch {
+        setPhotoError("ما قدرت افتح وحدة من الصور، جرّب صور JPG أو PNG.");
+      }
     }
   }
   const handoffs = d?.aiCalls.filter((c) => !["reply", "none", "photo", "draft"].includes(c.action)) ?? [];
@@ -250,18 +273,29 @@ function Thread({ customer }: { customer: string }) {
       >
         <ErrorNote error={send.error} />
         {photoError && <p className="text-xs text-bad">{photoError}</p>}
-        {photo && (
-          <div className="relative w-fit">
-            <img src={photo} alt="" className="max-h-32 rounded-xl border border-line object-contain" />
-            <button
-              type="button"
-              onClick={() => setPhoto(undefined)}
-              aria-label="شيل الصورة"
-              className="absolute -top-2 -start-2 grid size-6 place-items-center rounded-full bg-bad text-white"
-            >
-              <X size={14} />
-            </button>
+        {photos.length > 0 && (
+          <div className="flex flex-wrap gap-3 pt-2">
+            {photos.map((photo, n) => (
+              <div key={n} className="relative">
+                <img src={photo} alt="" className="size-20 rounded-xl border border-line object-cover" />
+                {!send.isPending && (
+                  <button
+                    type="button"
+                    onClick={() => setPhotos((p) => p.filter((_, i) => i !== n))}
+                    aria-label="شيل الصورة"
+                    className="absolute -top-2 -start-2 grid size-6 place-items-center rounded-full bg-bad text-white"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
+        )}
+        {sending && (
+          <p className="text-xs text-muted">
+            عم ابعت الصور… <span className="num">{sending.done}</span>/<span className="num">{sending.total}</span>
+          </p>
         )}
         {!windowOpen && d && (
           <p className="text-xs text-warn">
@@ -273,13 +307,21 @@ function Thread({ customer }: { customer: string }) {
             ref={fileInput}
             type="file"
             accept="image/*"
+            multiple
             className="hidden"
             onChange={(e) => {
-              void pickPhoto(e.target.files?.[0]);
+              void pickPhotos([...(e.target.files ?? [])]);
               e.target.value = "";
             }}
           />
-          <Button type="button" variant="ghost" onClick={() => fileInput.current?.click()} disabled={!windowOpen} aria-label="إضافة صورة" title="إضافة صورة">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => fileInput.current?.click()}
+            disabled={!windowOpen || send.isPending || photos.length >= MAX_PHOTOS}
+            aria-label="إضافة صور"
+            title="إضافة صور (لحد 10)"
+          >
             <ImagePlus size={16} />
           </Button>
           <textarea
@@ -292,14 +334,14 @@ function Thread({ customer }: { customer: string }) {
               }
             }}
             onPaste={(e) => {
-              const file = [...e.clipboardData.files].find((f) => f.type.startsWith("image/"));
-              if (file) {
+              const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+              if (files.length) {
                 e.preventDefault();
-                void pickPhoto(file);
+                void pickPhotos(files);
               }
             }}
             rows={1}
-            placeholder={photo ? "اكتب تعليق على الصورة (اختياري)…" : "اكتب رد كفريق… (المساعد بيوقف على هالمحادثة)"}
+            placeholder={photos.length ? "اكتب تعليق على أول صورة (اختياري)…" : "اكتب رد كفريق… (المساعد بيوقف على هالمحادثة)"}
             className="max-h-40 min-h-11 flex-1 resize-y rounded-xl border border-line bg-card-2 px-3 py-2.5 text-sm outline-none focus:border-primary"
           />
           <Button disabled={!canSend} aria-label="إرسال">
