@@ -354,9 +354,19 @@ function asMessage(response: OpenAI.Responses.Response): OpenAI.Chat.Completions
   };
 }
 
-// What the model produced (reasoning, text, tool calls), to send back as context for the next round.
-function outputItems(response: OpenAI.Responses.Response): OpenAI.Responses.ResponseInputItem[] {
-  return response.output as OpenAI.Responses.ResponseInputItem[];
+// What the model produced (reasoning, text, tool calls), to send back as context for the next round, with an
+// output for every tool call it made: OpenAI refuses the next round otherwise ("No tool output found").
+// outputs answer some calls; the others get otherOutput.
+function outputItems(
+  response: OpenAI.Responses.Response,
+  outputs: OpenAI.Responses.ResponseInputItem.FunctionCallOutput[] = [],
+  otherOutput = "Not done. Follow the next instructions.",
+): OpenAI.Responses.ResponseInputItem[] {
+  const answered = new Set(outputs.map((o) => o.call_id));
+  const others = response.output
+    .filter((o): o is OpenAI.Responses.ResponseFunctionToolCall => o.type === "function_call" && !answered.has(o.call_id))
+    .map((o) => ({ type: "function_call_output" as const, call_id: o.call_id, output: otherOutput }));
+  return [...(response.output as OpenAI.Responses.ResponseInputItem[]), ...outputs, ...others];
 }
 
 function addResponseUsage(usage: AiUsage, response: OpenAI.Responses.Response, startedAt: number) {
@@ -438,7 +448,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       if (check.confidence >= MIN_CONFIDENCE) return { ...decision, photos, confidence: check.confidence, usage };
       if (!rejected) {
         rejected = check;
-        input.push(...outputItems(response), { role: "developer", content: checkFeedback(check) });
+        input.push(...outputItems(response, toolResults), { role: "developer", content: checkFeedback(check) });
         continue;
       }
       // Nothing made up, it just may not answer everything: better sent than silence.
@@ -461,10 +471,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       silenceRefused = true;
       const refusal =
         "Not no_reply_needed: we asked the customer something and they answered it (or they sent details, like a number). Answer what they sent and carry on (the next detail the order needs, or the summary).";
-      input.push(
-        ...outputItems(response),
-        ...(message.tool_calls ?? []).map((call) => ({ type: "function_call_output" as const, call_id: call.id, output: refusal })),
-      );
+      input.push(...outputItems(response, [], refusal));
       continue;
     }
     const emptyReply = decision.reason === EMPTY;
@@ -474,7 +481,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       return photos.length ? { action: "reply", text: "", photos, usage } : { ...decision, usage };
     }
     // The model only asked for photos: tell it they're queued, so it writes the text next.
-    input.push(...outputItems(response), ...toolResults);
+    input.push(...outputItems(response, toolResults));
   }
   return { ...handoff("AI kept calling tools without answering"), usage };
 }
