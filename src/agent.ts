@@ -398,6 +398,8 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
   // A reply the check rejects gets one rewrite with the reviewer's notes; a second miss goes to the team.
   let rejected: ReplyCheck | undefined;
   let silenceRefused = false;
+  // The last round only asked for photos: the next one writes the text (no more tools).
+  let textNext = false;
 
   // The model may first ask to send photos and then write its text, so allow a few rounds.
   for (let round = 0; round < 4; round++) {
@@ -407,9 +409,12 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       prompt_cache_key: "reply",
       reasoning: { effort: config.openai.reasoningEffort },
       input,
-      tools: (knownPhotos.size ? [HANDOFF_TOOL, ORDER_TOOL, NO_REPLY_TOOL, PHOTOS_TOOL] : [HANDOFF_TOOL, ORDER_TOOL, NO_REPLY_TOOL]).map(responseTool),
+      // Silence is a first-round choice only: on a rewrite the model sees its own draft and thinks it already answered.
+      tools: [HANDOFF_TOOL, ORDER_TOOL, ...(rejected || silenceRefused ? [] : [NO_REPLY_TOOL]), ...(knownPhotos.size ? [PHOTOS_TOOL] : [])].map(
+        responseTool,
+      ),
       // Once photos are queued, the next step is the text that goes with them.
-      tool_choice: photos.length && !rejected ? "none" : "auto",
+      tool_choice: photos.length && (!rejected || textNext) ? "none" : "auto",
       // Nothing is kept at OpenAI; the encrypted reasoning comes back so the next round can continue from it.
       store: false,
       include: ["reasoning.encrypted_content"],
@@ -428,13 +433,17 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
         ids = (JSON.parse(call.function.arguments) as { photo_ids?: string[] }).photo_ids ?? [];
       } catch {}
       const valid = ids.filter((id) => knownPhotos.has(id) && !photos.includes(id));
+      // After a rewrite request the model often asks again for the photos it already queued: that's fine.
+      const queued = ids.filter((id) => photos.includes(id));
       photos.push(...valid);
       toolResults.push({
         type: "function_call_output",
         call_id: call.id,
         output: valid.length
           ? `These photos will be sent first: ${valid.join(", ")}. Now write your message(s) to the customer: they are always needed (e.g. the price if they asked, and a question like \"أي لون عجبك؟\"). Put a [photos] line where they should appear (e.g. after \"هادي الألوان المتوفرة عندنا 👇\", before your question, and before the price if they asked for it); without it they are sent just before your last message.`
-          : "No valid photo ids. Use ids from the product photo list.",
+          : queued.length
+            ? `These photos are already queued: ${queued.join(", ")}. Don't ask for them again: now write your message(s) to the customer.`
+            : "No valid photo ids. Use ids from the product photo list.",
       });
     }
 
@@ -482,6 +491,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     }
     // The model only asked for photos: tell it they're queued, so it writes the text next.
     input.push(...outputItems(response, toolResults));
+    textNext = photos.length > 0;
   }
   return { ...handoff("AI kept calling tools without answering"), usage };
 }
