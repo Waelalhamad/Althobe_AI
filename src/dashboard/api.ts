@@ -9,6 +9,7 @@ import { dataPath, transcribe } from "../media.js";
 import { answerIfWaiting, answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
 import { notifyOrder } from "../orders.js";
 import { sendToDarb, shipmentPreview, shipmentQuote, updateDarbShipment, type ShipmentInput } from "../darb.js";
+import { darbMatches, darbMoney, linkDarb, PhoneMismatch, syncDarb, trackOrder, unlinkDarb } from "../darbTrack.js";
 import { leadsWorkbook, ordersWorkbook, sendDailySheet, sheetName, type SheetRange } from "../ordersSheet.js";
 import { approveLesson, ignoreLesson, lessonsView } from "../learning.js";
 import {
@@ -425,6 +426,22 @@ dashboardApi.get("/orders/:id/darb", (req, res) => darbRoute(res, () => shipment
 dashboardApi.post("/orders/:id/darb/quote", (req, res) => darbRoute(res, () => shipmentQuote(Number(req.params.id), darbInput(req.body))));
 dashboardApi.post("/orders/:id/darb", (req, res) => darbRoute(res, () => sendToDarb(Number(req.params.id), darbInput(req.body))));
 dashboardApi.post("/orders/:id/darb/update", (req, res) => darbRoute(res, () => updateDarbShipment(Number(req.params.id), darbInput(req.body))));
+// Tracking: an order sent by hand gets its shipment by number; the shipment's timeline; the money page.
+dashboardApi.post("/orders/:id/darb/link", async (req, res) => {
+  try {
+    res.json(await linkDarb(Number(req.params.id), String(req.body?.number ?? ""), req.body?.force === true));
+  } catch (error) {
+    // 409: the shipment is for another phone; the dashboard asks and sends force.
+    res.status(error instanceof PhoneMismatch ? 409 : 502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+dashboardApi.post("/orders/:id/darb/unlink", (req, res) => darbRoute(res, async () => unlinkDarb(Number(req.params.id))));
+dashboardApi.get("/orders/:id/darb/matches", (req, res) => darbRoute(res, async () => darbMatches(Number(req.params.id))));
+dashboardApi.get("/orders/:id/darb/track", (req, res) => darbRoute(res, () => trackOrder(Number(req.params.id))));
+dashboardApi.post("/darb/sync", (_req, res) => darbRoute(res, () => syncDarb()));
+dashboardApi.get("/money", (req, res) =>
+  darbRoute(res, () => darbMoney(Number(req.query.from) || undefined, Number(req.query.to) || undefined)),
+);
 
 dashboardApi.patch("/orders/:id", (req, res) => {
   const status = ORDER_STATUSES.find((s) => s === req.body?.status) as OrderStatus | undefined;

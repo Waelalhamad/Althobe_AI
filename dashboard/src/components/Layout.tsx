@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import {
   Activity,
+  Banknote,
   BookOpen,
   Boxes,
   FlaskConical,
@@ -26,6 +27,7 @@ const NAV = [
   { href: "/", label: "نظرة عامة", icon: LayoutDashboard },
   { href: "/inbox", label: "المحادثات", icon: MessagesSquare },
   { href: "/orders", label: "الطلبات", icon: ShoppingBag },
+  { href: "/money", label: "الفلوس", icon: Banknote },
   { href: "/stock", label: "المخزون", icon: Boxes },
   { href: "/leads", label: "الزباين", icon: Users },
   { href: "/supervisor", label: "المشرف العام", icon: ShieldCheck },

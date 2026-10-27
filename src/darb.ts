@@ -10,7 +10,7 @@ const DEFAULT_PRODUCT = "الثوب العربي متكون من ثلاث قطع
 
 type DarbResponse<T> = { status: boolean; data?: T; messages?: { message?: string; location?: string }[] };
 
-async function darb<T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown): Promise<T> {
+export async function darb<T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown): Promise<T> {
   if (!config.darb.enabled) throw new Error("درب السبيل مش مربوط (DARB_API_KEY و DARB_ACCOUNT_ID)");
   const res = await fetch(`${config.darb.baseUrl}${path}`, {
     method,

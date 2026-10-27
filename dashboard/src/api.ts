@@ -151,6 +151,39 @@ export type DarbPreview = {
 };
 export type DarbShipment = { city: string; area: string; notes: string; total: number; payment?: Payment | "" };
 
+// A shipment as Darb Assabil has it (copied every 15 minutes), and where its money stands.
+export type MoneyStage = "paid" | "at_darb" | "on_way" | "returned" | "cancelled";
+export type DarbTracked = {
+  id: string;
+  reference: string;
+  sh: string | null;
+  status: string;
+  stage: MoneyStage;
+  name: string;
+  phone: string;
+  city: string;
+  area: string;
+  amount: number;
+  shipping: number;
+  deliveredAt: number | null;
+  paidAt: number | null;
+  payoutRef: string | null;
+  lastEvent: string;
+  lastEventAt: number | null;
+  createdAt: number;
+  orderId: number | null;
+};
+export type DarbTimeline = DarbTracked & { timeline: { type: string; text: string; at: number }[] };
+export type Money = {
+  stages: Record<MoneyStage, { count: number; amount: number }>;
+  shipping: number;
+  payouts: { reference: string | null; at: number; amount: number; count: number }[];
+  transfers: { count: number; amount: number };
+  wallet: number | null;
+  lastSync: number | null;
+  shipments: DarbTracked[];
+};
+
 // What the team fills in the order form (and what the AI drafts from a chat).
 export type OrderInput = Pick<Order, "name" | "phone" | "city" | "address" | "items" | "total" | "notes" | "payment">;
 
@@ -286,6 +319,12 @@ export const api = {
   darbQuote: (id: number, s: DarbShipment) => post<{ shipping: number; charges: number }>(`/orders/${id}/darb/quote`, s),
   updateDarb: (id: number, s: DarbShipment) => post<{ ok: boolean }>(`/orders/${id}/darb/update`, s),
   sendToDarb: (id: number, s: DarbShipment) => post<{ reference: string; status: string }>(`/orders/${id}/darb`, s),
+  linkDarb: (id: number, number: string, force = false) => post<DarbTracked>(`/orders/${id}/darb/link`, { number, force }),
+  unlinkDarb: (id: number) => post<{ ok: boolean }>(`/orders/${id}/darb/unlink`),
+  darbMatches: (id: number) => request<DarbTracked[]>(`/orders/${id}/darb/matches`),
+  trackDarb: (id: number) => request<DarbTimeline>(`/orders/${id}/darb/track`),
+  syncDarb: () => post<{ shipments: number; changes: number }>("/darb/sync"),
+  money: (from?: number, to?: number) => request<Money>(`/money?${new URLSearchParams({ ...(from && { from: String(from) }), ...(to && { to: String(to) }) })}`),
   createOrder: (order: OrderInput & { customer?: string; status: OrderStatus; message?: string }) =>
     post<{ id: number; messageError?: string }>("/orders", order),
   updateOrder: (id: number, order: OrderInput) => request(`/orders/${id}`, { method: "PUT", body: JSON.stringify(order) }),

@@ -2,12 +2,13 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { MessageCircle, Pencil, Phone, Plus, ShoppingBag, Truck } from "lucide-react";
+import { Link2, MapPin, MessageCircle, Pencil, Phone, Plus, ShoppingBag, Truck } from "lucide-react";
 import { api, CHANNEL_LABEL, PAYMENT_LABEL, type Order, type OrderStatus } from "../api";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { emptyOrder, OrderForm } from "../components/OrderForm";
 import { OrdersExport } from "../components/OrdersExport";
 import { DARB_STATUS, DarbSend } from "../components/DarbSend";
+import { DarbLink, DarbTrackView } from "../components/DarbTrack";
 import { ago, time } from "../format";
 
 const STATUSES: { id: OrderStatus; label: string; tone: "warn" | "info" | "ok" | "muted" }[] = [
@@ -74,6 +75,8 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
   const current = STATUSES.find((s) => s.id === o.status);
   const [editing, setEditing] = useState(false);
   const [shipping, setShipping] = useState(false);
+  const [linking, setLinking] = useState(false);
+  const [tracking, setTracking] = useState(false);
 
   return (
     <Card className="flex flex-col gap-4">
@@ -85,6 +88,8 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
         />
       )}
       {shipping && <DarbSend order={o} onClose={() => setShipping(false)} />}
+      {linking && <DarbLink order={o} onClose={() => setLinking(false)} />}
+      {tracking && <DarbTrackView order={o} onClose={() => setTracking(false)} />}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -107,6 +112,16 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
           {darb && !o.darbRef && o.status !== "cancelled" && o.status !== "delivered" && (
             <button onClick={() => setShipping(true)} className="flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-sm font-semibold text-white hover:brightness-110">
               <Truck size={16} /> ابعت لدرب السبيل
+            </button>
+          )}
+          {darb && !o.darbRef && o.status !== "cancelled" && (
+            <button onClick={() => setLinking(true)} className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
+              <Link2 size={16} /> مبعوت من قبل؟ اربط برقم الشحنة
+            </button>
+          )}
+          {darb && o.darbRef && (
+            <button onClick={() => setTracking(true)} className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
+              <MapPin size={16} /> تتبع
             </button>
           )}
           {darb && o.darbRef && o.status !== "delivered" && o.status !== "cancelled" && (

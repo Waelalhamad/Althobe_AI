@@ -11,6 +11,7 @@ import { dashboardApi } from "./dashboard/api.js";
 import { dataPath } from "./media.js";
 import { startSupervisor } from "./supervisor.js";
 import { startFollowUps } from "./followup.js";
+import { startDarbSync } from "./darbTrack.js";
 import { startLearning } from "./learning.js";
 
 const app = express();
@@ -168,6 +169,7 @@ app.listen(config.port, () => {
   void config.webhookToken; // fail at startup if missing
   startSupervisor();
   startFollowUps();
+  startDarbSync();
   startLearning();
   void startMeta();
   const channels = [
