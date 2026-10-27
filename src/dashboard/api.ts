@@ -241,7 +241,10 @@ dashboardApi.get("/handoffs", (req, res) => {
 
 dashboardApi.get("/orders", (req, res) => {
   const status = ORDER_STATUSES.find((s) => s === req.query.status);
-  res.json({ ...queries.orders({ status, limit: intParam(req.query.limit, 200, 1000) }), darb: config.darb.enabled });
+  res.json({
+    ...queries.orders({ status, limit: intParam(req.query.limit, 200, 1000), unsent: req.query.unsent === "1" }),
+    darb: config.darb.enabled,
+  });
 });
 
 // The orders as an Excel file. from / to: local days (YYYY-MM-DD, both included); status: one status or all.

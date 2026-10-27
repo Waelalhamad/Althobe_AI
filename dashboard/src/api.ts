@@ -313,8 +313,11 @@ export const api = {
   deleteStock: (product: string) => request(`/stock/${encodeURIComponent(product)}`, { method: "DELETE" }),
   playground: (messages: ChatTurn[], customerType: "new" | "returning" | "order" = "new") =>
     post<Decision>("/playground", { messages, customerType }),
-  orders: (status?: OrderStatus) =>
-    request<{ counts: Partial<Record<OrderStatus, number>>; orders: Order[]; darb: boolean }>(`/orders${status ? `?status=${status}` : ""}`),
+  // unsent: only the new/confirmed orders not sent to Darb Assabil yet.
+  orders: (status?: OrderStatus | "unsent") =>
+    request<{ counts: Partial<Record<OrderStatus, number>>; unsent: number; orders: Order[]; darb: boolean }>(
+      `/orders${status === "unsent" ? "?unsent=1" : status ? `?status=${status}` : ""}`,
+    ),
   darbPreview: (id: number) => request<DarbPreview>(`/orders/${id}/darb`),
   darbQuote: (id: number, s: DarbShipment) => post<{ shipping: number; charges: number }>(`/orders/${id}/darb/quote`, s),
   updateDarb: (id: number, s: DarbShipment) => post<{ ok: boolean }>(`/orders/${id}/darb/update`, s),

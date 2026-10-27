@@ -335,21 +335,27 @@ export function handoffs(days: number) {
 }
 
 // Orders the AI collected, newest first, with how many there are per status.
-export function orders(opts: { status: string | undefined; limit: number }) {
+// Not sent to Darb Assabil yet: a new or confirmed order without a shipment.
+const UNSENT = "status IN ('new', 'confirmed') AND darb_ref IS NULL";
+
+// unsent: only the orders not sent to Darb yet (status is ignored then).
+export function orders(opts: { status: string | undefined; limit: number; unsent?: boolean }) {
+  const where = opts.unsent ? `WHERE ${UNSENT}` : opts.status ? "WHERE status = ?" : "";
   const rows = db
     .prepare(
       `SELECT id, customer, channel, name, phone, city, address, items, total, notes, payment, status, source,
          darb_ref AS darbRef, darb_status AS darbStatus, darb_at AS darbAt,
          created_at AS createdAt, updated_at AS updatedAt
-       FROM orders ${opts.status ? "WHERE status = ?" : ""} ORDER BY id DESC LIMIT ?`,
+       FROM orders ${where} ORDER BY id DESC LIMIT ?`,
     )
-    .all(...(opts.status ? [opts.status, opts.limit] : [opts.limit])) as (Record<string, unknown> & { items: string })[];
+    .all(...(opts.status && !opts.unsent ? [opts.status, opts.limit] : [opts.limit])) as (Record<string, unknown> & { items: string })[];
   const counts = Object.fromEntries(
     (db.prepare("SELECT status, COUNT(*) AS n FROM orders GROUP BY status").all() as { status: string; n: number }[]).map(
       (r) => [r.status, r.n],
     ),
   );
-  return { counts, orders: rows.map((r) => ({ ...r, items: JSON.parse(r.items) as unknown })) };
+  const unsent = (db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE ${UNSENT}`).get() as { n: number }).n;
+  return { counts, unsent, orders: rows.map((r) => ({ ...r, items: JSON.parse(r.items) as unknown })) };
 }
 
 export type LeadFilter = "all" | "ordered" | "no_order" | "ad";

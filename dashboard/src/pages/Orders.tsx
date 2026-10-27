@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Link2, MapPin, MessageCircle, Pencil, Phone, Plus, ShoppingBag, Truck } from "lucide-react";
+import { AlertTriangle, Link2, MapPin, MessageCircle, Pencil, Phone, Plus, ShoppingBag, Truck } from "lucide-react";
 import { api, CHANNEL_LABEL, PAYMENT_LABEL, type Order, type OrderStatus } from "../api";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { emptyOrder, OrderForm } from "../components/OrderForm";
@@ -19,7 +19,7 @@ const STATUSES: { id: OrderStatus; label: string; tone: "warn" | "info" | "ok" |
 ];
 
 export function Orders() {
-  const [status, setStatus] = useState<OrderStatus | undefined>("new");
+  const [status, setStatus] = useState<OrderStatus | "unsent" | undefined>("new");
   const q = useQuery({ queryKey: ["orders", status], queryFn: () => api.orders(status), refetchInterval: 10_000 });
   const [adding, setAdding] = useState(false);
 
@@ -33,7 +33,18 @@ export function Orders() {
             <Button onClick={() => setAdding(true)}>
               <Plus size={16} /> طلب جديد
             </Button>
-            <OrdersExport status={status} statusLabel={STATUSES.find((s) => s.id === status)?.label} />
+            <OrdersExport status={status === "unsent" ? undefined : status} statusLabel={STATUSES.find((s) => s.id === status)?.label} />
+            {q.data?.darb && (
+              <button
+                onClick={() => setStatus("unsent")}
+                className={clsx(
+                  "flex items-center gap-1 rounded-xl px-3 py-1.5 text-sm font-semibold",
+                  status === "unsent" ? "bg-warn text-white" : q.data.unsent ? "bg-warn/15 text-warn ring-1 ring-warn/40" : "bg-card-2 text-muted hover:text-fg",
+                )}
+              >
+                <Truck size={14} /> ما انبعتت لدرب ({q.data.unsent})
+              </button>
+            )}
             {STATUSES.map((s) => (
               <button
                 key={s.id}
@@ -53,6 +64,21 @@ export function Orders() {
         }
       />
       <ErrorNote error={q.error} />
+      {q.data?.darb && q.data.unsent > 0 && status !== "unsent" && (
+        <button
+          onClick={() => setStatus("unsent")}
+          className="mb-4 flex w-full items-center gap-3 rounded-2xl border-2 border-warn bg-warn/10 p-4 text-start hover:bg-warn/15"
+        >
+          <AlertTriangle size={24} className="shrink-0 text-warn" />
+          <span className="flex-1">
+            <span className="block font-bold text-warn">
+              <span className="num">{q.data.unsent}</span> {q.data.unsent === 1 ? "طلب متأكد لسا ما انبعت" : "طلبات لسا ما انبعتت"} لدرب السبيل
+            </span>
+            <span className="text-sm text-muted">ابعتها، أو إذا انبعتت من تطبيق درب اربطها برقم الشحنة.</span>
+          </span>
+          <span className="text-sm font-semibold text-warn">وريني ياهن ←</span>
+        </button>
+      )}
       {adding && <OrderForm initial={emptyOrder()} onClose={() => setAdding(false)} />}
       {q.data?.orders.length === 0 && (
         <Card>
@@ -77,9 +103,15 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
   const [shipping, setShipping] = useState(false);
   const [linking, setLinking] = useState(false);
   const [tracking, setTracking] = useState(false);
+  const unsent = darb && !o.darbRef && (o.status === "new" || o.status === "confirmed");
 
   return (
-    <Card className="flex flex-col gap-4">
+    <Card className={clsx("flex flex-col gap-4", unsent && "ring-2 ring-warn")}>
+      {unsent && (
+        <div className="-mx-1 -mt-1 flex items-center gap-2 rounded-xl bg-warn/15 px-3 py-2 text-sm font-semibold text-warn">
+          <AlertTriangle size={16} /> لسا ما انبعت لدرب السبيل
+        </div>
+      )}
       {editing && (
         <OrderForm
           orderId={o.id}
