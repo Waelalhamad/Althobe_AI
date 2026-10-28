@@ -365,11 +365,30 @@ export function saveOrder(o: NewOrder): number {
 }
 
 // The same items already ordered by this customer and still open: the AI re-sending an order it took earlier in the chat.
+// The same pieces (color, size, quantity), whatever the product is called: the AI wrote "الثوب العربي" one day and
+// "طقم عربي ثلاث قطع" the next for the same order.
+export const sameItemsKey = (items: OrderItem[]) =>
+  items
+    .map((i) => `${stockName(i.color)}|${stockName(i.size).replace(/\D/g, "") || stockName(i.size)}|${i.quantity}`)
+    .sort()
+    .join(";");
+
 export function findSameOrder(customer: string, items: OrderItem[], since: number): number | undefined {
-  const row = db
-    .prepare("SELECT id FROM orders WHERE customer = ? AND items = ? AND status IN ('new', 'confirmed') AND created_at > ? ORDER BY id DESC LIMIT 1")
-    .get(customer, JSON.stringify(items), since) as { id: number } | undefined;
-  return row?.id;
+  const key = sameItemsKey(items);
+  const rows = db
+    .prepare("SELECT id, items FROM orders WHERE customer = ? AND status IN ('new', 'confirmed') AND created_at > ? ORDER BY id DESC")
+    .all(customer, since) as { id: number; items: string }[];
+  return rows.find((r) => sameItemsKey(JSON.parse(r.items) as OrderItem[]) === key)?.id;
+}
+
+// A map location the customer sent after ordering replaces the one in the order's address (or is added to it).
+export function updateOrderLocation(id: number, link: string): { changed: boolean; sentToDarb: boolean } {
+  const row = db.prepare("SELECT address, darb_id FROM orders WHERE id = ?").get(id) as { address: string; darb_id: string | null } | undefined;
+  if (!row || row.address.includes(link)) return { changed: false, sentToDarb: Boolean(row?.darb_id) };
+  const MAP = /https?:\/\/(?:www\.)?(?:maps\.google\.[a-z.]+|google\.[a-z.]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps)\S*/i;
+  const address = MAP.test(row.address) ? row.address.replace(MAP, link) : [row.address.trim(), link].filter(Boolean).join(" - ");
+  db.prepare("UPDATE orders SET address = ?, updated_at = ? WHERE id = ?").run(address, Date.now(), id);
+  return { changed: true, sentToDarb: Boolean(row.darb_id) };
 }
 
 export type OrderFields = Pick<NewOrder, "name" | "phone" | "city" | "address" | "items" | "total" | "notes" | "payment">;

@@ -24,13 +24,14 @@ import {
   saveMessage,
   saveOrder,
   findSameOrder,
+  updateOrderLocation,
   setSetting,
   teamPauseMinutes,
 } from "../store.js";
 import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
 import { notifyHandoff, notifyOrder, orderOneLine } from "../orders.js";
-import { customerLabel, notifyError } from "../telegram.js";
+import { customerLabel, esc, notify, notifyError } from "../telegram.js";
 import { isMetaCustomer, metaSendImage, metaSendText, metaTyping } from "./meta.js";
 import { noteHandoff } from "../learning.js";
 import { missingStock } from "../stock.js";
@@ -183,6 +184,7 @@ export function receiveCustomerMessage(message: IncomingMessage) {
   });
   if (!isNew) return; // duplicate webhook delivery
   if (message.media) trackMedia(customer, message.id, message.media, message.mediaPrefix ?? "", true);
+  locationForOpenOrder(customer, text);
 
   const blocked = aiBlockedReason(customer);
   if (blocked) {
@@ -543,11 +545,23 @@ async function respond(customer: string) {
       }
       const same = findSameOrder(customer, decision.order.items, Date.now() - 7 * 24 * 60 * 60 * 1000);
       if (same) {
-        // Already saved: just send the message, don't record it twice or stop the AI again.
-        const text = decision.messageToCustomer || DEFAULT_ORDER_MESSAGE;
+        // Already saved: don't record it twice or stop the AI again. A new map location (the usual reason the AI
+        // "orders" again) goes into that order, and the team hears about it.
+        const link = decision.order.address.match(MAP_LINK)?.[0];
+        const moved = link ? updateOrderLocation(same, link) : { changed: false, sentToDarb: false };
+        // The location usually reached the order as it arrived (locationForOpenOrder): it's still the news here.
+        const newLocation = Boolean(link) && (moved.changed || lastCustomerText(customer).includes(link!));
+        const text = newLocation ? "تمام استاذ، وصلنا اللوكيشن الجديد وحدّثنا العنوان 🙏" : decision.messageToCustomer || DEFAULT_ORDER_MESSAGE;
         const wamid = await sendText(customer, text);
         saveMessage({ customer, role: "business", source: "ai", text, wamid });
-        log(key, `same order as #${same} sent again by the AI; not saved twice`);
+        if (moved.changed) {
+          notify(
+            "order",
+            `📍 <b>لوكيشن جديد لطلب #${same}</b>: ${esc(customerLabel(customer))}\nحدّثناه بعنوان الطلب: ${esc(link!)}` +
+              (moved.sentToDarb ? "\nالطلب مبعوت لدرب: عدّلو ملاحظة المندوب بالشحنة (عدّل شحنة درب السبيل)." : ""),
+          );
+        }
+        log(key, `same order as #${same} sent again by the AI; not saved twice${moved.changed ? ", its location updated" : ""}`);
         return;
       }
       const missing = missingStock(decision.order.items);
@@ -591,6 +605,30 @@ async function respond(customer: string) {
 
 // The automatic follow-up (followup.ts). Sent only if the customer hasn't written since afterId
 // and the team hasn't taken over meanwhile. Returns whether anything was sent.
+// A map location sent after ordering corrects that order's address (the AI only answers "got it"): the latest open
+// order of the past week gets it, whether or not the AI replies or the team is handling the chat, and the team hears.
+function locationForOpenOrder(customer: string, text: string) {
+  const link = text.match(MAP_LINK)?.[0].replace(/[)\]]+$/, "");
+  if (!link) return;
+  const order = db
+    .prepare("SELECT id FROM orders WHERE customer = ? AND status IN ('new', 'confirmed') AND created_at > ? ORDER BY id DESC LIMIT 1")
+    .get(customer, Date.now() - 7 * 24 * 60 * 60 * 1000) as { id: number } | undefined;
+  // An order taken in this same reply round already has it (withLocation adds the chat's last location).
+  if (!order) return;
+  const moved = updateOrderLocation(order.id, link);
+  if (!moved.changed) return;
+  log(`wa:${customer}`, `new map location saved to order #${order.id}`);
+  notify(
+    "order",
+    `📍 <b>لوكيشن جديد لطلب #${order.id}</b>: ${esc(customerLabel(customer))}\nحدّثناه بعنوان الطلب: ${esc(link)}` +
+      (moved.sentToDarb ? "\nالطلب مبعوت لدرب: عدّلو ملاحظة المندوب بالشحنة (عدّل شحنة درب السبيل)." : ""),
+  );
+}
+
+const lastCustomerText = (customer: string) =>
+  (db.prepare("SELECT text FROM messages WHERE customer = ? AND role = 'customer' ORDER BY id DESC LIMIT 1").get(customer) as { text: string } | undefined)
+    ?.text ?? "";
+
 // The last map location the customer sent in the past week (a long chat pushes it out of the AI's messages).
 function lastLocation(customer: string): string | undefined {
   const rows = db
