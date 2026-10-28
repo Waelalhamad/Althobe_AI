@@ -2,13 +2,14 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertTriangle, Link2, MapPin, MessageCircle, Pencil, Phone, Plus, Search, ShoppingBag, Truck, X } from "lucide-react";
-import { api, CHANNEL_LABEL, PAYMENT_LABEL, type DarbFilter, type Order, type OrderFilters, type OrderStatus, type Payment } from "../api";
+import { AlertTriangle, Link2, MapPin, MessageCircle, Pencil, Phone, Plus, Search, ShoppingBag, Shuffle, Truck, X } from "lucide-react";
+import { api, CHANNEL_LABEL, PAYMENT_LABEL, type DarbFilter, type Order, type OrderFilters, type OrderStatus, type Payment, type RedirectCandidate } from "../api";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { emptyOrder, OrderForm } from "../components/OrderForm";
 import { OrdersExport } from "../components/OrdersExport";
 import { DARB_STATUS, DarbSend } from "../components/DarbSend";
 import { DarbLink, DarbTrackView } from "../components/DarbTrack";
+import { DarbRedirect } from "../components/DarbRedirect";
 import { ago, time } from "../format";
 
 const STATUSES: { id: OrderStatus; label: string; tone: "warn" | "info" | "ok" | "muted" }[] = [
@@ -48,6 +49,9 @@ export function Orders() {
     placeholderData: (prev) => prev,
   });
   const [adding, setAdding] = useState(false);
+  // Cancelled or refused shipments someone else in the same city could take instead.
+  const redirects = useQuery({ queryKey: ["redirects"], queryFn: api.darbRedirects, enabled: Boolean(q.data?.darb), refetchInterval: 60_000 });
+  const [redirecting, setRedirecting] = useState<Order>();
   const set = (patch: Partial<OrderFilters>) => setF((cur) => ({ ...cur, ...patch }));
   const filtered = Boolean(f.status || f.darb || f.payment || f.source || search.trim());
 
@@ -81,6 +85,21 @@ export function Orders() {
           <span className="text-sm font-semibold text-warn">وريني ياهن ←</span>
         </button>
       )}
+
+      {redirects.data && redirects.data.length > 0 && (
+        <div className="mb-4 flex flex-col gap-2 rounded-2xl border-2 border-info bg-info/10 p-4">
+          <span className="flex items-center gap-2 font-bold text-info">
+            <Shuffle size={20} /> <span className="num">{redirects.data.length}</span>{" "}
+            {redirects.data.length === 1 ? "شحنة ملغية فيك تحولها" : "شحنات ملغية فيك تحولها"} لطلب بنفس المدينة بدل ما ترجع
+          </span>
+          <div className="flex flex-wrap gap-2">
+            {redirects.data.map((r) => (
+              <RedirectChip key={r.orderId} r={r} onOpen={setRedirecting} />
+            ))}
+          </div>
+        </div>
+      )}
+      {redirecting && <DarbRedirect order={redirecting} onClose={() => setRedirecting(undefined)} />}
 
       <Card className="mb-4 flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -166,9 +185,33 @@ export function Orders() {
         </Card>
       )}
       <div className="flex flex-col gap-4">
-        {q.data?.orders.map((o) => <OrderCard key={o.id} o={o} darb={q.data.darb} />)}
+        {q.data?.orders.map((o) => (
+          <OrderCard key={o.id} o={o} darb={q.data.darb} redirect={redirects.data?.find((r) => r.orderId === o.id)} />
+        ))}
       </div>
     </div>
+  );
+}
+
+// One shipment in the banner: opens its redirect (the order is fetched, it may not be in the filtered list).
+function RedirectChip({ r, onOpen }: { r: RedirectCandidate; onOpen: (o: Order) => void }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          const found = (await api.orders({ q: `#${r.orderId}` })).orders[0];
+          if (found) onOpen(found);
+        } finally {
+          setBusy(false);
+        }
+      }}
+      className="rounded-xl bg-card px-3 py-1.5 text-sm hover:text-primary"
+    >
+      طلب <span className="num">#{r.orderId}</span> · {r.city} ← <span className="num">{r.matches}</span> {r.matches === 1 ? "طلب متلو" : "طلبات متلو"}
+    </button>
   );
 }
 
@@ -221,7 +264,7 @@ function DarbLine({ o, onTrack }: { o: Order; onTrack: () => void }) {
   );
 }
 
-function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
+function OrderCard({ o, darb, redirect }: { o: Order; darb: boolean; redirect?: RedirectCandidate }) {
   const queryClient = useQueryClient();
   const update = useMutation({
     mutationFn: (status: OrderStatus) => api.setOrderStatus(o.id, status),
@@ -232,6 +275,7 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
   const [shipping, setShipping] = useState(false);
   const [linking, setLinking] = useState(false);
   const [tracking, setTracking] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
   const unsent = darb && !o.darbRef && (o.status === "new" || o.status === "confirmed");
 
   return (
@@ -251,6 +295,7 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
       {shipping && <DarbSend order={o} onClose={() => setShipping(false)} />}
       {linking && <DarbLink order={o} onClose={() => setLinking(false)} />}
       {tracking && <DarbTrackView order={o} onClose={() => setTracking(false)} />}
+      {redirecting && <DarbRedirect order={o} onClose={() => setRedirecting(false)} />}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -272,6 +317,11 @@ function OrderCard({ o, darb }: { o: Order; darb: boolean }) {
           {darb && !o.darbRef && o.status !== "cancelled" && (
             <button onClick={() => setLinking(true)} className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
               <Link2 size={16} /> مبعوت من قبل؟ اربط برقم الشحنة
+            </button>
+          )}
+          {redirect && (
+            <button onClick={() => setRedirecting(true)} className="flex items-center gap-1 rounded-xl bg-info px-3 py-1.5 text-sm font-semibold text-white hover:brightness-110">
+              <Shuffle size={16} /> حوّلها لطلب متلها ({redirect.matches})
             </button>
           )}
           {darb && o.darbRef && (

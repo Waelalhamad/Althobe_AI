@@ -274,6 +274,10 @@ export function trackingNote(customer: string): string {
 
 let syncing: Promise<{ shipments: number; changes: number }> | undefined;
 
+// Run for each shipment whose status changed (a refused one may go to someone else: src/darbRedirect.ts).
+const onChange: ((row: DarbShipmentRow) => void)[] = [];
+export const onShipmentStatus = (run: (row: DarbShipmentRow) => void) => void onChange.push(run);
+
 // Run after every sync (the customers' tracking updates, src/tracking.ts).
 const afterSync: (() => Promise<unknown>)[] = [];
 export const onDarbSynced = (run: () => Promise<unknown>) => void afterSync.push(run);
@@ -292,6 +296,7 @@ export function syncDarb(): Promise<{ shipments: number; changes: number }> {
     }
     const changes = save(all);
     tell(changes);
+    for (const c of changes) if (c.before?.status !== c.row.status) for (const run of onChange) run(c.row);
     for (const run of afterSync) await run().catch((error) => log("darb", `after sync: ${error instanceof Error ? error.message : error}`));
     if (changes.length) log("darb", `synced ${all.length} shipments, ${changes.length} changed`);
     return { shipments: all.length, changes: changes.length };
@@ -312,7 +317,7 @@ export function startDarbSync() {
 }
 
 // One shipment fresh from Darb, by its current number or its first "SH" number.
-async function fetchShipmentById(id: string): Promise<DarbShipmentRow | undefined> {
+export async function fetchShipmentById(id: string): Promise<DarbShipmentRow | undefined> {
   const data = await darb<{ results?: Shipment[] }>("GET", `/api/local/shipments/${encodeURIComponent(id)}`);
   const found = data.results?.find((s) => s._id === id);
   if (!found) return undefined;

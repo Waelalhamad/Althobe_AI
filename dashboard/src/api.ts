@@ -144,6 +144,26 @@ export type StockProduct = {
   updatedAt: number;
 };
 
+export type RedirectCandidate = { orderId: number; reference: string; city: string; matches: number };
+export type RedirectMatch = {
+  orderId: number;
+  name: string;
+  phone: string;
+  status: OrderStatus;
+  total: number;
+  payment: Payment;
+  address: string;
+  area: string;
+  shipment: { reference: string; status: string } | null;
+  createdAt: number;
+};
+export type RedirectView = {
+  shipment: { reference: string; sh: string | null; status: string; city: string; area: string };
+  pickedUp: boolean;
+  areas: string[];
+  matches: RedirectMatch[];
+};
+
 // Where an order's shipment is at Darb Assabil (the orders page filter).
 export type DarbFilter = "unsent" | "waiting" | "on_way" | "delayed" | "delivered" | "paid" | "returned";
 export type OrderFilters = { status?: OrderStatus; darb?: DarbFilter; payment?: Payment; source?: "ai" | "team"; q?: string };
@@ -339,6 +359,11 @@ export const api = {
   linkDarb: (id: number, number: string, force = false) => post<DarbTracked>(`/orders/${id}/darb/link`, { number, force }),
   unlinkDarb: (id: number) => post<{ ok: boolean }>(`/orders/${id}/darb/unlink`),
   darbMatches: (id: number) => request<DarbTracked[]>(`/orders/${id}/darb/matches`),
+  // A cancelled or refused shipment given to another order in the same city.
+  darbRedirects: () => request<RedirectCandidate[]>("/darb/redirects"),
+  redirectMatches: (id: number) => request<RedirectView>(`/orders/${id}/darb/redirect`),
+  redirect: (id: number, body: { to: number; area: string; notes: string; total: number; payment: Payment }) =>
+    post<{ ok: boolean; pickedUp: boolean; ownCancelled: string }>(`/orders/${id}/darb/redirect`, body),
   trackDarb: (id: number) => request<DarbTimeline>(`/orders/${id}/darb/track`),
   syncDarb: () => post<{ shipments: number; changes: number }>("/darb/sync"),
   money: (from?: number, to?: number) => request<Money>(`/money?${new URLSearchParams({ ...(from && { from: String(from) }), ...(to && { to: String(to) }) })}`),

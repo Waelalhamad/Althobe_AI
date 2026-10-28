@@ -17,7 +17,7 @@ export const STAGE: Record<MoneyStage, { label: string; tone: "ok" | "warn" | "i
   cancelled: { label: "ملغية", tone: "muted" },
 };
 
-function Modal({ title, onClose, children }: { title: React.ReactNode; onClose: () => void; children: React.ReactNode }) {
+export function Modal({ title, onClose, children }: { title: React.ReactNode; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="my-8 flex w-full max-w-lg flex-col gap-3 rounded-2xl border border-line bg-card p-5">

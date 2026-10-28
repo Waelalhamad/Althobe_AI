@@ -224,3 +224,8 @@ export function markTold(orderId: number) {
     }
   }
 }
+
+// A shipment that changed customer (src/darbRedirect.ts): the new customer hasn't been told anything yet.
+export function forgetNotices(shipmentId: string) {
+  db.prepare("DELETE FROM tracking_notices WHERE shipment_id = ?").run(shipmentId);
+}

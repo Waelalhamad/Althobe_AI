@@ -10,7 +10,7 @@ const DEFAULT_PRODUCT = "الثوب العربي متكون من ثلاث قطع
 
 type DarbResponse<T> = { status: boolean; data?: T; messages?: { message?: string; location?: string }[] };
 
-export async function darb<T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown): Promise<T> {
+export async function darb<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<T> {
   if (!config.darb.enabled) throw new Error("درب السبيل مش مربوط (DARB_API_KEY و DARB_ACCOUNT_ID)");
   const res = await fetch(`${config.darb.baseUrl}${path}`, {
     method,
@@ -98,7 +98,7 @@ export function guessZone(zones: Zone[], city: string, address: string): { city:
 
 // --- Shipments ----------------------------------------------------------------------------------------
 
-type OrderRow = {
+export type OrderRow = {
   id: number;
   customer: string;
   name: string;
@@ -114,7 +114,7 @@ type OrderRow = {
   darb_ref: string | null;
 };
 
-const loadOrder = (id: number) => db.prepare("SELECT * FROM orders WHERE id = ?").get(id) as OrderRow | undefined;
+export const loadOrder = (id: number) => db.prepare("SELECT * FROM orders WHERE id = ?").get(id) as OrderRow | undefined;
 
 // "0912345678" / "218912345678" / "+218 91 234 5678" → "+218912345678"
 export function intlPhone(phone: string): string | undefined {
@@ -128,7 +128,7 @@ export function intlPhone(phone: string): string | undefined {
 }
 
 // "385 دينار" → 385
-function amount(total: string): number | undefined {
+export function amount(total: string): number | undefined {
   const m = total.replace(/[٠-٩]/g, (x) => String(x.charCodeAt(0) - 0x0660)).replace(/[,٬]/g, "").match(/\d+(\.\d+)?/);
   return m ? Number(m[0]) : undefined;
 }
@@ -138,7 +138,7 @@ function amount(total: string): number | undefined {
 // our account) and the note tells him it's paid by transfer and its price.
 export type ShipmentInput = { city: string; area: string; notes: string; total: number; payment?: Payment | "" };
 
-function charge(input: ShipmentInput) {
+export function charge(input: ShipmentInput) {
   return input.payment === "transfer" ? { paymentBy: "sender", collect: 0 } : { paymentBy: "sales", collect: input.total };
 }
 
@@ -167,7 +167,7 @@ function productTitle(i: OrderItem): string {
 }
 
 // One product line per item; the amount to collect is split over the pieces (Darb's amount is per piece).
-function products(items: OrderItem[], total: number) {
+export function products(items: OrderItem[], total: number) {
   const pieces = items.reduce((n, i) => n + i.quantity, 0) || 1;
   const perPiece = Math.round((total / pieces) * 100) / 100;
   return items.map((i) => ({
@@ -187,7 +187,7 @@ function products(items: OrderItem[], total: number) {
 }
 
 // The payment line first, then the address and anything the team adds for the courier.
-function courierNote(input: ShipmentInput): string {
+export function courierNote(input: ShipmentInput): string {
   const payment =
     input.payment === "transfer" ? `الدفع: ${PAYMENT_LABEL.transfer} - السعر ${input.total} دينار (المندوب ما بيقبض شي)` : input.payment && `الدفع: ${PAYMENT_LABEL[input.payment]}`;
   return [payment, input.notes].filter(Boolean).join("\n").slice(0, 1000);
@@ -200,7 +200,7 @@ function checkPlace(input: ShipmentInput) {
   if (!(input.total > 0)) throw new Error("المبلغ لازم يكون أكبر من صفر");
 }
 
-function destination(input: ShipmentInput) {
+export function destination(input: ShipmentInput) {
   return { countryCode: "lby", city: input.city, area: input.area, address: "" };
 }
 
@@ -221,7 +221,7 @@ export async function shipmentQuote(orderId: number, input: ShipmentInput): Prom
 
 // The customer as a Darb contact (with their name on our account). Darb contacts are shared between shops:
 // when the number already exists there, its id comes from the trust score lookup.
-async function contactId(phone: string, name: string): Promise<string> {
+export async function contactId(phone: string, name: string): Promise<string> {
   try {
     return (await darb<{ _id: string }>("POST", "/api/contacts", { name: name.trim().slice(0, 100) || "زبون", phone }))._id;
   } catch (error) {

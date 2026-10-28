@@ -48,6 +48,7 @@ import * as queries from "./queries.js";
 import { findGroups, sendTest, telegramChatId, setMutedKinds, setTelegramChat, setTelegramToken, telegramStatus } from "../telegram.js";
 import { followUpSettings, followUpStats, saveFollowUpSettings } from "../followup.js";
 import { markTold, saveTrackingSettings, trackingSettings, trackingStats } from "../tracking.js";
+import { redirectCandidates, redirectMatches, redirectShipment, tellRedirectChance } from "../darbRedirect.js";
 import { generateReport, resolveAlert, runChecks, runReviews, saveSupervisorSettings, supervisorView } from "../supervisor.js";
 
 export const dashboardApi = express.Router();
@@ -458,6 +459,19 @@ dashboardApi.post("/orders/:id/darb/link", async (req, res) => {
     res.status(error instanceof PhoneMismatch ? 409 : 502).json({ error: error instanceof Error ? error.message : String(error) });
   }
 });
+// A cancelled or refused shipment given to another order in the same city (src/darbRedirect.ts).
+dashboardApi.get("/darb/redirects", (_req, res) => darbRoute(res, () => redirectCandidates()));
+dashboardApi.get("/orders/:id/darb/redirect", (req, res) => darbRoute(res, () => redirectMatches(Number(req.params.id))));
+dashboardApi.post("/orders/:id/darb/redirect", (req, res) =>
+  darbRoute(res, () =>
+    redirectShipment(Number(req.params.id), Number(req.body?.to), {
+      area: String(req.body?.area ?? ""),
+      notes: String(req.body?.notes ?? "").slice(0, 900),
+      total: Math.max(0, Number(req.body?.total) || 0),
+      payment: req.body?.payment === "transfer" ? "transfer" : "cash",
+    }),
+  ),
+);
 dashboardApi.post("/orders/:id/darb/unlink", (req, res) => darbRoute(res, async () => unlinkDarb(Number(req.params.id))));
 dashboardApi.get("/orders/:id/darb/matches", (req, res) => darbRoute(res, async () => darbMatches(Number(req.params.id))));
 dashboardApi.get("/orders/:id/darb/track", (req, res) => darbRoute(res, () => trackOrder(Number(req.params.id))));
@@ -473,6 +487,8 @@ dashboardApi.patch("/orders/:id", (req, res) => {
     return;
   }
   log("dashboard", `order #${req.params.id} marked ${status}`);
+  // A cancelled order whose shipment is out: someone in the same city may take it instead (Telegram).
+  if (status === "cancelled") void tellRedirectChance(Number(req.params.id)).catch(() => {});
   res.json({ ok: true });
 });
 
