@@ -25,15 +25,17 @@ export const DARB_STATUS: Record<string, string> = {
 // Sends a confirmed order to Darb Assabil: the team checks the guessed city/area, the address note and the amount
 // to collect, sees Darb's delivery price, and sends.
 // For an order already sent, the same form fixes the shipment's city/area and payment line.
-export function DarbSend({ order, onClose }: { order: Order; onClose: () => void }) {
+// resend: the order's shipment was deleted at Darb; it goes again as a new shipment, starting from where it went before.
+export function DarbSend({ order, onClose, resend = false }: { order: Order; onClose: () => void; resend?: boolean }) {
   const queryClient = useQueryClient();
-  const editing = Boolean(order.darbRef);
+  const editing = Boolean(order.darbRef) && !resend;
   const preview = useQuery({ queryKey: ["darb-preview", order.id], queryFn: () => api.darbPreview(order.id), staleTime: Infinity });
   const [s, setS] = useState<DarbShipment>({ city: "", area: "", notes: "", total: 0 });
   useEffect(() => {
     const p = preview.data;
     // The payment comes from the order; an order from before it was asked has the team choose it.
-    if (p) setS({ city: p.guess?.city ?? "", area: p.guess?.area ?? "", notes: p.notes, total: p.total, payment: order.payment || "" });
+    const place = (resend && p?.previous) || p?.guess;
+    if (p) setS({ city: place?.city ?? "", area: place?.area ?? "", notes: p.notes, total: p.total, payment: order.payment || "" });
   }, [preview.data]);
   const areas = useMemo(() => preview.data?.zones.find((z) => z.city === s.city)?.areas ?? [], [preview.data, s.city]);
 
@@ -49,11 +51,13 @@ export function DarbSend({ order, onClose }: { order: Order; onClose: () => void
 
   const send = useMutation({
     mutationFn: async () => {
-      if (editing) await api.updateDarb(order.id, s);
+      if (resend) await api.resendDarb(order.id, s);
+      else if (editing) await api.updateDarb(order.id, s);
       else await api.sendToDarb(order.id, s);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
+      queryClient.invalidateQueries({ queryKey: ["darb-track", order.id] });
       onClose();
     },
   });
@@ -71,7 +75,11 @@ export function DarbSend({ order, onClose }: { order: Order; onClose: () => void
         <div className="flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-lg font-bold">
             <Truck size={20} className="text-primary" />
-            {editing ? `عدّل شحنة درب السبيل #${order.darbRef}` : `ابعت الطلب #${order.id} لدرب السبيل`}
+            {resend
+              ? `ابعت الطلب #${order.id} من جديد لدرب`
+              : editing
+                ? `عدّل شحنة درب السبيل #${order.darbRef}`
+                : `ابعت الطلب #${order.id} لدرب السبيل`}
           </h2>
           <button type="button" onClick={onClose} aria-label="سكّر" className="text-muted hover:text-fg">
             <X size={20} />

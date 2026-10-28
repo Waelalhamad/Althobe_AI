@@ -159,6 +159,10 @@ export async function shipmentPreview(orderId: number) {
     phone: intlPhone(order.phone) ?? intlPhone(order.customer) ?? "",
     lines: items.map((i) => ({ title: productTitle(i), quantity: i.quantity })),
     darbRef: order.darb_ref,
+    // Where the shipment went last time (our copy of it): a resend starts from it, and the team checks it.
+    previous: order.darb_id
+      ? ((db.prepare("SELECT city, area FROM darb_shipments WHERE id = ?").get(order.darb_id) as { city: string; area: string } | undefined) ?? null)
+      : null,
   };
 }
 

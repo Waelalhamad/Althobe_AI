@@ -482,7 +482,9 @@ dashboardApi.get("/orders/:id/darb/track", async (req, res) => {
     res.status(error instanceof ShipmentGone ? 410 : 502).json({ error: error instanceof Error ? error.message : String(error) });
   }
 });
-dashboardApi.post("/orders/:id/darb/resend", (req, res) => darbRoute(res, () => resendToDarb(Number(req.params.id))));
+dashboardApi.post("/orders/:id/darb/resend", (req, res) =>
+  darbRoute(res, () => resendToDarb(Number(req.params.id), req.body?.city ? darbInput(req.body) : undefined)),
+);
 dashboardApi.post("/darb/sync", (_req, res) => darbRoute(res, () => syncDarb()));
 dashboardApi.get("/money", (req, res) =>
   darbRoute(res, () => darbMoney(Number(req.query.from) || undefined, Number(req.query.to) || undefined)),

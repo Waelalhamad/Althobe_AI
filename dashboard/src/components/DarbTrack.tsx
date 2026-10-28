@@ -4,7 +4,7 @@ import clsx from "clsx";
 import { Link2, Loader2, MapPin, RotateCcw, Truck, X } from "lucide-react";
 import { api, ApiError, type DarbTracked, type MoneyStage, type Order } from "../api";
 import { Badge, Button, ErrorNote } from "./ui";
-import { DARB_STATUS } from "./DarbSend";
+import { DARB_STATUS, DarbSend } from "./DarbSend";
 import { ago, num, time } from "../format";
 
 const inputClass = "w-full rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary";
@@ -142,13 +142,7 @@ export function DarbTrackView({ order, onClose }: { order: Order; onClose: () =>
   const [confirmUnlink, setConfirmUnlink] = useState(false);
   // Darb doesn't have the shipment any more (deleted by mistake): sent again with the same data, a new number.
   const gone = track.error instanceof ApiError && track.error.status === 410;
-  const resend = useMutation({
-    mutationFn: () => api.resendDarb(order.id),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["orders"] });
-      void queryClient.invalidateQueries({ queryKey: ["darb-track", order.id] });
-    },
-  });
+  const [resending, setResending] = useState(false);
   const s = track.data;
 
   return (
@@ -168,17 +162,13 @@ export function DarbTrackView({ order, onClose }: { order: Order; onClose: () =>
       <ErrorNote error={track.error} />
       {gone && (
         <div className="flex flex-col gap-2 rounded-xl bg-card-2 p-3 text-sm">
-          <p>إذا انحذفت بالغلط: ابعتها من جديد لدرب بنفس البيانات (المدينة والمنطقة والعنوان والمبلغ والدفع)، ودرب بيعطيها رقم جديد.</p>
-          <ErrorNote error={resend.error} />
-          {resend.data ? (
-            <Badge tone="ok">انبعتت من جديد: {resend.data.reference}</Badge>
-          ) : (
-            <Button onClick={() => resend.mutate()} disabled={resend.isPending} className="self-start">
-              {resend.isPending ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />} ابعتها من جديد لدرب
-            </Button>
-          )}
+          <p>إذا انحذفت بالغلط: ابعتها من جديد لدرب. بتفتح بنفس البيانات (المدينة والمنطقة والعنوان والمبلغ والدفع)، شيك عليهن وابعت، ودرب بيعطيها رقم جديد.</p>
+          <Button onClick={() => setResending(true)} className="self-start">
+            <RotateCcw size={16} /> ابعتها من جديد لدرب
+          </Button>
         </div>
       )}
+      {resending && <DarbSend order={order} resend onClose={() => setResending(false)} />}
       {s && (
         <>
           <div className="rounded-xl bg-card-2 p-3">

@@ -19,6 +19,7 @@ import {
   sendToDarb,
   shipmentPreview,
   type OrderRow,
+  type ShipmentInput,
   type Zone,
 } from "./darb.js";
 import { fetchShipmentById, fetchShipmentByNumber, onShipmentStatus, syncDarb, type DarbShipmentRow } from "./darbTrack.js";
@@ -257,7 +258,7 @@ onShipmentStatus((row) => {
 
 // A shipment deleted at Darb by mistake (the order is still on): sent again with the same data in one click, and Darb
 // gives it a new number. Only once Darb itself says the shipment isn't there (or is cancelled): never two shipments.
-export async function resendToDarb(orderId: number) {
+export async function resendToDarb(orderId: number, input?: ShipmentInput) {
   const order = loadOrder(orderId);
   if (!order?.darb_id && !order?.darb_ref) throw new Error("الطلب مش مبعوت لدرب السبيل");
   if (order.status === "cancelled") throw new Error("الطلب ملغي");
@@ -268,18 +269,21 @@ export async function resendToDarb(orderId: number) {
   if (live && live.status !== "cancelled") {
     throw new Error(`الشحنة ${live.reference} لسا موجودة عند درب (${live.status}): ما بنبعتها مرتين.`);
   }
-  // The same data as the first time: the city and area Darb had (our copy), the courier note, amount and payment.
-  const saved = order.darb_id ? (db.prepare("SELECT city, area FROM darb_shipments WHERE id = ?").get(order.darb_id) as { city: string; area: string } | undefined) : undefined;
+  // What the team checked in the send form; otherwise the same data as the first time (the city and area Darb had,
+  // the courier note, amount and payment).
   const preview = await shipmentPreview(orderId);
-  const city = saved?.city || preview.guess?.city;
-  const area = saved?.area || preview.guess?.area;
-  if (!city || !area) throw new Error("ما عرفت المدينة والمنطقة من الشحنة القديمة: ابعتو من «ابعت لدرب السبيل» واختارهن.");
+  const city = input?.city || preview.previous?.city || preview.guess?.city;
+  const area = input?.area || preview.previous?.area || preview.guess?.area;
+  if (!city || !area) throw new Error("اختار المدينة والمنطقة");
   const oldId = order.darb_id;
   const oldRef = order.darb_ref;
   db.prepare("UPDATE orders SET darb_id = NULL, darb_ref = NULL, darb_status = NULL WHERE id = ?").run(orderId);
   let shipment: { id: string; reference: string };
   try {
-    shipment = await sendToDarb(orderId, { city, area, notes: preview.notes, total: preview.total, payment: preview.payment });
+    shipment = await sendToDarb(
+      orderId,
+      input ? { ...input, city, area } : { city, area, notes: preview.notes, total: preview.total, payment: preview.payment },
+    );
   } catch (error) {
     // Not sent: the order keeps its old shipment's number, as before.
     db.prepare("UPDATE orders SET darb_id = ?, darb_ref = ? WHERE id = ?").run(oldId, oldRef, orderId);
