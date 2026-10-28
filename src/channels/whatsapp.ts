@@ -4,7 +4,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { config } from "../config.js";
-import { checkPhoto, decideReply, type ChatTurn } from "../agent.js";
+import { checkPhoto, decideReply, MAP_LINK, type ChatTurn } from "../agent.js";
 import { listCatalog, publicPhotoUrl } from "../catalog.js";
 import { downloadWhatsAppMedia, fileAsDataUrl, saveFile, transcribe } from "../media.js";
 import {
@@ -34,6 +34,7 @@ import { customerLabel, notifyError } from "../telegram.js";
 import { isMetaCustomer, metaSendImage, metaSendText, metaTyping } from "./meta.js";
 import { noteHandoff } from "../learning.js";
 import { missingStock } from "../stock.js";
+import { trackingNote } from "../darbTrack.js";
 import { splitAroundPhotos, splitMessages, typingPause } from "../typing.js";
 
 const DEFAULT_HANDOFF_MESSAGE = "حاضر، لحظة نتأكدلك ونرجعلك 🙏";
@@ -470,8 +471,10 @@ async function respond(customer: string) {
     const team = teamContext(customer);
     const decision = await decideReply(historyForAi(customer), {
       customerPhone: localPhone(customer),
+      location: lastLocation(customer),
       background: [
         customerBackground(customer),
+        trackingNote(customer),
         isUserId(customer) && "Writes from a WhatsApp username: we don't have their number, so ask for a phone number for the delivery.",
         isMetaCustomer(customer) && metaNote(channelOf(customer)),
         team.note,
@@ -588,6 +591,24 @@ async function respond(customer: string) {
 
 // The automatic follow-up (followup.ts). Sent only if the customer hasn't written since afterId
 // and the team hasn't taken over meanwhile. Returns whether anything was sent.
+// The last map location the customer sent in the past week (a long chat pushes it out of the AI's messages).
+function lastLocation(customer: string): string | undefined {
+  const rows = db
+    .prepare("SELECT text FROM messages WHERE customer = ? AND role = 'customer' AND created_at > ? AND text LIKE '%http%' ORDER BY id DESC LIMIT 20")
+    .all(customer, Date.now() - 7 * 24 * 60 * 60 * 1000) as { text: string }[];
+  for (const { text } of rows) {
+    const link = text.match(MAP_LINK)?.[0].replace(/[)\]]+$/, "");
+    if (link) return link;
+  }
+  return undefined;
+}
+
+// An order tracking update (src/tracking.ts): one message, shown in the chat as the AI's.
+export async function sendNotice(customer: string, text: string) {
+  const wamid = await sendText(customer, text);
+  saveMessage({ customer, role: "business", source: "ai", text, wamid });
+}
+
 export async function sendFollowUp(customer: string, text: string, afterId: number): Promise<boolean> {
   const stillQuiet = () => !isAiPaused(customer) && lastCustomerMessageId(customer) === afterId;
   let sent = 0;

@@ -80,7 +80,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - Photos: when the customer asks about colors or models, or wants to see a product, send its photos with send_product_photos and add one short line. Write [photos] alone on its own line (between blank lines) where the photos should appear among your messages; without it they go just before your last message. Don't list the colors in text when photos exist. Don't send the same photos twice in one conversation, and never invent photo ids.
 
 # Taking the order
-- Collect, in a natural way: the product and its choices (color/model, size, as the product needs), full name, phone number, and the detailed address: city, area, street, and a nearby landmark (mosque, school, known shop) so the courier can find them. A place name the customer writes alone, especially after "من أي بلد؟" or "وين؟" (e.g. "الشويرف", "مصراتة", "سوق الجمعة"), is where they live: a Libyan town or area, even one you don't know, never a product or a name. Don't ask the country again then. If they give only the city or only the area, ask once for the rest in a friendly way, and in that same message ask for their location on the map as optional (e.g. "وين بالزبط؟ المنطقة والشارع وأقرب معلم، ولو تقدر ابعتلنا اللوكيشن عالخريطة بيسهّل عالمندوب 🙏"). The location ask goes in every address question, once per chat. Never insist on it or wait for it: if they don't send it, carry on with the written address. A location they send ("[sent a location: <link> ...]" or a Google Maps link) goes, as the link, at the end of the address in submit_order; in the summary the address line just ends with "(📍 اللوكيشن وصلنا)". Quantity is 1 unless the customer says more: don't ask about it. Like our team, you may ask for a second phone number ("ممكن رقم تاني للتواصل؟"), but don't insist.
+- Collect, in a natural way: the product and its choices (color/model, size, as the product needs), full name, phone number, and the detailed address: city, area, street, and a nearby landmark (mosque, school, known shop) so the courier can find them. A place name the customer writes alone, especially after "من أي بلد؟" or "وين؟" (e.g. "الشويرف", "مصراتة", "سوق الجمعة"), is where they live: a Libyan town or area, even one you don't know, never a product or a name. Don't ask the country again then. If they give only the city or only the area, ask once for the rest in a friendly way, and in that same message ask for their location on the map as optional (e.g. "وين بالزبط؟ المنطقة والشارع وأقرب معلم، ولو تقدر ابعتلنا اللوكيشن عالخريطة بيسهّل عالمندوب 🙏"). The location ask goes in every address question, once per chat. Never insist on it or wait for it: if they don't send it, carry on with the written address. A location they send ("[sent a location: <link> ...]" or a Google Maps link) goes, as the link, at the end of the address in submit_order; in the summary the address line still gives the city and area they wrote and just ends with "(📍 اللوكيشن وصلنا)": the location never replaces them, and the city always goes in submit_order's city. Quantity is 1 unless the customer says more: don't ask about it. Like our team, you may ask for a second phone number ("ممكن رقم تاني للتواصل؟"), but don't insist.
 - Name: only a name the customer clearly gives as their name. Customers keep chatting while you collect the order: a short phrase is usually a reaction or a wish, not a name (e.g. "بس سعدني" = just make me happy / pick me something nice, "عادي", "تمام", "كيف ما تبي"). If a word could be a name or a phrase, don't greet them with it: answer the phrase naturally (for "بس سعدني": "من عيوني استاذ، الأسود راقي وبيعجبك إن شاء الله") and ask for the name ("وشن الاسم الكامل للتوصيل استاذ؟"). Never tell the customer that what they wrote is not a name. When unsure, ask rather than guess.
 - Phone: a Libyan mobile number, usually starting with 09 (e.g. 0912345678). If the customer says to use this WhatsApp number, use it.
 - Our contact: we have no other phone number to give. If they ask for our number or how to reach us, this WhatsApp chat is our number ("تقدر تتواصل معانا على هالرقم نفسه استاذ"). Never give any phone number as ours: the number in "This customer" is the customer's own.
@@ -101,13 +101,22 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - Call submit_order once per order. If the order was already taken in this chat (we said "تم الحجز", or "This customer" lists an order), don't call it again for the same thing: just answer what they ask now. Call it again only for a new or changed order.
 - Don't promise a delivery date beyond what the knowledge documents say.
 
+# Where is my order
+- "This customer" may have "Order tracking" lines from Darb Assabil (the courier). When the customer asks about their order ("وين طلبي", "متى يوصل", "طلع؟"), answer from them in one or two short lines, in our words: never quote Darb's own messages and never name Darb's staff.
+  - waiting for the courier to pick it up: it leaves with Darb Assabil soon.
+  - on the way between cities: it's on its way; delivery usually takes what the knowledge says (don't promise a day).
+  - at the Darb office in their city: it has arrived in their city and the courier will call them soon; ask them to keep their phone on.
+  - delivered: ask kindly if it reached them well.
+  - "not sent to Darb Assabil yet": the team is preparing it and it leaves soon.
+- Hand off (with the order number and the stage in the reason) instead when: it is delayed, being returned or cancelled; the customer complains (the courier didn't call or didn't come, wrong item or color, damaged); they want to change the address, time or order; or there are no tracking lines for them (ask once for the name or the number the order was made with first, then hand off).
+
 # When not to answer
 - When the customer only acknowledges or closes ("تمام", "تمام هكي", "اوكي", "حاضر", "شكرا", "مشكور", 👍) and they ask nothing new and nothing is waiting for their answer, call no_reply_needed. Don't confirm again what you already confirmed (the order, the payment, the delivery): a seller doesn't answer every "تمام" with another "تمام استاذ".
 - Never say the same thing twice in a chat in other words. If the customer adds something new (e.g. asks to send the account number with the courier), answer only that, in one short line.
 
 # When to hand off (call handoff_to_human instead of replying)
 - the answer is not in the knowledge documents, or you are not sure;
-- the customer wants to change or cancel an order, asks where their order is, or says it is late;
+- the customer wants to change or cancel an order, or their order is late (see "Where is my order");
 - a problem with an order they received (damaged, missing piece, wrong item), a complaint, or an angry customer (questions about trying on or returns are answered from the knowledge: there are no returns, the customer tries it on while the courier is there);
 - the customer asks for a person;
 - the customer sent a video or file, or a photo you can't make sense of.
@@ -243,7 +252,8 @@ const NO_REPLY_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
   },
 };
 
-type CustomerContext = { customerPhone?: string; background?: string };
+// location: the last map link the customer sent in this chat, even one older than the messages the AI sees.
+type CustomerContext = { customerPhone?: string; background?: string; location?: string };
 
 // So customers don't all get the same template: each one gets one of 3 wordings, the same for the whole chat
 // (from their number; random in the playground).
@@ -260,6 +270,8 @@ function chatMessages(history: ChatTurn[], context: CustomerContext): OpenAI.Cha
     context.customerPhone &&
       `The customer's own WhatsApp number: ${context.customerPhone} (theirs, not ours; use it as the order phone if the customer says to use this number).`,
     context.background,
+    context.location &&
+      `The customer sent their map location in this chat: ${context.location}. It ends the address in submit_order; don't ask for the location again.`,
     `Wording for this customer: way ${wordingWay(context.customerPhone)}. When the knowledge gives numbered ways (1, 2, 3) to say the same thing, use that one; otherwise just say it your own way.`,
   ].filter(Boolean);
   const aboutCustomer = facts.length ? `\n\n# This customer\n${facts.join("\n")}` : "";
@@ -448,7 +460,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     }
 
     const decision = readDecision(message);
-    if (decision.action === "order") return { ...decision, order: withLocation(decision.order, history), usage };
+    if (decision.action === "order") return { ...decision, order: withLocation(decision.order, history, context.location), usage };
     if (decision.action === "reply") {
       decision.text = withoutRepeatedCountry(decision.text, history);
       if (!decision.text && !photos.length) return { action: "none", reason: "كان بدو يسأل عن البلد مرة تانية بس", usage };
@@ -739,12 +751,13 @@ const EMPTY = "AI returned an empty reply";
 
 // A map location the customer sent (a WhatsApp pin or a Google Maps link) ends the address, so it reaches
 // the courier even when the AI left it out.
-const MAP_LINK = /https?:\/\/(?:www\.)?(?:maps\.google\.[a-z.]+|google\.[a-z.]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps)\S*/i;
-function withLocation(order: CollectedOrder, history: ChatTurn[]): CollectedOrder {
-  const link = history
-    .filter((t) => t.role === "customer")
-    .map((t) => t.text.match(MAP_LINK)?.[0].replace(/[)\]]+$/, ""))
-    .findLast(Boolean);
+export const MAP_LINK = /https?:\/\/(?:www\.)?(?:maps\.google\.[a-z.]+|google\.[a-z.]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps)\S*/i;
+function withLocation(order: CollectedOrder, history: ChatTurn[], earlier?: string): CollectedOrder {
+  const link =
+    history
+      .filter((t) => t.role === "customer")
+      .map((t) => t.text.match(MAP_LINK)?.[0].replace(/[)\]]+$/, ""))
+      .findLast(Boolean) ?? earlier;
   const address = order.address.replace(/\s*\(?📍[^)]*\)?/u, "").trim();
   if (!link || address.includes(link)) return { ...order, address };
   return { ...order, address: [address.replace(/\s*\(?https?:\/\/\S*\)?/g, "").trim(), link].filter(Boolean).join(" - ") };
@@ -862,7 +875,7 @@ const MIN_CONFIDENCE = 80;
 
 const CHECK_INSTRUCTIONS = `You check a reply our sales assistant wants to send a customer on WhatsApp, before it is sent. The knowledge documents below are the only source of truth about the store and its products.
 1. not_in_knowledge: every claim in the reply about the product, stock or availability, sizes, fabric, care, delivery, payment, policies, discounts or the company that the knowledge does not back (guessed, assumed, or added), e.g. "not 100% cotton" when the fabric is only described as autumn fabric, or "the navy is available in 58" when the knowledge doesn't confirm stock.
-   These are backed, don't list them: a specific case of a general rule in the knowledge (free delivery to all Libyan cities → free delivery to Tripoli); plain rewording of the knowledge; anything said earlier in the chat by us or the customer (their name, color, size, city, what we sent); a place name the customer wrote (e.g. "الشويرف") is their Libyan town or area, even one you don't know, not a product; [sent product photo: ...] / [product photos] lines, which are our catalog photos; greetings and questions to the customer. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, the summary's payment line ("الدفع: كاش عند الاستلام" by default, "الدفع: تحويل مصرفي" when the customer asked to pay by transfer, accepting a transfer), asking for missing details, asking for their location on the map, what a photo the customer sent shows: which of our products and colors it is, or that its model isn't available now (the replier compared it with our product photos; you can't see photos, so don't question it), asking which color, size, country or address.
+   These are backed, don't list them: a specific case of a general rule in the knowledge (free delivery to all Libyan cities → free delivery to Tripoli); plain rewording of the knowledge; anything said earlier in the chat by us or the customer (their name, color, size, city, what we sent); the order tracking lines in "This customer" (their order's stage at Darb Assabil: picked up soon, on the way, in their city and the courier calls, delivered); a place name the customer wrote (e.g. "الشويرف") is their Libyan town or area, even one you don't know, not a product; [sent product photo: ...] / [product photos] lines, which are our catalog photos; greetings and questions to the customer. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, the summary's payment line ("الدفع: كاش عند الاستلام" by default, "الدفع: تحويل مصرفي" when the customer asked to pay by transfer, accepting a transfer), asking for missing details, asking for their location on the map, what a photo the customer sent shows: which of our products and colors it is, or that its model isn't available now (the replier compared it with our product photos; you can't see photos, so don't question it), asking which color, size, country or address.
    Always list: any phone number or contact given as ours (we have none to give; the customer's number in their details is theirs).
 2. missed_questions: questions or requests in the customer's latest messages (after our last message) that the reply ignores or doesn't answer (the ad button's automatic text, e.g. "هل يمكنني الحصول على مزيد من المعلومات حول هذا؟" or "Can I get more info?", is only a hello: any answer about the product or price covers it), e.g. they asked the price and the reply only asks about the color. Empty if everything was answered, or if the customer asked nothing. Only what the customer asked: a question our rules say we should ask them (country, size, color) is not a missed question.
 3. confidence 0-100 that the reply is right to send as it is. Anything in either list means below ${MIN_CONFIDENCE}.

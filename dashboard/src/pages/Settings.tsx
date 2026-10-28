@@ -4,7 +4,7 @@ import { CheckCircle2, CircleSlash, FlaskConical, MessagesSquare, Power, Timer }
 import { api, type Settings } from "../api";
 import { Badge, Button, Card, ErrorNote, PageHeader, Toggle } from "../components/ui";
 import { ago } from "../format";
-import { FollowUpCard, SupervisorCard, TelegramCard } from "./SettingsAlerts";
+import { FollowUpCard, SupervisorCard, TelegramCard, TrackingCard } from "./SettingsAlerts";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -125,6 +125,7 @@ export function SettingsPage() {
 
       <TelegramCard />
       <FollowUpCard />
+      <TrackingCard />
       <SupervisorCard />
 
       <Card>

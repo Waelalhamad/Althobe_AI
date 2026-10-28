@@ -12,6 +12,7 @@ import { dataPath } from "./media.js";
 import { startSupervisor } from "./supervisor.js";
 import { startFollowUps } from "./followup.js";
 import { startDarbSync } from "./darbTrack.js";
+import "./tracking.js"; // customers hear when their order moves (after each Darb sync)
 import { startLearning } from "./learning.js";
 
 const app = express();

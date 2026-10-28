@@ -369,7 +369,7 @@ export const api = {
   supervisorReport: () => post<{ id: number }>("/supervisor/report"),
   resolveAlert: (id: number) => post(`/supervisor/alerts/${id}/resolve`),
   followUp: () => request<FollowUpView>("/followup"),
-  saveFollowUp: (patch: Partial<FollowUpSettings>) =>
+  saveFollowUp: (patch: Partial<FollowUpSettings> & { tracking?: { enabled: boolean } }) =>
     request<FollowUpView>("/followup", { method: "PUT", body: JSON.stringify(patch) }),
   playgroundVoice: (audio: string) => post<{ text: string }>("/playground/voice", { audio }),
   playgroundFollowUp: (messages: ChatTurn[], customerType: "new" | "returning" | "order" = "new") =>
@@ -380,6 +380,8 @@ export type FollowUpSettings = { enabled: boolean; afterMinutes: number };
 export type FollowUpView = {
   settings: FollowUpSettings;
   stats: { days: number; sent: number; replied: number; skipped: number };
+  // Order tracking updates to customers (left with Darb, in their city, delivered).
+  tracking: { enabled: boolean; stats: { days: number; sent: number; pending: number; skipped: number } };
 };
 
 // --- Telegram + supervisor -----------------------------------------------------------------

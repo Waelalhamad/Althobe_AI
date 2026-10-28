@@ -67,16 +67,22 @@ const norm = (s: string) =>
 
 // The order's city / address as a Darb city + area: an area named like the order's city wins (جنزور → طرابلس / جنزور),
 // then the city itself (area = the city's own area when it has one), then any area named in the address.
+// " word word " with each word normalized like norm(), to find a name as whole words.
+const words_ = (s: string) => {
+  const w = s.split(/[^\p{L}\p{N}]+/u).map(norm).filter(Boolean);
+  return w.length ? ` ${w.join(" ")} ` : "";
+};
+
 export function guessZone(zones: Zone[], city: string, address: string): { city: string; area: string } | undefined {
   const c = norm(city);
-  const words = norm(address);
-  // The longest area of `among` named in the address.
+  const words = words_(address);
+  // The longest area of `among` named in the address, as whole words: "اللوكيشن" doesn't name الكيش.
   const inAddress = (among: Zone[]) => {
     let best: { city: string; area: string; len: number } | undefined;
     for (const z of among)
       for (const a of z.areas) {
-        const n = norm(a);
-        if (n.length >= 3 && n !== norm(z.city) && words.includes(n) && (!best || n.length > best.len)) best = { city: z.city, area: a, len: n.length };
+        const n = words_(a);
+        if (n.length >= 5 && norm(a) !== norm(z.city) && words.includes(n) && (!best || n.length > best.len)) best = { city: z.city, area: a, len: n.length };
       }
     return best && { city: best.city, area: best.area };
   };

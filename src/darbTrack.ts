@@ -170,17 +170,23 @@ function save(shipments: Shipment[]): Change[] {
 
 const orderFor = (id: string) => (db.prepare("SELECT id FROM orders WHERE darb_id = ? LIMIT 1").get(id) as { id: number } | undefined)?.id;
 
-// Telegram: a shipment delivered, coming back or cancelled, and money Darb paid us.
+// Telegram: a shipment delivered, delayed, coming back or cancelled, and money Darb paid us. The problems carry
+// the chat's link, so the team can reach the customer.
 function tell(changes: Change[]) {
-  const label = (r: DarbShipmentRow) => {
-    const order = orderFor(r.id);
-    return `${esc(r.name || r.phone)} · ${esc(r.city)} · <code>${esc(r.reference)}</code>${order ? ` · طلب #${order}` : ""}`;
+  const label = (r: DarbShipmentRow, chat = false) => {
+    const order = db.prepare("SELECT id, customer FROM orders WHERE darb_id = ? LIMIT 1").get(r.id) as { id: number; customer: string } | undefined;
+    const link =
+      chat && order && config.publicUrl
+        ? `\n<a href="${config.publicUrl}/dashboard/inbox/${encodeURIComponent(order.customer)}">افتح المحادثة</a>`
+        : "";
+    return `${esc(r.name || r.phone)} · ${esc(r.city)} · <code>${esc(r.reference)}</code>${order ? ` · طلب #${order.id}` : ""}${link}`;
   };
   for (const { row, before } of changes) {
     if (before?.status === row.status) continue;
     if (row.status === "completed") notify("order", `✅ <b>انسلمت</b>: ${label(row)} · ${row.amount} دينار لإلنا`);
-    else if (row.status === "returning" || row.status === "returned") notify("order", `↩️ <b>شحنة راجعة</b>: ${label(row)}\n${esc(row.last_event)}`);
-    else if (row.status === "cancelled") notify("order", `🚫 <b>شحنة ملغية</b>: ${label(row)}\n${esc(row.last_event)}`);
+    else if (row.status === "delayed") notify("order", `⏳ <b>شحنة متأخرة</b>: ${label(row, true)}`);
+    else if (row.status === "returning" || row.status === "returned") notify("order", `↩️ <b>شحنة راجعة</b>: ${label(row, true)}\n${esc(row.last_event)}`);
+    else if (row.status === "cancelled") notify("order", `🚫 <b>شحنة ملغية</b>: ${label(row, true)}\n${esc(row.last_event)}`);
   }
   const paid = changes.filter((c) => !c.before?.paid_at && c.row.paid_at);
   if (paid.length) {
@@ -188,7 +194,89 @@ function tell(changes: Change[]) {
   }
 }
 
+// Where a shipment is, in plain words for the AI (Darb's own event text names its staff and flips states).
+export const TRACKING_STAGE: Record<string, string> = {
+  pending: "waiting for Darb's courier to pick it up from us",
+  booked: "waiting for Darb's courier to pick it up from us",
+  processing: "on the way between cities",
+  resent: "on the way between cities",
+  "on-branch": "at the Darb office in the customer's city: the courier calls the customer before delivering",
+  delayed: "delayed",
+  completed: "delivered",
+  released: "delivered",
+  returning: "being returned to us",
+  returned: "returned to us",
+  cancelled: "cancelled at Darb",
+};
+
+const hoursAgo = (ms: number) => {
+  const h = Math.max(0, Math.round((Date.now() - ms) / 3_600_000));
+  return h < 24 ? `${h} hours ago` : `${Math.round(h / 24)} days ago`;
+};
+
+// What we know about this customer's shipments, for the AI: their latest orders (by chat or phone) with the
+// shipment's stage, and shipments sent from Darb's app to their number without an order here.
+export function trackingNote(customer: string): string {
+  // The last 9 digits match "0912345678", "218912345678" and "+218 91 234 5678" alike. Only a chat that is a
+  // phone number (not a username id or a Messenger / Instagram one) is looked up by phone.
+  const digits = /^\d{8,15}$/.test(customer) ? customer.slice(-9) : undefined;
+  const like = digits ? `%${digits}` : null;
+  const orders = db
+    .prepare(
+      `SELECT o.id, o.status, o.total, o.payment, d.id AS shipment, d.reference, d.sh, d.status AS darb, d.city, d.area,
+         d.last_event_at, d.created_at
+       FROM orders o LEFT JOIN darb_shipments d ON d.id = o.darb_id
+       WHERE (o.customer = ? OR REPLACE(o.phone, ' ', '') LIKE ?) AND o.status != 'cancelled' ORDER BY o.id DESC LIMIT 3`,
+    )
+    .all(customer, like) as {
+    id: number;
+    status: string;
+    total: string; // as stated, "385 دينار"
+    payment: string;
+    shipment: string | null;
+    reference: string | null;
+    sh: string | null;
+    darb: string | null;
+    city: string | null;
+    area: string | null;
+    last_event_at: number | null;
+    created_at: number | null;
+  }[];
+  const loose = like
+    ? (db
+        .prepare(
+          `SELECT * FROM darb_shipments d WHERE phone LIKE ? AND created_at > ?
+             AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.darb_id = d.id) ORDER BY created_at DESC LIMIT 3`,
+        )
+        .all(like, Date.now() - 60 * 24 * 3_600_000) as DarbShipmentRow[])
+    : [];
+  const describe = (d: { sh: string | null; reference: string | null; status: string | null; city: string | null; area: string | null; last_event_at: number | null; created_at: number | null }) =>
+    [
+      `shipment ${d.sh ?? d.reference} with Darb Assabil to ${d.city}${d.area && d.area !== d.city ? `/${d.area}` : ""}`,
+      `Stage: ${TRACKING_STAGE[d.status ?? ""] ?? d.status}`,
+      d.created_at && `sent ${hoursAgo(d.created_at)}`,
+      d.last_event_at && `last update ${hoursAgo(d.last_event_at)}`,
+    ]
+      .filter(Boolean)
+      .join(". ");
+  const lines = [
+    ...orders.map((o) =>
+      o.shipment
+        ? `Order #${o.id}: ${describe({ ...o, status: o.darb })}.${o.darb === "completed" || o.darb === "released" ? "" : o.payment === "transfer" ? " Paid by bank transfer." : ` Pays ${o.total} cash on delivery.`}`
+        : o.status === "delivered"
+          ? `Order #${o.id}: delivered.`
+          : `Order #${o.id}: ${o.status}, not sent to Darb Assabil yet (the team prepares and sends it).`,
+    ),
+    ...loose.map((d) => `A shipment for them (sent before our records): ${describe(d)}.`),
+  ];
+  return lines.length ? `Order tracking (from Darb Assabil, updated every 15 minutes):\n${lines.join("\n")}` : "";
+}
+
 let syncing: Promise<{ shipments: number; changes: number }> | undefined;
+
+// Run after every sync (the customers' tracking updates, src/tracking.ts).
+const afterSync: (() => Promise<unknown>)[] = [];
+export const onDarbSynced = (run: () => Promise<unknown>) => void afterSync.push(run);
 
 // Every shipment of the account, newest first, 100 per page.
 export function syncDarb(): Promise<{ shipments: number; changes: number }> {
@@ -204,6 +292,7 @@ export function syncDarb(): Promise<{ shipments: number; changes: number }> {
     }
     const changes = save(all);
     tell(changes);
+    for (const run of afterSync) await run().catch((error) => log("darb", `after sync: ${error instanceof Error ? error.message : error}`));
     if (changes.length) log("darb", `synced ${all.length} shipments, ${changes.length} changed`);
     return { shipments: all.length, changes: changes.length };
   })().finally(() => (syncing = undefined));

@@ -47,6 +47,7 @@ import {
 import * as queries from "./queries.js";
 import { findGroups, sendTest, telegramChatId, setMutedKinds, setTelegramChat, setTelegramToken, telegramStatus } from "../telegram.js";
 import { followUpSettings, followUpStats, saveFollowUpSettings } from "../followup.js";
+import { markTold, saveTrackingSettings, trackingSettings, trackingStats } from "../tracking.js";
 import { generateReport, resolveAlert, runChecks, runReviews, saveSupervisorSettings, supervisorView } from "../supervisor.js";
 
 export const dashboardApi = express.Router();
@@ -436,12 +437,22 @@ async function darbRoute(res: express.Response, run: () => Promise<unknown>) {
 
 dashboardApi.get("/orders/:id/darb", (req, res) => darbRoute(res, () => shipmentPreview(Number(req.params.id))));
 dashboardApi.post("/orders/:id/darb/quote", (req, res) => darbRoute(res, () => shipmentQuote(Number(req.params.id), darbInput(req.body))));
-dashboardApi.post("/orders/:id/darb", (req, res) => darbRoute(res, () => sendToDarb(Number(req.params.id), darbInput(req.body))));
+dashboardApi.post("/orders/:id/darb", (req, res) =>
+  darbRoute(res, async () => {
+    const shipment = await sendToDarb(Number(req.params.id), darbInput(req.body));
+    // The customer hears it left once the sync has the shipment (minutes later); right now it isn't synced yet.
+    void syncDarb().catch(() => {});
+    return shipment;
+  }),
+);
 dashboardApi.post("/orders/:id/darb/update", (req, res) => darbRoute(res, () => updateDarbShipment(Number(req.params.id), darbInput(req.body))));
 // Tracking: an order sent by hand gets its shipment by number; the shipment's timeline; the money page.
 dashboardApi.post("/orders/:id/darb/link", async (req, res) => {
   try {
-    res.json(await linkDarb(Number(req.params.id), String(req.body?.number ?? ""), req.body?.force === true));
+    const linked = await linkDarb(Number(req.params.id), String(req.body?.number ?? ""), req.body?.force === true);
+    // An order sent before: the customer isn't told now what already happened.
+    markTold(Number(req.params.id));
+    res.json(linked);
   } catch (error) {
     // 409: the shipment is for another phone; the dashboard asks and sends force.
     res.status(error instanceof PhoneMismatch ? 409 : 502).json({ error: error instanceof Error ? error.message : String(error) });
@@ -749,13 +760,16 @@ dashboardApi.post("/supervisor/alerts/:id/resolve", (req, res) => {
 // --- Automatic follow-up ---------------------------------------------------------------------------
 
 dashboardApi.get("/followup", (_req, res) => {
-  res.json({ settings: followUpSettings(), stats: followUpStats(7) });
+  res.json({ settings: followUpSettings(), stats: followUpStats(7), tracking: { ...trackingSettings(), stats: trackingStats(7) } });
 });
 
 dashboardApi.put("/followup", (req, res) => {
   const settings = saveFollowUpSettings(req.body ?? {});
-  log("dashboard", "follow-up settings changed");
-  res.json({ settings, stats: followUpStats(7) });
+  if (req.body?.tracking) {
+    const tracking = saveTrackingSettings(req.body.tracking);
+    log("dashboard", `order tracking updates turned ${tracking.enabled ? "on" : "off"}`);
+  } else log("dashboard", "follow-up settings changed");
+  res.json({ settings, stats: followUpStats(7), tracking: { ...trackingSettings(), stats: trackingStats(7) } });
 });
 
 // --- Knowledge files --------------------------------------------------------------------

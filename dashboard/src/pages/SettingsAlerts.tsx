@@ -1,7 +1,7 @@
 // Settings cards for the Telegram notifications and the supervisor.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MessageCircleMore, Search, Send, ShieldCheck } from "lucide-react";
+import { MessageCircleMore, Search, Send, ShieldCheck, Truck } from "lucide-react";
 import { api, type NotifyKind, type SupervisorSettings } from "../api";
 import { Badge, Button, Card, ErrorNote, Toggle } from "../components/ui";
 import { ago } from "../format";
@@ -282,6 +282,50 @@ export function FollowUpCard() {
           { label: "انبعتت (آخر 7 أيام)", value: stats.sent },
           { label: "الزبون رد بعدها", value: stats.replied },
           { label: "ما بعت (ما بتناسب)", value: stats.skipped },
+        ].map((x) => (
+          <div key={x.label} className="rounded-xl bg-card-2 p-3">
+            <div className="num text-xl font-semibold">{x.value}</div>
+            <div className="mt-1 text-xs text-muted">{x.label}</div>
+          </div>
+        ))}
+      </div>
+      <ErrorNote error={save.error} />
+    </Card>
+  );
+}
+
+// Messages to the customer when their order moves at Darb Assabil (same /followup settings).
+export function TrackingCard() {
+  const queryClient = useQueryClient();
+  const q = useQuery({ queryKey: ["followup"], queryFn: api.followUp });
+  const save = useMutation({
+    mutationFn: (enabled: boolean) => api.saveFollowUp({ tracking: { enabled } }),
+    onSuccess: (data) => queryClient.setQueryData(["followup"], data),
+  });
+  const t = q.data?.tracking;
+  if (!t) return <ErrorNote error={q.error} />;
+
+  return (
+    <Card className="flex flex-col gap-4">
+      <div className="flex items-start gap-4">
+        <span className={`grid size-11 shrink-0 place-items-center rounded-xl ${t.enabled ? "bg-ok/12 text-ok" : "bg-card-2 text-muted"}`}>
+          <Truck size={20} />
+        </span>
+        <div className="flex-1">
+          <h2 className="font-semibold">تحديثات تتبع الطلب للزبون</h2>
+          <p className="mt-1 text-sm text-muted">
+            لما الطلب يطلع مع درب السبيل، ولما يوصل لمكتب درب بمدينة الزبون (المندوب رح يتصل)، ولما ينسلّم، المساعد بيبعت للزبون رسالة
+            قصيرة. بس إذا الزبون كتبلنا بآخر 24 ساعة (قاعدة واتساب) وبوقت الدوام، وإلا بتستنى لحد ما يكتب (لـ 3 أيام). التأخير والرجوع
+            بيروحو للفريق عالتلغرام، مش للزبون. ما بتشتغل إلا إذا ردود المساعد شغّالة.
+          </p>
+        </div>
+        <Toggle checked={t.enabled} onChange={(on) => save.mutate(on)} disabled={save.isPending} />
+      </div>
+      <div className="grid grid-cols-3 gap-3 text-center">
+        {[
+          { label: "انبعتت (آخر 7 أيام)", value: t.stats.sent },
+          { label: "ناطرة الزبون يكتب", value: t.stats.pending },
+          { label: "ما انبعتت", value: t.stats.skipped },
         ].map((x) => (
           <div key={x.label} className="rounded-xl bg-card-2 p-3">
             <div className="num text-xl font-semibold">{x.value}</div>
