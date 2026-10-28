@@ -36,6 +36,20 @@ import { isMetaCustomer, metaSendImage, metaSendText, metaTyping } from "./meta.
 import { noteHandoff } from "../learning.js";
 import { missingStock } from "../stock.js";
 import { trackingNote } from "../darbTrack.js";
+import { setShipmentLocation } from "../darb.js";
+
+// Darb's statuses in the team's words (Telegram).
+const DARB_STATUS_AR: Record<string, string> = {
+  processing: "عالطريق",
+  "on-branch": "بفرع المدينة",
+  resent: "انبعتت من جديد",
+  delayed: "متأخرة",
+  completed: "انسلمت",
+  released: "انسلمت",
+  returning: "راجعة",
+  returned: "رجعت",
+  cancelled: "ملغية",
+};
 import { splitAroundPhotos, splitMessages, typingPause } from "../typing.js";
 
 const DEFAULT_HANDOFF_MESSAGE = "حاضر، لحظة نتأكدلك ونرجعلك 🙏";
@@ -477,6 +491,7 @@ async function respond(customer: string) {
       background: [
         customerBackground(customer),
         trackingNote(customer),
+        await locationNote(customer),
         isUserId(customer) && "Writes from a WhatsApp username: we don't have their number, so ask for a phone number for the delivery.",
         isMetaCustomer(customer) && metaNote(channelOf(customer)),
         team.note,
@@ -545,23 +560,19 @@ async function respond(customer: string) {
       }
       const same = findSameOrder(customer, decision.order.items, Date.now() - 7 * 24 * 60 * 60 * 1000);
       if (same) {
-        // Already saved: don't record it twice or stop the AI again. A new map location (the usual reason the AI
-        // "orders" again) goes into that order, and the team hears about it.
-        const link = decision.order.address.match(MAP_LINK)?.[0];
-        const moved = link ? updateOrderLocation(same, link) : { changed: false, sentToDarb: false };
-        // The location usually reached the order as it arrived (locationForOpenOrder): it's still the news here.
-        const newLocation = Boolean(link) && (moved.changed || lastCustomerText(customer).includes(link!));
-        const text = newLocation ? "تمام استاذ، وصلنا اللوكيشن الجديد وحدّثنا العنوان 🙏" : decision.messageToCustomer || DEFAULT_ORDER_MESSAGE;
+        // Already saved: don't record it twice or stop the AI again. A new map location is the usual reason:
+        // locationForOpenOrder already checked with Darb whether the order could still change and told the team,
+        // so the reply only says what happened.
+        const link = lastCustomerText(customer).match(MAP_LINK)?.[0].replace(/[)\]]+$/, "");
+        const address = (db.prepare("SELECT address FROM orders WHERE id = ?").get(same) as { address: string } | undefined)?.address ?? "";
+        const text = !link
+          ? decision.messageToCustomer || DEFAULT_ORDER_MESSAGE
+          : address.includes(link)
+            ? "تمام استاذ، وصلنا اللوكيشن الجديد وحدّثنا العنوان 🙏"
+            : "وصلنا اللوكيشن استاذ 🙏 طلبك صار بالطريق مع المندوب وما فينا نغيّر العنوان هلأ، بلّغنا الفريق ليتابع مع المندوب.";
         const wamid = await sendText(customer, text);
         saveMessage({ customer, role: "business", source: "ai", text, wamid });
-        if (moved.changed) {
-          notify(
-            "order",
-            `📍 <b>لوكيشن جديد لطلب #${same}</b>: ${esc(customerLabel(customer))}\nحدّثناه بعنوان الطلب: ${esc(link!)}` +
-              (moved.sentToDarb ? "\nالطلب مبعوت لدرب: عدّلو ملاحظة المندوب بالشحنة (عدّل شحنة درب السبيل)." : ""),
-          );
-        }
-        log(key, `same order as #${same} sent again by the AI; not saved twice${moved.changed ? ", its location updated" : ""}`);
+        log(key, `same order as #${same} sent again by the AI; not saved twice`);
         return;
       }
       const missing = missingStock(decision.order.items);
@@ -603,26 +614,65 @@ async function respond(customer: string) {
   }
 }
 
-// The automatic follow-up (followup.ts). Sent only if the customer hasn't written since afterId
-// and the team hasn't taken over meanwhile. Returns whether anything was sent.
-// A map location sent after ordering corrects that order's address (the AI only answers "got it"): the latest open
-// order of the past week gets it, whether or not the AI replies or the team is handling the chat, and the team hears.
+// A map location sent after ordering: is the order still changeable? Checked with Darb first, decided here (not by
+// the AI), and the result goes into the AI's next reply (locationNote) and to the team:
+// - not sent to Darb: the order's address gets it;
+// - sent, not picked up yet: the order's address and the courier's note at Darb get it;
+// - on its way (or Darb didn't answer): nothing changes, the customer hears it can't be changed now, the team gets it.
+type LocationOutcome = { orderId: number; link: string; result: "updated" | "updated_darb" | "on_way" | "unchecked"; status?: string };
+const locationOutcomes = new Map<string, Promise<LocationOutcome | undefined>>();
+
 function locationForOpenOrder(customer: string, text: string) {
   const link = text.match(MAP_LINK)?.[0].replace(/[)\]]+$/, "");
   if (!link) return;
   const order = db
-    .prepare("SELECT id FROM orders WHERE customer = ? AND status IN ('new', 'confirmed') AND created_at > ? ORDER BY id DESC LIMIT 1")
-    .get(customer, Date.now() - 7 * 24 * 60 * 60 * 1000) as { id: number } | undefined;
-  // An order taken in this same reply round already has it (withLocation adds the chat's last location).
-  if (!order) return;
-  const moved = updateOrderLocation(order.id, link);
-  if (!moved.changed) return;
-  log(`wa:${customer}`, `new map location saved to order #${order.id}`);
-  notify(
-    "order",
-    `📍 <b>لوكيشن جديد لطلب #${order.id}</b>: ${esc(customerLabel(customer))}\nحدّثناه بعنوان الطلب: ${esc(link)}` +
-      (moved.sentToDarb ? "\nالطلب مبعوت لدرب: عدّلو ملاحظة المندوب بالشحنة (عدّل شحنة درب السبيل)." : ""),
-  );
+    .prepare("SELECT id, address, darb_id FROM orders WHERE customer = ? AND status IN ('new', 'confirmed') AND created_at > ? ORDER BY id DESC LIMIT 1")
+    .get(customer, Date.now() - 7 * 24 * 60 * 60 * 1000) as { id: number; address: string; darb_id: string | null } | undefined;
+  if (!order || order.address.includes(link)) return;
+  const done = (async (): Promise<LocationOutcome> => {
+    const who = esc(customerLabel(customer));
+    if (!order.darb_id) {
+      updateOrderLocation(order.id, link);
+      notify("order", `📍 <b>لوكيشن جديد لطلب #${order.id}</b>: ${who}\nحدّثناه بعنوان الطلب (لسا ما انبعت لدرب): ${esc(link)}`);
+      return { orderId: order.id, link, result: "updated" };
+    }
+    try {
+      const darbSide = await setShipmentLocation(order.darb_id, link);
+      if (darbSide.changed || darbSide.status === "pending" || darbSide.status === "booked") {
+        updateOrderLocation(order.id, link);
+        notify("order", `📍 <b>لوكيشن جديد لطلب #${order.id}</b>: ${who}\nالمندوب لسا ما استلم الشحنة: حدّثنا العنوان وملاحظة المندوب بدرب.\n${esc(link)}`);
+        return { orderId: order.id, link, result: "updated_darb", status: darbSide.status };
+      }
+      notify(
+        "order",
+        `⚠️ <b>لوكيشن جديد بس الطلب #${order.id} بالطريق</b> (${esc(DARB_STATUS_AR[darbSide.status] ?? darbSide.status)}): ${who}\n` +
+          `ما غيّرنا شي. إذا لازم، اتصلو بدرب أو المندوب وعطوهن اللوكيشن الجديد:\n${esc(link)}`,
+      );
+      return { orderId: order.id, link, result: "on_way", status: darbSide.status };
+    } catch (error) {
+      notify(
+        "order",
+        `⚠️ <b>لوكيشن جديد لطلب #${order.id}</b>: ${who}\nما قدرت اتأكد من درب إذا الشحنة بعدها بتتغيّر (${esc(error instanceof Error ? error.message : String(error))}). ما غيّرنا شي، شيكو انتو:\n${esc(link)}`,
+      );
+      return { orderId: order.id, link, result: "unchecked" };
+    }
+  })();
+  locationOutcomes.set(customer, done.catch(() => undefined));
+  void done.then((o) => log(`wa:${customer}`, `new map location for order #${o.orderId}: ${o.result}${o.status ? ` (${o.status})` : ""}`));
+}
+
+// For the AI's reply right after: what happened to the location (once; it waits for the Darb check).
+async function locationNote(customer: string): Promise<string | undefined> {
+  const pending = locationOutcomes.get(customer);
+  if (!pending) return undefined;
+  locationOutcomes.delete(customer);
+  const o = await pending;
+  if (!o) return undefined;
+  const about = `The map location the customer just sent is for their order #${o.orderId} (not a new order: don't call submit_order).`;
+  if (o.result === "updated" || o.result === "updated_darb") return `${about} It was saved to the order's address. Tell them you got it and updated the address.`;
+  if (o.result === "on_way")
+    return `${about} The order is already on its way with Darb Assabil's courier, so the location can't be changed now. Tell them kindly it's on its way and we can't change the location now, and that the team was told and will follow up with the courier. Don't say it was updated.`;
+  return `${about} We couldn't check yet whether it can still change, and nothing was changed. Tell them you got it and the team will check and confirm. Don't say it was updated.`;
 }
 
 const lastCustomerText = (customer: string) =>
@@ -647,6 +697,8 @@ export async function sendNotice(customer: string, text: string) {
   saveMessage({ customer, role: "business", source: "ai", text, wamid });
 }
 
+// The automatic follow-up (followup.ts). Sent only if the customer hasn't written since afterId
+// and the team hasn't taken over meanwhile. Returns whether anything was sent.
 export async function sendFollowUp(customer: string, text: string, afterId: number): Promise<boolean> {
   const stillQuiet = () => !isAiPaused(customer) && lastCustomerMessageId(customer) === afterId;
   let sent = 0;

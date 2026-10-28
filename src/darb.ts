@@ -280,3 +280,19 @@ export async function updateDarbShipment(orderId: number, input: ShipmentInput) 
   log("darb", `order #${orderId}: shipment ${order.darb_ref} updated (${input.city} / ${input.area}, ${input.payment})`);
   return { ok: true };
 }
+
+// A new map location for a shipment: only while the courier hasn't picked it up, and only the courier's note (the
+// link replaced, or added). Once it's on its way Darb's courier goes by what he has: the team calls Darb instead.
+const MAP_IN_NOTE = /https?:\/\/(?:www\.)?(?:maps\.google\.[a-z.]+|google\.[a-z.]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps)\S*/i;
+export async function setShipmentLocation(darbId: string, link: string): Promise<{ changed: boolean; status: string }> {
+  const data = await darb<{ results?: { status: string; notes?: string }[] }>("GET", `/api/local/shipments/${encodeURIComponent(darbId)}`);
+  const s = data.results?.[0];
+  if (!s) throw new Error("الشحنة مش موجودة عند درب");
+  if (s.status !== "pending" && s.status !== "booked") return { changed: false, status: s.status };
+  const notes = s.notes ?? "";
+  if (notes.includes(link)) return { changed: false, status: s.status };
+  const next = (MAP_IN_NOTE.test(notes) ? notes.replace(MAP_IN_NOTE, link) : [notes.trim(), `📍 ${link}`].filter(Boolean).join("\n")).slice(0, 1000);
+  await darb("PATCH", `/api/local/shipments/${encodeURIComponent(darbId)}`, { notes: next });
+  log("darb", `shipment ${darbId}: courier note got the customer's new location`);
+  return { changed: true, status: s.status };
+}
