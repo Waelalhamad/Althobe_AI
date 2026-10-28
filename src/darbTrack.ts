@@ -312,6 +312,14 @@ export function startDarbSync() {
 }
 
 // One shipment fresh from Darb, by its current number or its first "SH" number.
+async function fetchShipmentById(id: string): Promise<DarbShipmentRow | undefined> {
+  const data = await darb<{ results?: Shipment[] }>("GET", `/api/local/shipments/${encodeURIComponent(id)}`);
+  const found = data.results?.find((s) => s._id === id);
+  if (!found) return undefined;
+  save([found]);
+  return getRow.get(found._id) as DarbShipmentRow;
+}
+
 async function fetchShipment(number: string): Promise<DarbShipmentRow | undefined> {
   const n = shipmentNumber(number);
   if (!n) return undefined;
@@ -403,8 +411,16 @@ export async function trackOrder(orderId: number) {
   if (!order?.darb_id) throw new Error("الطلب مش مربوط بشحنة");
   const saved = getRow.get(order.darb_id) as DarbShipmentRow | undefined;
   const ref = (db.prepare("SELECT darb_ref FROM orders WHERE id = ?").get(orderId) as { darb_ref: string | null }).darb_ref;
-  const row = (await fetchShipment(saved?.reference ?? ref ?? "").catch(() => undefined)) ?? saved;
-  if (!row) throw new Error("ما قدرت جيب الشحنة من درب السبيل");
+  // By Darb's id first: it stays the same when the number changes from "SH…" to the branch's number.
+  const row =
+    (await fetchShipmentById(order.darb_id).catch(() => undefined)) ??
+    (await fetchShipment(saved?.reference ?? ref ?? "").catch(() => undefined)) ??
+    saved;
+  if (!row) {
+    throw new Error(
+      `الشحنة ${ref ?? ""} مش موجودة عند درب السبيل هلأ (يمكن انلغت أو انحذفت من تطبيق درب). شيك بتطبيق درب، وإذا لازم ابعت الطلب من جديد أو اربطو برقم الشحنة الصح.`,
+    );
+  }
   return { ...shipmentView(row), timeline: JSON.parse(row.timeline) as TimelineEvent[] };
 }
 

@@ -122,6 +122,8 @@ export type Order = {
   darbStatus?: string | null;
   darbAt?: number | null;
   // From Darb's copy (synced every 15 minutes): the latest event, and the money.
+  // The first number ("SH2457684"); darbRef becomes the branch's number once the branch takes the shipment.
+  darbSh?: string | null;
   darbEvent?: string | null;
   darbEventAt?: number | null;
   darbPaidAt?: number | null;

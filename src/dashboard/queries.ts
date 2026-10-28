@@ -396,7 +396,7 @@ export function orders(opts: OrdersQuery) {
     .prepare(
       `SELECT o.id, o.customer, o.channel, o.name, o.phone, o.city, o.address, o.items, o.total, o.notes, o.payment, o.status, o.source,
          o.darb_ref AS darbRef, COALESCE(d.status, o.darb_status) AS darbStatus, o.darb_at AS darbAt,
-         d.last_event AS darbEvent, d.last_event_at AS darbEventAt, d.paid_at AS darbPaidAt, d.amount AS darbAmount,
+         d.sh AS darbSh, d.last_event AS darbEvent, d.last_event_at AS darbEventAt, d.paid_at AS darbPaidAt, d.amount AS darbAmount,
          o.created_at AS createdAt, o.updated_at AS updatedAt
        FROM orders o LEFT JOIN darb_shipments d ON d.id = o.darb_id
        ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY o.id DESC LIMIT ?`,

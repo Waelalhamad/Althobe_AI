@@ -202,7 +202,9 @@ function DarbLine({ o, onTrack }: { o: Order; onTrack: () => void }) {
         <Truck size={16} /> درب السبيل
       </span>
       <Badge tone={tone}>{DARB_STATUS[o.darbStatus ?? ""] ?? o.darbStatus ?? "—"}</Badge>
-      <span className="num text-xs text-muted">#{o.darbRef}</span>
+      <span className="num text-xs text-muted" title="SH: رقم الشحنة لما انبعتت · الرقم بلا SH: رقم فرع درب بعد ما استلمها">
+        {o.darbSh && o.darbSh !== o.darbRef ? `${o.darbSh} · فرع #${o.darbRef}` : `#${o.darbRef}`}
+      </span>
       {o.darbEvent && (
         <span className="min-w-0 flex-1 truncate text-xs">
           {o.darbEvent}
