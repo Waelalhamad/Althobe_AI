@@ -80,7 +80,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - Photos: when the customer asks about colors or models, or wants to see a product, send its photos with send_product_photos and add one short line. Write [photos] alone on its own line (between blank lines) where the photos should appear among your messages; without it they go just before your last message. Don't list the colors in text when photos exist. Don't send the same photos twice in one conversation, and never invent photo ids.
 
 # Taking the order
-- Collect, in a natural way: the product and its choices (color/model, size, as the product needs), full name, phone number, and the detailed address: city, area, street, and a nearby landmark (mosque, school, known shop) so the courier can find them. A place name the customer writes alone, especially after "من أي بلد؟" or "وين؟" (e.g. "الشويرف", "مصراتة", "سوق الجمعة"), is where they live: a Libyan town or area, even one you don't know, never a product or a name. Don't ask the country again then. If they give only the city or only the area, ask once for the rest in a friendly way, and in that same message ask for their location on the map as optional (e.g. "وين بالزبط؟ المنطقة والشارع وأقرب معلم، ولو تقدر ابعتلنا اللوكيشن عالخريطة بيسهّل عالمندوب 🙏"). The location ask goes in every address question, once per chat. Never insist on it or wait for it: if they don't send it, carry on with the written address. A location they send ("[sent a location: <link> ...]" or a Google Maps link) goes, as the link, at the end of the address in submit_order; in the summary the address line still gives the city and area they wrote and just ends with "(📍 اللوكيشن وصلنا)": the location never replaces them, and the city always goes in submit_order's city. Quantity is 1 unless the customer says more: don't ask about it. Like our team, you may ask for a second phone number ("ممكن رقم تاني للتواصل؟"), but don't insist.
+- Collect, in a natural way: the product and its choices (color/model, size, as the product needs), full name, phone number, and the detailed address: city, area, street, and a nearby landmark (mosque, school, known shop) so the courier can find them. A place name the customer writes alone, especially after "من أي بلد؟" or "وين؟" (e.g. "الشويرف", "مصراتة", "سوق الجمعة"), is where they live: a Libyan town or area, even one you don't know, never a product or a name. Don't ask the country again then. If they give only the city or only the area, ask once for the rest in a friendly way, and in that same message ask for their location on the map as optional (e.g. "وين بالزبط؟ المنطقة والشارع وأقرب معلم، ولو تقدر ابعتلنا اللوكيشن عالخريطة بيسهّل عالمندوب 🙏"). The location ask goes in every address question, once per chat. Never insist on it or wait for it: if they don't send it, carry on with the written address. A location they send ("[sent a location: <link> ...]" or a Google Maps link) goes, as the link, at the end of the address in submit_order; the address is only what the customer really wrote (never words like "اللوكيشن المرسل" or "(مذكور من الزبون)": if a part like the landmark is missing, leave it out); in the summary the address line still gives the city and area they wrote and just ends with "(📍 اللوكيشن وصلنا)": the location never replaces them, and the city always goes in submit_order's city. Quantity is 1 unless the customer says more: don't ask about it. Like our team, you may ask for a second phone number ("ممكن رقم تاني للتواصل؟"), but don't insist.
 - Name: only a name the customer clearly gives as their name. Customers keep chatting while you collect the order: a short phrase is usually a reaction or a wish, not a name (e.g. "بس سعدني" = just make me happy / pick me something nice, "عادي", "تمام", "كيف ما تبي"). If a word could be a name or a phrase, don't greet them with it: answer the phrase naturally (for "بس سعدني": "من عيوني استاذ، الأسود راقي وبيعجبك إن شاء الله") and ask for the name ("وشن الاسم الكامل للتوصيل استاذ؟"). Never tell the customer that what they wrote is not a name. When unsure, ask rather than guess.
 - Phone: a Libyan mobile number, usually starting with 09 (e.g. 0912345678). If the customer says to use this WhatsApp number, use it.
 - Our contact: we have no other phone number to give. If they ask for our number or how to reach us, this WhatsApp chat is our number ("تقدر تتواصل معانا على هالرقم نفسه استاذ"). Never give any phone number as ours: the number in "This customer" is the customer's own.
@@ -461,7 +461,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     }
 
     const decision = readDecision(message);
-    if (decision.action === "order") return { ...decision, order: withLocation(decision.order, history, context.location), usage };
+    if (decision.action === "order") return { ...decision, order: withoutPlaceholders(withLocation(decision.order, history, context.location)), usage };
     if (decision.action === "reply") {
       decision.text = withoutRepeatedCountry(decision.text, history);
       if (!decision.text && !photos.length) return { action: "none", reason: "كان بدو يسأل عن البلد مرة تانية بس", usage };
@@ -762,6 +762,29 @@ function withLocation(order: CollectedOrder, history: ChatTurn[], earlier?: stri
   const address = order.address.replace(/\s*\(?📍[^)]*\)?/u, "").trim();
   if (!link || address.includes(link)) return { ...order, address };
   return { ...order, address: [address.replace(/\s*\(?https?:\/\/\S*\)?/g, "").trim(), link].filter(Boolean).join(" - ") };
+}
+
+// Words the model wrote instead of the customer's own ("اللوكيشن المرسل من الزبون - أقرب معلم: (مذكور من الزبون)",
+// order #35): they went to the courier as the address. They're cut; what's left is what the customer really gave.
+const PLACEHOLDER = [
+  /\(?[^()\n-]*(?:مذكور|مرفق|موجود)[^()\n-]*(?:الزبون|المحادثة|الشات|فوق)?[^()\n-]*\)?/g,
+  /(?:ال)?لوكيشن\s*(?:ال)?(?:مرسل|مبعوت|اللي\s*بعته|يلي\s*بعته)[^-\n]*/g,
+  /(?:العنوان|الموقع)\s*(?:حسب|من|ب)\s*(?:ال)?(?:لوكيشن|خريطة|موقع)[^-\n]*/g,
+];
+export function withoutPlaceholders(order: CollectedOrder): CollectedOrder {
+  let address = order.address;
+  for (const p of PLACEHOLDER) address = address.replace(p, "");
+  address = address
+    .replace(/أقرب\s*معلم\s*:?\s*(?=-|$)/g, "")
+    .replace(/(?:\s*-\s*){2,}/g, " - ")
+    .replace(/^[\s\-:]+|[\s\-:]+$/g, "");
+  return { ...order, address };
+}
+
+// What the courier can't find the customer without: the team hears it before sending to Darb.
+export function addressGaps(order: { city: string; address: string }): string[] {
+  const words = order.address.replace(MAP_LINK, "").replace(/[\s\-–,،:.()]+/g, " ").trim();
+  return [...(order.city.trim() ? [] : ["المدينة"]), ...(words.length >= 3 ? [] : ["العنوان (المنطقة/الشارع/أقرب معلم)"])];
 }
 
 // The customer's latest messages answer our question or give details (a phone, a size): silence is never right then.

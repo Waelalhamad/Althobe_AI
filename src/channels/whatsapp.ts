@@ -4,7 +4,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { config } from "../config.js";
-import { checkPhoto, decideReply, MAP_LINK, type ChatTurn } from "../agent.js";
+import { addressGaps, checkPhoto, decideReply, MAP_LINK, type ChatTurn } from "../agent.js";
 import { listCatalog, publicPhotoUrl } from "../catalog.js";
 import { downloadWhatsAppMedia, fileAsDataUrl, saveFile, transcribe } from "../media.js";
 import {
@@ -586,13 +586,20 @@ async function respond(customer: string) {
         notifyHandoff(customer, reason);
         return;
       }
-      const id = saveOrder({ customer, channel: channelOf(customer), ...decision.order });
+      const gaps = addressGaps(decision.order);
+      const id = saveOrder({
+        customer,
+        channel: channelOf(customer),
+        ...decision.order,
+        notes: [decision.order.notes, gaps.length ? `⚠️ ناقص: ${gaps.join("، ")}، شيكو بالمحادثة قبل ما تبعتو لدرب` : ""].filter(Boolean).join("\n"),
+      });
       const text = decision.messageToCustomer || DEFAULT_ORDER_MESSAGE;
       const wamid = await sendText(customer, text);
       saveMessage({ customer, role: "business", source: "ai", text, wamid });
       pauseAi(customer, `AI order #${id}: waiting for the team to confirm`);
       log(key, `order #${id} collected, team must confirm: ${orderOneLine(decision.order)}`);
       notifyOrder(id, customer, decision.order);
+      if (gaps.length) notify("order", `⚠️ <b>طلب #${id} ناقص: ${esc(gaps.join("، "))}</b>\nشيكو بالمحادثة وصلّحو الطلب قبل ما تبعتو لدرب.`);
     } else {
       if (!decision.silent) {
         const text = decision.messageToCustomer || DEFAULT_HANDOFF_MESSAGE;
