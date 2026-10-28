@@ -225,6 +225,12 @@ export function markTold(orderId: number) {
   }
 }
 
+// A shipment sent again (resendToDarb): what the customer was told about the old one counts for the new one.
+export function carryNotices(fromId: string, toId: string) {
+  const rows = db.prepare("SELECT stage FROM tracking_notices WHERE shipment_id = ?").all(fromId) as { stage: Stage }[];
+  for (const r of rows) if (!getNotice.get(toId, r.stage)) mark(toId, r.stage, "skipped", "resent shipment: told before");
+}
+
 // A shipment that changed customer (src/darbRedirect.ts): the new customer hasn't been told anything yet.
 export function forgetNotices(shipmentId: string) {
   db.prepare("DELETE FROM tracking_notices WHERE shipment_id = ?").run(shipmentId);

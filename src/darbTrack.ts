@@ -325,7 +325,7 @@ export async function fetchShipmentById(id: string): Promise<DarbShipmentRow | u
   return getRow.get(found._id) as DarbShipmentRow;
 }
 
-async function fetchShipment(number: string): Promise<DarbShipmentRow | undefined> {
+export async function fetchShipmentByNumber(number: string): Promise<DarbShipmentRow | undefined> {
   const n = shipmentNumber(number);
   if (!n) return undefined;
   const data = await darb<{ results: Shipment[] }>("GET", `/api/local/shipments?search=${encodeURIComponent(n)}&offset=0&limit=20`);
@@ -347,7 +347,7 @@ export async function linkDarb(orderId: number, number: string, force = false) {
   const order = loadOrder(orderId);
   if (!order) throw new Error("Unknown order");
   if (order.darb_id) throw new Error("الطلب مربوط بشحنة من قبل");
-  const row = await fetchShipment(number);
+  const row = await fetchShipmentByNumber(number);
   if (!row) throw new Error(`ما لقيت شحنة بالرقم ${shipmentNumber(number)} بدرب السبيل`);
   const other = orderFor(row.id);
   if (other) throw new Error(`الشحنة ${row.reference} مربوطة بالطلب #${other}`);
@@ -411,6 +411,9 @@ export function shipmentView(row: DarbShipmentRow) {
 }
 
 // The order's shipment with its timeline, fresh from Darb (the saved copy if Darb doesn't answer).
+// The shipment isn't at Darb any more: the dashboard offers to send it again (resendToDarb).
+export class ShipmentGone extends Error {}
+
 export async function trackOrder(orderId: number) {
   const order = loadOrder(orderId);
   if (!order?.darb_id) throw new Error("الطلب مش مربوط بشحنة");
@@ -419,10 +422,10 @@ export async function trackOrder(orderId: number) {
   // By Darb's id first: it stays the same when the number changes from "SH…" to the branch's number.
   const row =
     (await fetchShipmentById(order.darb_id).catch(() => undefined)) ??
-    (await fetchShipment(saved?.reference ?? ref ?? "").catch(() => undefined)) ??
+    (await fetchShipmentByNumber(saved?.reference ?? ref ?? "").catch(() => undefined)) ??
     saved;
   if (!row) {
-    throw new Error(
+    throw new ShipmentGone(
       `الشحنة ${ref ?? ""} مش موجودة عند درب السبيل هلأ (يمكن انلغت أو انحذفت من تطبيق درب). شيك بتطبيق درب، وإذا لازم ابعت الطلب من جديد أو اربطو برقم الشحنة الصح.`,
     );
   }

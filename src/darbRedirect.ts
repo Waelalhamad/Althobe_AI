@@ -16,11 +16,13 @@ import {
   intlPhone,
   loadOrder,
   products,
+  sendToDarb,
+  shipmentPreview,
   type OrderRow,
   type Zone,
 } from "./darb.js";
-import { fetchShipmentById, onShipmentStatus, syncDarb, type DarbShipmentRow } from "./darbTrack.js";
-import { forgetNotices } from "./tracking.js";
+import { fetchShipmentById, fetchShipmentByNumber, onShipmentStatus, syncDarb, type DarbShipmentRow } from "./darbTrack.js";
+import { carryNotices, forgetNotices } from "./tracking.js";
 import { db, stockName, type OrderItem, type Payment } from "./store.js";
 import { log } from "./scheduler.js";
 import { esc, notify } from "./telegram.js";
@@ -252,3 +254,43 @@ onShipmentStatus((row) => {
   const order = db.prepare("SELECT id FROM orders WHERE darb_id = ?").get(row.id) as { id: number } | undefined;
   if (order) void tellRedirectChance(order.id).catch(() => {});
 });
+
+// A shipment deleted at Darb by mistake (the order is still on): sent again with the same data in one click, and Darb
+// gives it a new number. Only once Darb itself says the shipment isn't there (or is cancelled): never two shipments.
+export async function resendToDarb(orderId: number) {
+  const order = loadOrder(orderId);
+  if (!order?.darb_id && !order?.darb_ref) throw new Error("الطلب مش مبعوت لدرب السبيل");
+  if (order.status === "cancelled") throw new Error("الطلب ملغي");
+  // Both lookups must answer (an error means Darb didn't answer: we don't know, so nothing is sent).
+  const byId = order.darb_id ? await fetchShipmentById(order.darb_id) : undefined;
+  const byNumber = byId ? undefined : order.darb_ref ? await fetchShipmentByNumber(order.darb_ref) : undefined;
+  const live = byId ?? byNumber;
+  if (live && live.status !== "cancelled") {
+    throw new Error(`الشحنة ${live.reference} لسا موجودة عند درب (${live.status}): ما بنبعتها مرتين.`);
+  }
+  // The same data as the first time: the city and area Darb had (our copy), the courier note, amount and payment.
+  const saved = order.darb_id ? (db.prepare("SELECT city, area FROM darb_shipments WHERE id = ?").get(order.darb_id) as { city: string; area: string } | undefined) : undefined;
+  const preview = await shipmentPreview(orderId);
+  const city = saved?.city || preview.guess?.city;
+  const area = saved?.area || preview.guess?.area;
+  if (!city || !area) throw new Error("ما عرفت المدينة والمنطقة من الشحنة القديمة: ابعتو من «ابعت لدرب السبيل» واختارهن.");
+  const oldId = order.darb_id;
+  const oldRef = order.darb_ref;
+  db.prepare("UPDATE orders SET darb_id = NULL, darb_ref = NULL, darb_status = NULL WHERE id = ?").run(orderId);
+  let shipment: { id: string; reference: string };
+  try {
+    shipment = await sendToDarb(orderId, { city, area, notes: preview.notes, total: preview.total, payment: preview.payment });
+  } catch (error) {
+    // Not sent: the order keeps its old shipment's number, as before.
+    db.prepare("UPDATE orders SET darb_id = ?, darb_ref = ? WHERE id = ?").run(oldId, oldRef, orderId);
+    throw error;
+  }
+  const note = `انبعت من جديد لدرب بدل الشحنة ${oldRef ?? ""} يلي انحذفت`;
+  db.prepare("UPDATE orders SET notes = trim(notes || char(10) || ?, char(10) || ' ') WHERE id = ?").run(note, orderId);
+  // The customer was already told it left: the new shipment doesn't tell them again.
+  if (oldId) carryNotices(oldId, shipment.id);
+  log("darb", `order #${orderId} resent to Darb: ${shipment.reference} (instead of ${oldRef ?? oldId})`);
+  notify("order", `🔁 <b>طلب #${orderId} انبعت من جديد لدرب</b>: ${esc(order.name)}\nالشحنة القديمة ${esc(oldRef ?? "")} مش موجودة عند درب، الجديدة ${esc(shipment.reference)}`);
+  void syncDarb().catch(() => {});
+  return shipment;
+}

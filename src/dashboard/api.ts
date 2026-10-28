@@ -9,7 +9,7 @@ import { dataPath, transcribe } from "../media.js";
 import { answerIfWaiting, answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
 import { notifyOrder } from "../orders.js";
 import { sendToDarb, shipmentPreview, shipmentQuote, updateDarbShipment, type ShipmentInput } from "../darb.js";
-import { darbMatches, darbMoney, linkDarb, PhoneMismatch, syncDarb, trackOrder, unlinkDarb } from "../darbTrack.js";
+import { darbMatches, darbMoney, linkDarb, PhoneMismatch, ShipmentGone, syncDarb, trackOrder, unlinkDarb } from "../darbTrack.js";
 import { leadsWorkbook, ordersWorkbook, sendDailySheet, sheetName, type SheetRange } from "../ordersSheet.js";
 import { approveLesson, ignoreLesson, lessonsView } from "../learning.js";
 import {
@@ -48,7 +48,7 @@ import * as queries from "./queries.js";
 import { findGroups, sendTest, telegramChatId, setMutedKinds, setTelegramChat, setTelegramToken, telegramStatus } from "../telegram.js";
 import { followUpSettings, followUpStats, saveFollowUpSettings } from "../followup.js";
 import { markTold, saveTrackingSettings, trackingSettings, trackingStats } from "../tracking.js";
-import { redirectCandidates, redirectMatches, redirectShipment, tellRedirectChance } from "../darbRedirect.js";
+import { redirectCandidates, redirectMatches, redirectShipment, resendToDarb, tellRedirectChance } from "../darbRedirect.js";
 import { generateReport, resolveAlert, runChecks, runReviews, saveSupervisorSettings, supervisorView } from "../supervisor.js";
 
 export const dashboardApi = express.Router();
@@ -474,7 +474,15 @@ dashboardApi.post("/orders/:id/darb/redirect", (req, res) =>
 );
 dashboardApi.post("/orders/:id/darb/unlink", (req, res) => darbRoute(res, async () => unlinkDarb(Number(req.params.id))));
 dashboardApi.get("/orders/:id/darb/matches", (req, res) => darbRoute(res, async () => darbMatches(Number(req.params.id))));
-dashboardApi.get("/orders/:id/darb/track", (req, res) => darbRoute(res, () => trackOrder(Number(req.params.id))));
+dashboardApi.get("/orders/:id/darb/track", async (req, res) => {
+  try {
+    res.json(await trackOrder(Number(req.params.id)));
+  } catch (error) {
+    // 410: Darb doesn't have the shipment any more; the dashboard offers to send it again.
+    res.status(error instanceof ShipmentGone ? 410 : 502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+dashboardApi.post("/orders/:id/darb/resend", (req, res) => darbRoute(res, () => resendToDarb(Number(req.params.id))));
 dashboardApi.post("/darb/sync", (_req, res) => darbRoute(res, () => syncDarb()));
 dashboardApi.get("/money", (req, res) =>
   darbRoute(res, () => darbMoney(Number(req.query.from) || undefined, Number(req.query.to) || undefined)),

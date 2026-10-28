@@ -365,6 +365,7 @@ export const api = {
   redirect: (id: number, body: { to: number; area: string; notes: string; total: number; payment: Payment }) =>
     post<{ ok: boolean; pickedUp: boolean; ownCancelled: string }>(`/orders/${id}/darb/redirect`, body),
   trackDarb: (id: number) => request<DarbTimeline>(`/orders/${id}/darb/track`),
+  resendDarb: (id: number) => post<{ id: string; reference: string }>(`/orders/${id}/darb/resend`),
   syncDarb: () => post<{ shipments: number; changes: number }>("/darb/sync"),
   money: (from?: number, to?: number) => request<Money>(`/money?${new URLSearchParams({ ...(from && { from: String(from) }), ...(to && { to: String(to) }) })}`),
   createOrder: (order: OrderInput & { customer?: string; status: OrderStatus; message?: string }) =>

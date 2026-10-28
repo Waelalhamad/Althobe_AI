@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Link2, Loader2, MapPin, Truck, X } from "lucide-react";
+import { Link2, Loader2, MapPin, RotateCcw, Truck, X } from "lucide-react";
 import { api, ApiError, type DarbTracked, type MoneyStage, type Order } from "../api";
 import { Badge, Button, ErrorNote } from "./ui";
 import { DARB_STATUS } from "./DarbSend";
@@ -127,7 +127,11 @@ export function DarbLink({ order, onClose }: { order: Order; onClose: () => void
 // Where the shipment is: Darb's timeline, fresh, and its money.
 export function DarbTrackView({ order, onClose }: { order: Order; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const track = useQuery({ queryKey: ["darb-track", order.id], queryFn: () => api.trackDarb(order.id) });
+  const track = useQuery({
+    queryKey: ["darb-track", order.id],
+    queryFn: () => api.trackDarb(order.id),
+    retry: (n, error) => !(error instanceof ApiError && error.status === 410) && n < 2,
+  });
   const unlink = useMutation({
     mutationFn: () => api.unlinkDarb(order.id),
     onSuccess: () => {
@@ -136,6 +140,15 @@ export function DarbTrackView({ order, onClose }: { order: Order; onClose: () =>
     },
   });
   const [confirmUnlink, setConfirmUnlink] = useState(false);
+  // Darb doesn't have the shipment any more (deleted by mistake): sent again with the same data, a new number.
+  const gone = track.error instanceof ApiError && track.error.status === 410;
+  const resend = useMutation({
+    mutationFn: () => api.resendDarb(order.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      void queryClient.invalidateQueries({ queryKey: ["darb-track", order.id] });
+    },
+  });
   const s = track.data;
 
   return (
@@ -153,6 +166,19 @@ export function DarbTrackView({ order, onClose }: { order: Order; onClose: () =>
         </div>
       )}
       <ErrorNote error={track.error} />
+      {gone && (
+        <div className="flex flex-col gap-2 rounded-xl bg-card-2 p-3 text-sm">
+          <p>إذا انحذفت بالغلط: ابعتها من جديد لدرب بنفس البيانات (المدينة والمنطقة والعنوان والمبلغ والدفع)، ودرب بيعطيها رقم جديد.</p>
+          <ErrorNote error={resend.error} />
+          {resend.data ? (
+            <Badge tone="ok">انبعتت من جديد: {resend.data.reference}</Badge>
+          ) : (
+            <Button onClick={() => resend.mutate()} disabled={resend.isPending} className="self-start">
+              {resend.isPending ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />} ابعتها من جديد لدرب
+            </Button>
+          )}
+        </div>
+      )}
       {s && (
         <>
           <div className="rounded-xl bg-card-2 p-3">
