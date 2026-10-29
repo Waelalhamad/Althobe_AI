@@ -20,7 +20,7 @@ export type MessageCreatedEvent = {
 };
 
 const DEFAULT_HANDOFF_MESSAGE = "حاضر، لحظة نتأكدلك ونرجعلك 🙏";
-const DEFAULT_ORDER_MESSAGE = "تمام، تم الحجز 🙏 شويه ونتواصلو معاك لتأكيد التوصيل";
+const DEFAULT_ORDER_MESSAGE = "تم الحجز استاذ 🙏 الفريق يتواصل معاك لتأكيد موعد التوصيل. ترجع بسلامة.";
 
 const seenMessageIds = new Map<number, number>(); // message id -> time seen
 

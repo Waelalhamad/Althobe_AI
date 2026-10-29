@@ -207,7 +207,7 @@ export function overview(days: number) {
 
 export type ConversationFilter = "all" | "unanswered" | "ai" | "paused" | "handoff";
 
-// Conversations (WhatsApp, Messenger, Instagram), newest activity first.
+// Conversations (WhatsApp, Messenger, Instagram), newest activity first (urgent handoffs before them).
 export function conversations(opts: { filter: ConversationFilter; q: string; limit: number }) {
   const now = Date.now();
   const where: string[] = [];
@@ -246,9 +246,10 @@ export function conversations(opts: { filter: ConversationFilter; q: string; lim
        SELECT c.*, p.until AS paused_until, p.reason AS pause_reason, k.wa_name AS name
        FROM c LEFT JOIN pauses p ON p.customer = c.customer LEFT JOIN customers k ON k.customer = c.customer
        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-       ORDER BY c.last_at DESC LIMIT ?`,
+       -- Urgent handoffs (about an order already confirmed or sent) first, while the team hasn't answered.
+       ORDER BY (p.until > ? AND p.reason LIKE 'AI handoff: عاجل%') DESC, c.last_at DESC LIMIT ?`,
     )
-    .all(...params, opts.limit) as Record<string, unknown>[];
+    .all(...params, now, opts.limit) as Record<string, unknown>[];
 
   return rows.map((r) => ({
     customer: r.customer as string,

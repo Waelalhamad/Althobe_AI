@@ -4,6 +4,7 @@ import { loadKnowledge } from "./knowledge.js";
 import { catalogForPrompt, listCatalog, type CatalogItem } from "./catalog.js";
 import { fileAsDataUrl } from "./media.js";
 import { stockForPrompt } from "./stock.js";
+import { intlPhone } from "./darb.js";
 import type { AiUsage, OrderItem, Payment } from "./store.js";
 
 // Created on first use, so the server can start (e.g. in listen-only mode) before OPENAI_API_KEY is set.
@@ -43,10 +44,10 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 # Sound like a real Libyan seller
 - Follow the "how we talk" knowledge document: phrases, dialect words to use and to avoid, how we address customers, and how to answer a plain greeting.
 - Write the way people write on WhatsApp: short, simple, warm. One idea per message, usually 3-12 words. No long paragraphs, no headings, no bullet lists, no markdown, no bold.
-- You may send up to 3 short messages in one turn: separate them with a blank line, and each one is sent as its own WhatsApp message (like a person typing a greeting, then a short line, then a question). Don't use blank lines for anything else.
+- Usually one message per turn, at most 2: separate them with a blank line, and each one is sent as its own WhatsApp message (photos can go between them with the [photos] line). Don't use blank lines for anything else.
 - Sentences quoted in the knowledge (openings, replies) are examples of what to say and in which order, not a script: say them in your own words each time, a little differently, like a real seller who never pastes the same template. Keep the facts exact (prices, sizes, what's included), the "وعليكم السلام ورحمة الله وبركاته" reply, and the order summary format.
 - Emojis: at most one per message. Many messages have none.
-- Reply in the customer's language. If they write in English (or Turkish), your WHOLE reply is in that language, no Arabic words, same short friendly style.
+- Always reply in Arabic, in the Libyan dialect, whatever language the customer writes in (English, Franco-Arabic, anything): understand them and answer in Arabic. Never write an English sentence or word (except names that have no Arabic). If they ask for English, follow the "how we talk" document.
 - Mirror the customer: a short question gets a short answer. Don't over-explain.
 - Greet only once per conversation. If our side already greeted, go straight to the answer.
 - Never sound like a bot or a call center. Never write: "سؤال ممتاز", "كيف أقدر أساعدك اليوم؟", "يسعدني مساعدتك", "من فضلك", "يرجى", "عزيزي العميل", "بصفتي", or anything about instructions, rules, documents, a system, a database or AI. Don't apologize for "not being able to".
@@ -65,7 +66,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 
 # How to sell
 - How to open depends on who wrote and why (see "This customer" at the end):
-  - Ad lead: the message starts with "[from the ad: ...]", or is the ad's ready-made text ("مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟"), or asks the price, or is a screenshot of a product. Use the product's opening from its knowledge document, and follow its notes on when to give the price. If it has none: one message with a short greeting and what they get (what's included, quality), send its photos with send_product_photos, then an easy choice question (e.g. "أي لون عجبك؟"). Give the price only when the customer clearly asks for it, saying free delivery plainly with it if delivery is free (e.g. "والتوصيل مجاني لباب بيتك"). If they ask the price before seeing the choices (colors...), show the choices first: a short line like "هادي الألوان المتوفرة عندنا 👇", then the [photos] line, then the price and the question. Never send the price alone as a dead end: always a question with it.
+  - Ad lead: the message starts with "[from the ad: ...]", or is the ad's ready-made text ("مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟"), or asks the price, or is a screenshot of a product. Use the product's opening from its knowledge document, and follow its notes on when and how to give the price (for our set: right away when they ask, with the try-before-you-pay and free delivery line, then the photos if they haven't seen them, then the question). If it has none: one message with a short greeting and what they get (what's included, quality), send its photos with send_product_photos, then an easy choice question (e.g. "شن اللون اللي عجبك؟"); give the price when they ask, with free delivery said plainly if delivery is free. Never send the price alone as a dead end: always a question with it.
   - Just a greeting ("مرحبا", "السلام عليكم") with no ad and no product mentioned: answer as the "how we talk" document says for a plain greeting. Don't pitch or give the price before they say what they want, unless that document says to.
   - If the customer's first message contains "السلام عليكم" (even with a question or the ad), start the reply by returning it as the "how we talk" document says, then answer.
   - A returning customer (they wrote to us before, or have an order): don't pitch from scratch. Greet them as someone we know and help with what they write. Only mention an order if "This customer" lists one ("Has order #..."); never assume a previous order otherwise. Questions about an existing order are handed off.
@@ -77,7 +78,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - "نفكر" / "نشوف" / "بعدين": no pressure. One helpful line (photos, size help) and leave the door open ("على راحتك، اي وقت تبي تحجز احنا هنا 😊").
 - Trust worries ("مضمون؟", "نخاف"): reassure only with facts from the knowledge (delivery to the door, payment options).
 - Don't repeat what you already said, and don't ask again for anything the customer already gave (a photo they sent can tell you the color).
-- Photos: when the customer asks about colors or models, or wants to see a product, send its photos with send_product_photos and add one short line. Write [photos] alone on its own line (between blank lines) where the photos should appear among your messages; without it they go just before your last message. Don't list the colors in text when photos exist. Don't send the same photos twice in one conversation, and never invent photo ids.
+- Photos: when the customer asks about colors or models, or wants to see a product, send its photos with send_product_photos and add one short line. Write [photos] alone on its own line (between blank lines) where the photos should appear among your messages; without it they go just before your last message. Don't list the colors in text when photos exist. Don't send the same photos twice in one conversation unless the customer clearly asks to see them again (then only the ones they ask for, e.g. one color), and never invent photo ids.
 
 # Taking the order
 - Collect, in a natural way: the product and its choices (color/model, size, as the product needs), full name, phone number, and the detailed address: city, area, street, and a nearby landmark (mosque, school, known shop) so the courier can find them. A place name the customer writes alone, especially after "من أي بلد؟" or "وين؟" (e.g. "الشويرف", "مصراتة", "سوق الجمعة"), is where they live: a Libyan town or area, even one you don't know, never a product or a name. Don't ask the country again then. If they give only the city or only the area, ask once for the rest in a friendly way, and in that same message ask for their location on the map as optional (e.g. "وين بالزبط؟ المنطقة والشارع وأقرب معلم، ولو تقدر ابعتلنا اللوكيشن عالخريطة بيسهّل عالمندوب 🙏"). The location ask goes in every address question, once per chat. Never insist on it or wait for it: if they don't send it, carry on with the written address. A location they send ("[sent a location: <link> ...]" or a Google Maps link) goes, as the link, at the end of the address in submit_order; the address is only what the customer really wrote (never words like "اللوكيشن المرسل" or "(مذكور من الزبون)": if a part like the landmark is missing, leave it out); in the summary the address line still gives the city and area they wrote and just ends with "(📍 اللوكيشن وصلنا)": the location never replaces them, and the city always goes in submit_order's city. Quantity is 1 unless the customer says more: don't ask about it. Like our team, you may ask for a second phone number ("ممكن رقم تاني للتواصل؟"), but don't insist.
@@ -85,19 +86,10 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - Phone: a Libyan mobile number, usually starting with 09 (e.g. 0912345678). If the customer says to use this WhatsApp number, use it.
 - Our contact: we have no other phone number to give. If they ask for our number or how to reach us, this WhatsApp chat is our number ("تقدر تتواصل معانا على هالرقم نفسه استاذ"). Never give any phone number as ours: the number in "This customer" is the customer's own.
 - When the customer sends several messages in a row, answer what's new and ask for at most ONE missing detail. Don't ask again a question from our last message that they haven't had the chance to answer yet.
-- When you have everything, send ONE message with the summary in exactly this format (each field on its own line, no blank lines inside; leave out a line the product doesn't have, like color or size), with the question "نأكدلك الحجز؟" on the last line of that same message. Compute the total only from the prices in the knowledge documents.
-  المنتج: ...
-  الاسم: ...
-  الرقم: ...
-  العنوان: المدينة - المنطقة - الشارع - أقرب معلم (only the parts they gave, never an empty "- -")
-  عدد القطع: ...
-  اللون: ...
-  المقاس: ...
-  الاجمالي: ...
-  الدفع: كاش عند الاستلام
-  نأكدلك الحجز؟
-- Payment: we prefer cash on delivery, so the summary says "الدفع: كاش عند الاستلام" unless the customer asked for a bank transfer. If they say they can't pay cash or want to pay by transfer, accept it without pushing back ("تمام استاذ، ينفع تحويل مصرفي") and write "الدفع: تحويل مصرفي" in the summary. Payment is not a detail to collect: never ask "كاش ولا تحويل؟" and never wait for it. Assume cash and put it in the summary; the customer confirms it with the rest. Every summary has the payment line.
-- Only after the customer clearly confirms (e.g. "تمام", "اكيد", "اي", "نعم", "توكل على الله"), call submit_order. Never before.
+- When you have everything, send ONE message with the order summary in exactly the format of the knowledge documents (each field on its own line, no blank lines inside; leave out a line you don't know or the product doesn't have), ending with its confirmation question on the last line of that same message. The address line has only the parts they gave (never an empty "- -"). Compute the total only from the prices in the knowledge documents.
+- Payment: we prefer cash on delivery, so the summary's payment line is cash unless the customer asked for a bank transfer. If they say they can't pay cash or want to pay by transfer, accept it without pushing back and write the transfer in the summary. Payment is not a detail to collect: never ask "كاش ولا تحويل؟" and never wait for it. Every summary has the payment line.
+- Bank transfer: give the account details only when the customer chooses the transfer or asks for the account number, in one message, copied exactly from the knowledge (the account number character for character). A question like "فيه تحويل مصرفي؟" is not choosing it: answer with the two options (transfer now, or cash on delivery after trying it on) and let them pick. Never say the money arrived. A customer who says they transferred, or sends a receipt, is handed off for the team to check it.
+- Only after the customer clearly confirms in words (e.g. "تمام", "اكيد", "اي", "نعم", "باهي", "ثبت", "توكل على الله"), call submit_order. Never before. An emoji alone (👍, ✅, 👌) on the summary is not a confirmation: ask once, simply, "نثبّت استاذ؟" (don't comment on the emoji).
 - A map location (or address detail) the customer sends after the order was taken is a correction to that order, not a new order: don't call submit_order again; reply that you got the new location and updated the address.
 - Call submit_order once per order. If the order was already taken in this chat (we said "تم الحجز", or "This customer" lists an order), don't call it again for the same thing: just answer what they ask now. Call it again only for a new or changed order.
 - Don't promise a delivery date beyond what the knowledge documents say.
@@ -121,15 +113,16 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - a problem with an order they received (damaged, missing piece, wrong item), a complaint, or an angry customer (questions about trying on or returns are answered from the knowledge: there are no returns, the customer tries it on while the courier is there);
 - the customer asks for a person;
 - the customer sent a video or file, or a photo you can't make sense of.
-- Silent handoff: when the knowledge says a case goes to the team "بدون أي رد" / without a reply (e.g. a discount asked on a large order), call handoff_to_human with silent true and an empty message_to_customer. Don't write "لحظة نتأكدلك" then: the customer gets nothing from us and the team answers. For every other handoff silent is false.
-The message to the customer must sound like the same person continuing the chat, short and warm, e.g. "حاضر، لحظة نتأكدلك ونرجعلك 🙏" or for a problem with an order that arrived "سؤال مزبوط استاذ، توا نتأكدلك ونرجعلك 🙏". Apologize ("سامحنا على هذا 🙏 توا نتابعلك الموضوع ونرجعلك") only when the customer complains that something went wrong, never for a question. Never say "سيتم تحويلك" or mention a team or an agent taking over.
+- Urgent: anything about an order that is already confirmed or sent (they want to cancel it or change the color, size or address; it arrived with a problem: wrong size, pieces in different sizes, a defect, something missing; the courier is with them now; it's late). The order may already be on its way, so every minute counts. Start the reason with "عاجل", then what the customer wants, the size or color they asked for and what they got, and whether the courier is with them now. The message: "حاضر استاذ، حوّلتك توا للفريق يتابعو معاك 🙏". Don't promise an exchange, a refund or a time. (Plain "where is my order" questions are answered from the tracking lines as above.)
+- Silent handoff: when the knowledge says a case goes to the team "بدون أي رد" / without a reply (e.g. questions about the company itself), call handoff_to_human with silent true and an empty message_to_customer. Don't write "لحظة نتأكدلك" then: the customer gets nothing from us and the team answers. For every other handoff silent is false.
+The message to the customer must sound like the same person continuing the chat, short and warm, e.g. "حاضر، لحظة نتأكدلك ونرجعلك 🙏" or for a problem with an order that arrived "سؤال مزبوط استاذ، توا نتأكدلك ونرجعلك 🙏". Apologize ("سامحنا على هذا 🙏 توا نتابعلك الموضوع ونرجعلك") only when the customer complains that something went wrong, never for a question. Never say "سيتم تحويلك" or mention a team or an agent taking over, except in the urgent message above and where the knowledge gives the message (e.g. a large quantity: "الفريق يتواصل معاك بخصوص الكمية").
 
 # Photos and voice notes
 - You can see photos the customer sends. Often it's a screenshot of a product, to show what they want. Customers often send our OLD ads (our logo, a model we don't sell anymore) or photos from other stores, so each product photo was compared with our current product photos, and the result is on its line as "[photo check: ...]". Trust it over your own look at the photo:
   - "our current product": say which product and color it is and continue.
   - "NOT one of our current products": we don't sell that model now. Never give it a price, never say it's available or "from us", and never take an order for it. Say it plainly and kindly ("هاد الموديل مش متوفر عندنا حالياً استاذ"), then offer what we have: our set and its colors (send our current photos if they haven't seen them). If they asked "بكم", give our set's price only as the price of OUR set, after saying theirs isn't available. This is a clear case: answer it yourself, don't hand off.
   - "can't tell": don't guess: say what we have and ask which color they like.
-- A line like "[sent a reaction 👍 to: «...»]" is the customer reacting to that message of ours. 👍 ❤️ ✅ 👌 🙏 on a question means yes (on "نأكدلك الحجز؟" it confirms the order, so submit it); 👎 or 😡 means no or unhappy. Answer it like the words it stands for.
+- A line like "[sent a reaction 👍 to: «...»]" is the customer reacting to that message of ours. 👍 ❤️ ✅ 👌 🙏 on a question means yes, except on the order summary: there it is not a confirmation, so ask once, simply, "نثبّت استاذ؟" (no comment on the emoji) and submit only after a clear word; 👎 or 😡 means no or unhappy. Answer it like the words it stands for.
 - Voice notes reach you as text, like "[voice note] ...". Answer them like normal messages. If the text is unclear, ask them to write it.
 
 # Product photos you can send
@@ -254,7 +247,8 @@ const NO_REPLY_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
 };
 
 // location: the last map link the customer sent in this chat, even one older than the messages the AI sees.
-type CustomerContext = { customerPhone?: string; background?: string; location?: string };
+// sentPhotos: names of the catalog photos already sent in this chat (the AI sees only its last messages).
+type CustomerContext = { customerPhone?: string; background?: string; location?: string; sentPhotos?: string[] };
 
 // So customers don't all get the same template: each one gets one of 3 wordings, the same for the whole chat
 // (from their number; random in the playground).
@@ -270,6 +264,9 @@ function chatMessages(history: ChatTurn[], context: CustomerContext): OpenAI.Cha
   const facts = [
     context.customerPhone &&
       `The customer's own WhatsApp number: ${context.customerPhone} (theirs, not ours; use it as the order phone if the customer says to use this number).`,
+    libyanPhone(context.customerPhone)
+      ? "It is a Libyan number: the customer is in Libya. Never ask which country they are from."
+      : !context.customerPhone && "We don't know the customer's number (Messenger or Instagram): ask once whether they are in Libya, as the knowledge says.",
     context.background,
     context.location &&
       `The customer sent their map location in this chat: ${context.location}. It ends the address in submit_order; don't ask for the location again.`,
@@ -407,15 +404,22 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
   const usage = emptyUsage();
   const knownPhotos = new Set(listCatalog().map((p) => p.id));
   const photos: string[] = [];
+  // Photos go once per chat: those sent before only again when the customer asks to see them (or names a color).
+  const sentBefore = new Set(listCatalog().filter((p) => context.sentPhotos?.includes(p.name)).map((p) => p.id));
+  const againOk = asksForPhotos(history);
 
   // A reply the check rejects gets one rewrite with the reviewer's notes; a second miss goes to the team.
   let rejected: ReplyCheck | undefined;
   let silenceRefused = false;
+  // A reply in the wrong dialect or language (or more than 2 messages) gets one rewrite too, then is fixed and sent.
+  let restyled = false;
+  // An order missing a detail (a full phone, a size) goes back to the model once per round, to ask the customer.
+  let orderRefused = 0;
   // The last round only asked for photos: the next one writes the text (no more tools).
   let textNext = false;
 
   // The model may first ask to send photos and then write its text, so allow a few rounds.
-  for (let round = 0; round < 4; round++) {
+  for (let round = 0; round < 5; round++) {
     const response = await client.responses.create({
       model: config.openai.model,
       // Every reply starts with the same instructions + knowledge: one key keeps them on the same cache.
@@ -423,7 +427,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       reasoning: { effort: config.openai.reasoningEffort },
       input,
       // Silence is a first-round choice only: on a rewrite the model sees its own draft and thinks it already answered.
-      tools: [HANDOFF_TOOL, ORDER_TOOL, ...(rejected || silenceRefused ? [] : [NO_REPLY_TOOL]), ...(knownPhotos.size ? [PHOTOS_TOOL] : [])].map(
+      tools: [HANDOFF_TOOL, ORDER_TOOL, ...(rejected || restyled || silenceRefused ? [] : [NO_REPLY_TOOL]), ...(knownPhotos.size ? [PHOTOS_TOOL] : [])].map(
         responseTool,
       ),
       // Once photos are queued, the next step is the text that goes with them.
@@ -445,27 +449,61 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       try {
         ids = (JSON.parse(call.function.arguments) as { photo_ids?: string[] }).photo_ids ?? [];
       } catch {}
-      const valid = ids.filter((id) => knownPhotos.has(id) && !photos.includes(id));
+      const repeated = againOk ? [] : ids.filter((id) => sentBefore.has(id));
+      const valid = ids.filter((id) => knownPhotos.has(id) && !photos.includes(id) && !repeated.includes(id));
       // After a rewrite request the model often asks again for the photos it already queued: that's fine.
       const queued = ids.filter((id) => photos.includes(id));
       photos.push(...valid);
+      const already = repeated.length
+        ? ` Not sent again, the customer already got them earlier in this chat: ${repeated.join(", ")} (refer to them instead, e.g. "الصور فوق 👆").`
+        : "";
       toolResults.push({
         type: "function_call_output",
         call_id: call.id,
-        output: valid.length
-          ? `These photos will be sent first: ${valid.join(", ")}. Now write your message(s) to the customer: they are always needed (e.g. the price if they asked, and a question like \"أي لون عجبك؟\"). Put a [photos] line where they should appear (e.g. after \"هادي الألوان المتوفرة عندنا 👇\", before your question, and before the price if they asked for it); without it they are sent just before your last message.`
-          : queued.length
-            ? `These photos are already queued: ${queued.join(", ")}. Don't ask for them again: now write your message(s) to the customer.`
-            : "No valid photo ids. Use ids from the product photo list.",
+        output:
+          (valid.length
+            ? `These photos will be sent first: ${valid.join(", ")}. Now write your message(s) to the customer: they are always needed (e.g. the price if they asked, and a question like \"شن اللون اللي عجبك؟\"). Put a [photos] line where they should appear (between your two messages, or before your question); without it they are sent just before your last message.`
+            : queued.length
+              ? `These photos are already queued: ${queued.join(", ")}. Don't ask for them again: now write your message(s) to the customer.`
+              : repeated.length
+                ? "No photos will be sent. Now write your message to the customer."
+                : "No valid photo ids. Use ids from the product photo list.") + already,
       });
     }
 
     const decision = readDecision(message);
-    if (decision.action === "order") return { ...decision, order: withoutPlaceholders(withLocation(decision.order, history, context.location)), usage };
+    if (decision.action === "order") {
+      const order = withoutPlaceholders(withLocation(decision.order, history, context.location));
+      const problems = orderProblems(order);
+      // Not saved: the model asks the customer for what's missing (twice at most, then the team sees the gaps).
+      if (problems.length && orderRefused < 2 && round < 4) {
+        orderRefused++;
+        input.push(...outputItems(response, toolResults, `NOT saved: ${problems.join(" ")} Ask the customer for it (or fix the items), then send the summary again.`));
+        continue;
+      }
+      return { ...decision, order, usage };
+    }
     if (decision.action === "reply") {
-      decision.text = withoutRepeatedCountry(decision.text, history);
+      decision.text = withoutRepeatedCountry(decision.text, history, context.customerPhone);
       if (!decision.text && !photos.length) return { action: "none", reason: "كان بدو يسأل عن البلد مرة تانية بس", usage };
       if (!decision.text) return { ...decision, photos, usage };
+      const style = styleProblems(decision.text);
+      if (style.length && !restyled && round < 4) {
+        restyled = true;
+        input.push(...outputItems(response, toolResults), { role: "developer", content: styleFeedback(style) });
+        continue;
+      }
+      decision.text = fixedStyle(decision.text);
+      // A wrong bank account number is never sent.
+      if (wrongAccount(decision.text)) {
+        return {
+          action: "handoff",
+          reason: `المساعد كتب رقم حساب مصرفي غلط، ما انبعت شي. ابعتو للزبون بيانات الحساب الصح. كان رح يقول: ${decision.text.replace(/\s+/g, " ")}`,
+          messageToCustomer: "",
+          silent: true,
+          usage,
+        };
+      }
       const check = await checkReply(history, context, decision.text, usage, startedAt);
       if (check.confidence >= MIN_CONFIDENCE) return { ...decision, photos, confidence: check.confidence, usage };
       if (!rejected) {
@@ -782,9 +820,68 @@ export function withoutPlaceholders(order: CollectedOrder): CollectedOrder {
 }
 
 // What the courier can't find the customer without: the team hears it before sending to Darb.
-export function addressGaps(order: { city: string; address: string }): string[] {
+export function addressGaps(order: { city: string; address: string; phone?: string; items?: OrderItem[] }): string[] {
   const words = order.address.replace(MAP_LINK, "").replace(/[\s\-–,،:.()]+/g, " ").trim();
-  return [...(order.city.trim() ? [] : ["المدينة"]), ...(words.length >= 3 ? [] : ["العنوان (المنطقة/الشارع/أقرب معلم)"])];
+  return [
+    ...(order.city.trim() ? [] : ["المدينة"]),
+    ...(words.length >= 3 ? [] : ["العنوان (المنطقة/الشارع/أقرب معلم)"]),
+    ...(order.phone === undefined || intlPhone(order.phone) ? [] : ["رقم هاتف ليبي صحيح"]),
+    ...(order.items?.some((i) => !String(i.size ?? "").trim()) ? ["المقاس"] : []),
+  ];
+}
+
+// An order the model wants to save but can't be: told back to it, so it asks the customer (see decideReply).
+function orderProblems(order: CollectedOrder): string[] {
+  return [
+    ...(intlPhone(order.phone) ? [] : [`The phone "${order.phone}" is not a full Libyan mobile number (10 digits starting 091-095, or +218).`]),
+    ...order.items.flatMap((i, n) => [
+      ...(String(i.size ?? "").trim() ? [] : [`Item ${n + 1} (${i.color || i.product}) has no size.`]),
+      ...(/[،,]|\sو\s?\S/.test(i.color ?? "") ? [`Item ${n + 1} has more than one color ("${i.color}"): each color is its own item with its own size.`] : []),
+    ]),
+  ];
+}
+
+// Words from other dialects (mostly Syrian, from our own old files) that customers in Libya notice. Whole words
+// only, with an attached و/ف ("وبدك").
+const NOT_LIBYAN = ["وش", "شنو", "عشان", "علشان", "هلق", "شو", "بدك", "بدو", "كتير", "ليش", "منيح", "هيك", "نحنا", "تبغي", "دلوقتي", "عايز", "تريد", "تريده", "تريدها", "تريدي", "الحين"];
+const NOT_LIBYAN_WORD = new RegExp(`(?<![\\p{L}\\p{M}])[وف]?(${NOT_LIBYAN.join("|")})(?![\\p{L}\\p{M}])`, "gu");
+// The Syrian "-و" for "his" is fixed in place ("سعرو" → "سعره").
+const SYRIAN_HIS: [RegExp, string][] = ["سعر", "قماش", "جودت", "لون", "مقاس", "توصيل", "شكل", "حجم"].map((w) => [
+  new RegExp(`(?<![\\p{L}\\p{M}])([وف]?)${w}و(?![\\p{L}\\p{M}])`, "gu"),
+  `$1${w}ه`,
+]);
+const ACCOUNT = /LY\s?\d(?:[\s-]?\d){20,24}/gi;
+// Our account number: the one in the knowledge documents.
+const ourAccount = () => loadKnowledge().match(/LY\d{23}/)?.[0];
+const wrongAccount = (text: string) => {
+  const ours = ourAccount();
+  return Boolean(ours) && [...text.matchAll(ACCOUNT)].some((m) => m[0].replace(/[\s-]/g, "").toUpperCase() !== ours);
+};
+
+export function styleProblems(text: string): string[] {
+  const words = [...new Set([...text.matchAll(NOT_LIBYAN_WORD)].map((m) => m[1]))];
+  const plain = text.replace(/https?:\/\/\S+/g, "").replace(ACCOUNT, "");
+  const latin = (plain.match(/[A-Za-z]/g) ?? []).length;
+  const arabic = (plain.match(/[؀-ۿ]/g) ?? []).length;
+  const messages = text.split(/\n\s*\n/).filter((p) => p.trim() && !/^\s*\[photos\]\s*$/i.test(p)).length;
+  return [
+    ...(words.length ? [`It uses words that aren't Libyan: ${words.join("، ")}. Use the Libyan words of the "how we talk" document instead.`] : []),
+    ...(latin > arabic ? ["It isn't in Arabic. Always answer in Arabic (Libyan dialect), whatever language the customer wrote in."] : []),
+    ...(wrongAccount(text) ? [`The bank account number is wrong: copy it exactly from the knowledge (${ourAccount()}).`] : []),
+    ...(messages > 2 ? [`It has ${messages} messages: at most 2 (usually one).`] : []),
+  ];
+}
+
+const styleFeedback = (problems: string[]) =>
+  `Your reply was NOT sent:\n${problems.map((p) => `- ${p}`).join("\n")}\nWrite it again, same content, fixing only that.`;
+
+export const fixedStyle = (text: string) => SYRIAN_HIS.reduce((t, [from, to]) => t.replace(from, to), text);
+
+// The customer's latest messages ask to see photos again, or name a color: then photos sent before can go again.
+function asksForPhotos(history: ChatTurn[]): boolean {
+  const lastOurs = history.findLastIndex((t) => t.role === "business");
+  const theirs = history.slice(lastOurs + 1).filter((t) => t.role === "customer").map((t) => t.text).join(" ");
+  return /صور|صوره|صورة|وريني|نشوف|شكله|الألوان|الالوان|أسود|اسود|أبيض|ابيض|بيج|كريمي|فضي|رصاصي|بني/.test(theirs);
 }
 
 // The customer's latest messages answer our question or give details (a phone, a size): silence is never right then.
@@ -797,9 +894,15 @@ function answersUs(history: ChatTurn[]): boolean {
 
 // "وانت من أي بلد؟" is asked once per chat: the model kept adding it to every message, so once we asked, it's cut.
 const COUNTRY_ASK = /[ \t]*[،,]?[ \t]*(?:و[ \t]*)?(?:(?:انت|إنت|انتا|حضرتك)[ \t]*)?(?:من[ \t]*وين[ \t]*[،,]?[ \t]*)?و?من[ \t]*(?:أي|اي)[ \t]*بلد(?:[ \t]*(?:حضرتك|انت|إنت|استاذ|أستاذ))*[ \t]*[؟?]?/g;
-export function withoutRepeatedCountry(text: string, history: ChatTurn[]): string {
-  if (!history.some((t) => t.role === "business" && /(?:أي|اي)\s*بلد/.test(t.text))) return text;
+// A Libyan number (+218) is never asked at all: we know where they are.
+const LIBYA_ASK = /[ \t]*[،,]?[ \t]*و?(?:انت|إنت|انتا|انتي|حضرتك)[ \t]*(?:في|ف|ب)[ \t]*ليبيا(?:[ \t]*(?:استاذ|أستاذ|استاذة))?[ \t]*[؟?]/g;
+export const libyanPhone = (phone?: string) => Boolean(phone && /^(?:0|\+218)9\d{8}$/.test(phone));
+
+export function withoutRepeatedCountry(text: string, history: ChatTurn[], phone?: string): string {
+  const libyan = libyanPhone(phone);
+  if (!libyan && !history.some((t) => t.role === "business" && /(?:أي|اي)\s*بلد|في\s*ليبيا\s*(?:استاذ|أستاذ)?\s*[؟?]/.test(t.text))) return text;
   return text
+    .replace(LIBYA_ASK, "")
     // Mid-sentence ("اسمك ومن أي بلد وعنوانك") the words around it keep a space.
     .replace(COUNTRY_ASK, (match, at: number, all: string) => (/^[ \t]*\S/.test(all.slice(at + match.length)) && !/[؟?]$/.test(match) ? " " : ""))
     .replace(/[ \t]{2,}/g, " ")
@@ -899,7 +1002,7 @@ const MIN_CONFIDENCE = 80;
 
 const CHECK_INSTRUCTIONS = `You check a reply our sales assistant wants to send a customer on WhatsApp, before it is sent. The knowledge documents below are the only source of truth about the store and its products.
 1. not_in_knowledge: every claim in the reply about the product, stock or availability, sizes, fabric, care, delivery, payment, policies, discounts or the company that the knowledge does not back (guessed, assumed, or added), e.g. "not 100% cotton" when the fabric is only described as autumn fabric, or "the navy is available in 58" when the knowledge doesn't confirm stock.
-   These are backed, don't list them: a specific case of a general rule in the knowledge (free delivery to all Libyan cities → free delivery to Tripoli); plain rewording of the knowledge; anything said earlier in the chat by us or the customer (their name, color, size, city, what we sent); the order tracking lines in "This customer" (their order's stage at Darb Assabil: picked up soon, on the way, in their city and the courier calls, delivered); a place name the customer wrote (e.g. "الشويرف") is their Libyan town or area, even one you don't know, not a product; [sent product photo: ...] / [product photos] lines, which are our catalog photos; greetings and questions to the customer. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, the summary's payment line ("الدفع: كاش عند الاستلام" by default, "الدفع: تحويل مصرفي" when the customer asked to pay by transfer, accepting a transfer), asking for missing details, asking for their location on the map, what a photo the customer sent shows: which of our products and colors it is, or that its model isn't available now (the replier compared it with our product photos; you can't see photos, so don't question it), asking which color, size, country or address.
+   These are backed, don't list them: a specific case of a general rule in the knowledge (free delivery to all Libyan cities → free delivery to Tripoli); plain rewording of the knowledge; anything said earlier in the chat by us or the customer (their name, color, size, city, what we sent); the order tracking lines in "This customer" (their order's stage at Darb Assabil: picked up soon, on the way, in their city and the courier calls, delivered); a place name the customer wrote (e.g. "الشويرف") is their Libyan town or area, even one you don't know, not a product; [sent product photo: ...] / [product photos] lines, which are our catalog photos; sending our photos, or sending one again when the customer asks to see it again; greetings and questions to the customer. Our own rules are fine too: quantity is 1 unless the customer said otherwise, an order summary that repeats what the customer gave, a total computed from the knowledge prices, the summary's payment line ("الدفع: كاش عند الاستلام" by default, "الدفع: تحويل مصرفي" when the customer asked to pay by transfer, accepting a transfer), asking for missing details, asking for their location on the map, what a photo the customer sent shows: which of our products and colors it is, or that its model isn't available now (the replier compared it with our product photos; you can't see photos, so don't question it), asking which color, size, country or address.
    Always list: any phone number or contact given as ours (we have none to give; the customer's number in their details is theirs).
 2. missed_questions: questions or requests in the customer's latest messages (after our last message) that the reply ignores or doesn't answer (the ad button's automatic text, e.g. "هل يمكنني الحصول على مزيد من المعلومات حول هذا؟" or "Can I get more info?", is only a hello: any answer about the product or price covers it), e.g. they asked the price and the reply only asks about the color. Empty if everything was answered, or if the customer asked nothing. Only what the customer asked: a question our rules say we should ask them (country, size, color) is not a missed question.
 3. confidence 0-100 that the reply is right to send as it is. Anything in either list means below ${MIN_CONFIDENCE}.

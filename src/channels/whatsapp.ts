@@ -31,7 +31,7 @@ import {
 import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
 import { notifyHandoff, notifyOrder, orderOneLine } from "../orders.js";
-import { customerLabel, esc, notify, notifyError } from "../telegram.js";
+import { customerLabel, dashboardLink, esc, notify, notifyError } from "../telegram.js";
 import { isMetaCustomer, metaSendImage, metaSendText, metaTyping } from "./meta.js";
 import { noteHandoff } from "../learning.js";
 import { missingStock } from "../stock.js";
@@ -53,7 +53,7 @@ const DARB_STATUS_AR: Record<string, string> = {
 import { splitAroundPhotos, splitMessages, typingPause } from "../typing.js";
 
 const DEFAULT_HANDOFF_MESSAGE = "حاضر، لحظة نتأكدلك ونرجعلك 🙏";
-const DEFAULT_ORDER_MESSAGE = "تمام، تم الحجز 🙏 شويه ونتواصلو معاك لتأكيد التوصيل";
+const DEFAULT_ORDER_MESSAGE = "تم الحجز استاذ 🙏 الفريق يتواصل معاك لتأكيد موعد التوصيل. ترجع بسلامة.";
 
 // --- Webhook payload (Meta Cloud API format, only the fields we use) ---
 
@@ -199,6 +199,7 @@ export function receiveCustomerMessage(message: IncomingMessage) {
   if (!isNew) return; // duplicate webhook delivery
   if (message.media) trackMedia(customer, message.id, message.media, message.mediaPrefix ?? "", true);
   locationForOpenOrder(customer, text);
+  if (message.media?.type === "image") receiptForTeam(customer);
 
   const blocked = aiBlockedReason(customer);
   if (blocked) {
@@ -488,6 +489,7 @@ async function respond(customer: string) {
     const decision = await decideReply(historyForAi(customer), {
       customerPhone: localPhone(customer),
       location: lastLocation(customer),
+      sentPhotos: sentPhotoNames(customer),
       background: [
         customerBackground(customer),
         trackingNote(customer),
@@ -680,6 +682,38 @@ async function locationNote(customer: string): Promise<string | undefined> {
   if (o.result === "on_way")
     return `${about} The order is already on its way with Darb Assabil's courier, so the location can't be changed now. Tell them kindly it's on its way and we can't change the location now, and that the team was told and will follow up with the courier. Don't say it was updated.`;
   return `${about} We couldn't check yet whether it can still change, and nothing was changed. Tell them you got it and the team will check and confirm. Don't say it was updated.`;
+}
+
+// The catalog photos this chat already got ("[sent product photo: بيج]"): they go once per chat.
+function sentPhotoNames(customer: string): string[] {
+  const rows = db
+    .prepare("SELECT text FROM messages WHERE customer = ? AND role = 'business' AND text LIKE '[sent product photo: %'")
+    .all(customer) as { text: string }[];
+  return [...new Set(rows.map((r) => r.text.slice("[sent product photo: ".length, -1)))];
+}
+
+// A photo right after we sent our bank account is probably the transfer receipt: the team checks it (the AI
+// never says the money arrived), and the open order notes it. Works while the AI is paused after the order.
+function receiptForTeam(customer: string) {
+  const ours = db
+    .prepare("SELECT text FROM messages WHERE customer = ? AND role = 'business' AND created_at > ? ORDER BY id DESC LIMIT 6")
+    .all(customer, Date.now() - 3 * 24 * 60 * 60 * 1000) as { text: string }[];
+  if (!ours.some((m) => /LY\d{20,}/.test(m.text.replace(/[\s-]/g, "")))) return;
+  const order = db
+    .prepare("SELECT id FROM orders WHERE customer = ? AND status IN ('new', 'confirmed') ORDER BY id DESC LIMIT 1")
+    .get(customer) as { id: number } | undefined;
+  if (order) {
+    db.prepare("UPDATE orders SET notes = trim(notes || char(10) || ?, char(10) || ' '), updated_at = ? WHERE id = ?").run(
+      "🧾 الزبون بعت صورة بعد بيانات الحساب (ممكن إيصال تحويل): شيكو المبلغ",
+      Date.now(),
+      order.id,
+    );
+  }
+  log(`wa:${customer}`, `photo after our bank details: maybe a transfer receipt${order ? ` (order #${order.id})` : ""}`);
+  notify(
+    "order",
+    `🧾 <b>ممكن إيصال تحويل</b>${order ? ` لطلب #${order.id}` : ""}: ${esc(customerLabel(customer))}\nالزبون بعت صورة بعد ما بعتنالو بيانات الحساب. شيكو إذا المبلغ وصل.\n${dashboardLink(`/inbox/${customer}`, "فتح المحادثة")}`,
+  );
 }
 
 const lastCustomerText = (customer: string) =>

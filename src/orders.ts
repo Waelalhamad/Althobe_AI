@@ -53,5 +53,8 @@ export function notifyOrder(id: number, customer: string, order: CollectedOrder,
 export function notifyHandoff(customer: string, reason: string, learns = false) {
   const link = customer.startsWith("cw:") ? "" : dashboardLink(`/inbox/${customer}`, "فتح المحادثة");
   const hint = learns ? "\n📚 ردو عليه بالواتساب متل العادة، والمساعد بيتعلم من جوابكن (بعد موافقتكن)." : "";
-  notify("handoff", `🙋 <b>زبون بدو حدا من الفريق</b>\n${esc(customerLabel(customer))}\nالسبب: ${esc(reason)}${hint}\n${link}`);
+  // "عاجل": about an order that is confirmed or already sent (a change, a problem, the courier is there): it may be
+  // on its way, so it stands out, and the inbox lists it first.
+  const title = /^\s*عاجل/.test(reason) ? "🚨🚨 <b>عاجل: زبون عندو طلب ولازم حدا يرد هلأ</b>" : "🙋 <b>زبون بدو حدا من الفريق</b>";
+  notify("handoff", `${title}\n${esc(customerLabel(customer))}\nالسبب: ${esc(reason)}${hint}\n${link}`);
 }
