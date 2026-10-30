@@ -159,7 +159,7 @@ const FILTERS = ["all", "unanswered", "ai", "paused", "handoff"] as const;
 dashboardApi.get("/conversations", (req, res) => {
   const filter = FILTERS.find((f) => f === req.query.filter) ?? "all";
   const q = String(req.query.q ?? "").trim().slice(0, 100);
-  res.json(queries.conversations({ filter, q, limit: intParam(req.query.limit, 100, 500) }));
+  res.json(queries.conversations({ filter, q, limit: intParam(req.query.limit, 100, 5000) }));
 });
 
 dashboardApi.get("/conversations/:customer", (req, res) => {

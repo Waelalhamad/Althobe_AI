@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { ArrowRight, Bot, History, ImagePlus, ShoppingBag, Inbox as InboxIcon, Pause, Play, Search, Send, User, UserRound, X } from "lucide-react";
-import { api, CHANNEL_LABEL, channelOf, mediaUrl, type ConversationFilter, type ConversationSummary, type Message } from "../api";
+import { api, PAGE, CHANNEL_LABEL, channelOf, mediaUrl, type ConversationFilter, type ConversationSummary, type Message } from "../api";
 import { Badge, Button, Empty, ErrorNote } from "../components/ui";
 import { ago, country, pauseLabel, phone, time, until } from "../format";
 import { prepareImage } from "../image";
@@ -30,11 +30,19 @@ export function Inbox() {
     return () => clearTimeout(id);
   }, [q]);
 
+  // A busy day has hundreds of chats: the list grows by a page as the team scrolls down, so none is out of reach.
+  const [limit, setLimit] = useState(PAGE);
+  useEffect(() => setLimit(PAGE), [filter, search]);
   const list = useQuery({
-    queryKey: ["conversations", filter, search],
-    queryFn: () => api.conversations(filter, search),
+    queryKey: ["conversations", filter, search, limit],
+    queryFn: () => api.conversations(filter, search, limit),
     refetchInterval: 8_000,
+    placeholderData: keepPreviousData,
   });
+  const more = (list.data?.length ?? 0) >= limit;
+  const loadMore = () => {
+    if (more && !list.isFetching) setLimit((l) => l + PAGE);
+  };
 
   return (
     <div className="-m-4 flex h-[calc(100%+2rem)] sm:-m-6 sm:h-[calc(100%+3rem)] lg:-m-8 lg:h-[calc(100%+4rem)]">
@@ -68,10 +76,21 @@ export function Inbox() {
             ))}
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          className="min-h-0 flex-1 overflow-y-auto"
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) loadMore();
+          }}
+        >
           <ErrorNote error={list.error} />
           {list.data?.length === 0 && <Empty icon={InboxIcon} text="ما في محادثات هون." />}
           {list.data?.map((c) => <Row key={c.customer} c={c} active={c.customer === selected} />)}
+          {more && (
+            <button onClick={loadMore} className="w-full py-3 text-sm text-muted hover:text-fg">
+              {list.isFetching ? "عم نحمّل…" : "عرض محادثات أقدم"}
+            </button>
+          )}
         </div>
       </section>
 

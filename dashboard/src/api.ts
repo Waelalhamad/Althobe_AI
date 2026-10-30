@@ -1,5 +1,7 @@
 // Typed calls to the agent server's /dashboard/api.
 const BASE = "/dashboard/api";
+// Conversations per page in the inbox list.
+export const PAGE = 200;
 
 export class ApiError extends Error {
   constructor(
@@ -318,8 +320,8 @@ export const api = {
   login: (password: string) => post<{ ok: true }>("/login", { password }),
   logout: () => post<{ ok: true }>("/logout"),
   overview: (days: number) => request<Overview>(`/overview?days=${days}`),
-  conversations: (filter: ConversationFilter, q: string) =>
-    request<ConversationSummary[]>(`/conversations?filter=${filter}&q=${encodeURIComponent(q)}&limit=200`),
+  conversations: (filter: ConversationFilter, q: string, limit = PAGE) =>
+    request<ConversationSummary[]>(`/conversations?filter=${filter}&q=${encodeURIComponent(q)}&limit=${limit}`),
   conversation: (customer: string) => request<ConversationDetail>(`/conversations/${encodeURIComponent(customer)}`),
   pause: (customer: string, hours?: number) => post(`/conversations/${encodeURIComponent(customer)}/pause`, { hours }),
   answerWaiting: () => post<{ queued: number; withTeam: number }>("/answer-waiting"),
