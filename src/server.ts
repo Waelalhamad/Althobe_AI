@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import express from "express";
 import { config } from "./config.js";
-import { handleWhatsAppWebhook } from "./channels/whatsapp.js";
+import { handleWhatsAppWebhook, startPauseEndWatch } from "./channels/whatsapp.js";
 import { handleChatwootEvent } from "./channels/chatwoot.js";
 import { handleMetaWebhook, startMeta, validMetaSignature } from "./channels/meta.js";
 import { DATA_DELETION_PAGE, PRIVACY_PAGE } from "./legal.js";
@@ -172,6 +172,7 @@ app.listen(config.port, () => {
   startFollowUps();
   startDarbSync();
   startLearning();
+  startPauseEndWatch();
   void startMeta();
   const channels = [
     config.whatsapp.enabled && `WhatsApp (${config.whatsapp.provider})`,

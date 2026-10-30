@@ -244,6 +244,9 @@ export function isAcknowledgement(text: string): boolean {
 
 // Does the chat wait for the customer's answer? Looks at our last messages (those after the customer message
 // before them). If the customer wrote more than acknowledgements since, or we never wrote, the AI decides.
+// Our "we'll check and come back" promise: the customer's "تمام" or 👍 to it still waits for the answer.
+const PROMISE = /نتأكدلك|نتاكدلك|نرجعلك|نشوفلك|نخبرك/;
+
 function weAskedSomething(customer: string): boolean {
   const rows = db
     .prepare(
@@ -256,7 +259,7 @@ function weAskedSomething(customer: string): boolean {
   if (rows.slice(0, lastOurs).some((m) => !isAcknowledgement(m.text))) return true;
   const ours = rows.slice(lastOurs);
   const end = ours.findIndex((m) => m.role !== "business");
-  return (end < 0 ? ours : ours.slice(0, end)).some((m) => /[؟?]/.test(m.text));
+  return (end < 0 ? ours : ours.slice(0, end)).some((m) => /[؟?]/.test(m.text) || PROMISE.test(m.text));
 }
 
 function onStaffMessage(echo: WaMessage) {
@@ -412,16 +415,35 @@ export function answerWaiting(): { queued: number; withTeam: number } {
 export function answerIfWaiting(customer: string): boolean {
   const last = db
     .prepare(
-      `SELECT role, created_at FROM messages WHERE customer = ? AND history = 0 AND text NOT LIKE '[sent a reaction%'
+      `SELECT role, text, created_at FROM messages WHERE customer = ? AND history = 0 AND text NOT LIKE '[sent a reaction%'
        ORDER BY id DESC LIMIT 1`,
     )
-    .get(customer) as { role: string; created_at: number } | undefined;
-  if (!last || last.role !== "customer" || last.created_at < Date.now() - 23 * 60 * 60 * 1000) return false;
+    .get(customer) as { role: string; text: string; created_at: number } | undefined;
+  // Our last word was a promise to come back (the customer may have only reacted to it): the answer is still owed.
+  const owed = last?.role === "customer" || (last?.role === "business" && PROMISE.test(last.text));
+  if (!last || !owed || last.created_at < Date.now() - 23 * 60 * 60 * 1000) return false;
   if (aiBlockedReason(customer) || isAiPaused(customer)) return false;
   // "تمام" to the team's "تم تثبيت الطلب": nothing to answer.
   if (!weAskedSomething(customer) && waitingAreAcknowledgements(customer)) return false;
   scheduleReply(`wa:${customer}`, 1000, () => respond(customer));
   return true;
+}
+
+// A handoff pause that ran out while the customer still waited (nobody from the team answered): the AI answers,
+// if still inside WhatsApp's 24-hour window. Checked every few minutes for pauses that ended since the last check.
+let pausesCheckedAt = Date.now() - 10 * 60 * 1000;
+export function startPauseEndWatch() {
+  if (!config.whatsapp.enabled) return;
+  setInterval(() => {
+    const now = Date.now();
+    const ended = db
+      .prepare("SELECT customer FROM pauses WHERE until > ? AND until <= ? AND customer NOT LIKE 'cw:%'")
+      .all(pausesCheckedAt, now) as { customer: string }[];
+    pausesCheckedAt = now;
+    for (const { customer } of ended) {
+      if (answerIfWaiting(customer)) log(`wa:${customer}`, "pause ended with the customer still waiting; the AI answers");
+    }
+  }, 5 * 60 * 1000).unref();
 }
 
 // The customer's messages since our last one only acknowledge (or there are none).
