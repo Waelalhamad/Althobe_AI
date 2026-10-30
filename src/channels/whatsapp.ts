@@ -19,6 +19,7 @@ import {
   db,
   pauseAi,
   recordAiCall,
+  contactName,
   saveContact,
   saveHistory,
   saveMessage,
@@ -52,7 +53,7 @@ const DARB_STATUS_AR: Record<string, string> = {
 };
 import { splitAroundPhotos, splitMessages, typingPause } from "../typing.js";
 
-const DEFAULT_HANDOFF_MESSAGE = "حاضر، لحظة نتأكدلك ونرجعلك 🙏";
+const DEFAULT_HANDOFF_MESSAGE = "حاضر استاذ 🙏";
 const DEFAULT_ORDER_MESSAGE = "تم الحجز استاذ 🙏 الفريق يتواصل معاك لتأكيد موعد التوصيل. ترجع بسلامة.";
 
 // --- Webhook payload (Meta Cloud API format, only the fields we use) ---
@@ -488,13 +489,14 @@ async function respond(customer: string) {
     const team = teamContext(customer);
     const decision = await decideReply(historyForAi(customer), {
       customerPhone: localPhone(customer),
+      customerName: contactName(customer),
       location: lastLocation(customer),
       sentPhotos: sentPhotoNames(customer),
       background: [
         customerBackground(customer),
         trackingNote(customer),
         await locationNote(customer),
-        isUserId(customer) && "Writes from a WhatsApp username: we don't have their number, so ask for a phone number for the delivery.",
+        isUserId(customer) && "Writes from a WhatsApp username: we don't have their number, so ask for a phone number when taking the order (not before).",
         isMetaCustomer(customer) && metaNote(channelOf(customer)),
         team.note,
       ]

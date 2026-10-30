@@ -213,10 +213,12 @@ export function conversations(opts: { filter: ConversationFilter; q: string; lim
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (opts.q) {
+    // A number in any form ("+218 91 234 5678", "0912345678", "218912345678") matches the stored "218…".
+    const digits = /^[\d\s+()-]+$/.test(opts.q) ? opts.q.replace(/\D/g, "").replace(/^(00)?218|^0/, "") : "";
     where.push(
-      "(c.customer LIKE ? OR EXISTS (SELECT 1 FROM messages s WHERE s.customer = c.customer AND s.text LIKE ?))",
+      "(c.customer LIKE ? OR k.wa_name LIKE ? OR EXISTS (SELECT 1 FROM messages s WHERE s.customer = c.customer AND s.text LIKE ?))",
     );
-    params.push(`%${opts.q}%`, `%${opts.q}%`);
+    params.push(`%${digits || opts.q}%`, `%${opts.q}%`, `%${opts.q}%`);
   }
   if (opts.filter === "unanswered") {
     where.push("c.last_source = 'customer'");

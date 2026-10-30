@@ -602,6 +602,10 @@ export function channelOf(customer: string): Channel {
   return "whatsapp";
 }
 
+export function contactName(customer: string): string {
+  return (db.prepare("SELECT wa_name FROM customers WHERE customer = ?").get(customer) as { wa_name: string } | undefined)?.wa_name ?? "";
+}
+
 export function saveContact(customer: string, waName = "", username = "") {
   const now = Date.now();
   db.prepare(

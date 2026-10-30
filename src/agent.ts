@@ -3,7 +3,7 @@ import { aiCostUsd, config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
 import { catalogForPrompt, listCatalog, type CatalogItem } from "./catalog.js";
 import { fileAsDataUrl } from "./media.js";
-import { stockForPrompt } from "./stock.js";
+import { missingStock, stockForPrompt } from "./stock.js";
 import { intlPhone } from "./darb.js";
 import type { AiUsage, OrderItem, Payment } from "./store.js";
 
@@ -26,7 +26,10 @@ export type CollectedOrder = {
 
 // photos: ids of catalog photos, sent before the text (see catalog.ts).
 // order: the customer confirmed an order; it is saved and the team takes over to confirm it.
-export const HANDOFF_KINDS = ["dont_know", "order_problem", "complaint", "policy", "wants_person", "media", "other"] as const;
+// The only cases the AI may hand to the team (see allowedHandoff); the rest it answers itself.
+export const AI_HANDOFF_KINDS = ["discount", "order_problem", "payment", "abroad", "wants_person", "complaint"] as const;
+// Older kinds stay readable, and the code's own handoffs (the AI failed, a wrong account number) are "other".
+export const HANDOFF_KINDS = [...AI_HANDOFF_KINDS, "dont_know", "policy", "media", "other"] as const;
 export type HandoffKind = (typeof HANDOFF_KINDS)[number];
 
 export type AgentDecision = (
@@ -55,8 +58,8 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 
 # Facts
 - Use ONLY the facts in the knowledge documents (prices, what's included, sizes, colors, delivery, payment). Never invent a price, discount, stock, delivery time, gift or policy, and don't add details to a fact (if payment says "cash or bank transfer", don't add "on delivery"; don't promise calls or messages the knowledge doesn't mention).
-- If you don't know something, don't guess: use handoff_to_human, and tell the customer something natural like "لحظة نتأكدلك ونرجعلك 🙏".
-- Questions about the company itself or private ones (who owns it, the manager, staff names, profits, the exact address): never answer them and never say "لحظة نتأكدلك": hand off with silent true and an empty message, and the team answers.
+- If the knowledge doesn't answer something, don't guess and don't hand off for it: say what the knowledge does say, or that you don't have that detail, and carry on with the sale. Never write "لحظة نتأكدلك" or "نرجعلك".
+- Questions about the company itself or private ones (who owns it, the manager, staff names, profits, the exact address): never answer them: hand off with silent true and an empty message, and the team answers.
 - Only talk about our store and products. If asked about anything else, answer with one friendly line that brings them back to our products (no lecture).
 
 # Which product
@@ -108,14 +111,17 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - Never say the same thing twice in a chat in other words. If the customer adds something new (e.g. asks to send the account number with the courier), answer only that, in one short line.
 
 # When to hand off (call handoff_to_human instead of replying)
-- the answer is not in the knowledge documents, or you are not sure;
-- the customer wants to change or cancel an order, or their order is late (see "Where is my order");
-- a problem with an order they received (damaged, missing piece, wrong item), a complaint, or an angry customer (questions about trying on or returns are answered from the knowledge: there are no returns, the customer tries it on while the courier is there);
-- the customer asks for a person;
-- the customer sent a video or file, or a photo you can't make sense of.
+Only in these cases (the kind in brackets); anything else you answer yourself, and a handoff for anything else is refused:
+- the customer asks for a discount, or a wholesale price to resell (discount). A quantity alone is not a reason: take an order for 3 or 5 sets like any other;
+- a problem with an order already confirmed or delivered: cancel, change, defect, missing piece, wrong size, late (order_problem; see "Where is my order"). Questions about trying on or returns are answered from the knowledge: there are no returns, the customer tries it on while the courier is there;
+- the customer says they transferred the money, or sends a receipt (payment);
+- the customer is outside Libya (abroad);
+- the customer clearly asks to talk to a person (wants_person);
+- questions about the company or its management, rude words, or an angry customer complaining (complaint).
+Never hand off for: the price, the address or where we are, the ad's text, a city missing from the delivery table, "we'll talk next week", a color they picked or one we don't have (offer the colors we have), or a doubt between "استاذ" and "استاذة". A video or file you can't open: ask them kindly to write what they want.
 - Urgent: anything about an order that is already confirmed or sent (they want to cancel it or change the color, size or address; it arrived with a problem: wrong size, pieces in different sizes, a defect, something missing; the courier is with them now; it's late). The order may already be on its way, so every minute counts. Start the reason with "عاجل", then what the customer wants, the size or color they asked for and what they got, and whether the courier is with them now. The message: "حاضر استاذ، حوّلتك توا للفريق يتابعو معاك 🙏". Don't promise an exchange, a refund or a time. (Plain "where is my order" questions are answered from the tracking lines as above.)
-- Silent handoff: when the knowledge says a case goes to the team "بدون أي رد" / without a reply (e.g. questions about the company itself), call handoff_to_human with silent true and an empty message_to_customer. Don't write "لحظة نتأكدلك" then: the customer gets nothing from us and the team answers. For every other handoff silent is false.
-The message to the customer must sound like the same person continuing the chat, short and warm, e.g. "حاضر، لحظة نتأكدلك ونرجعلك 🙏" or for a problem with an order that arrived "سؤال مزبوط استاذ، توا نتأكدلك ونرجعلك 🙏". Apologize ("سامحنا على هذا 🙏 توا نتابعلك الموضوع ونرجعلك") only when the customer complains that something went wrong, never for a question. Never say "سيتم تحويلك" or mention a team or an agent taking over, except in the urgent message above and where the knowledge gives the message (e.g. a large quantity: "الفريق يتواصل معاك بخصوص الكمية").
+- Silent handoff: when the knowledge says a case goes to the team "بدون أي رد" / without a reply (e.g. questions about the company itself), call handoff_to_human with silent true and an empty message_to_customer: the customer gets nothing from us and the team answers. For every other handoff silent is false.
+The message to the customer must sound like the same person continuing the chat, short and warm. When the knowledge gives the message for the case (e.g. a discount: "نشوف الإدارة ونخبرك استاذ 🙏"), use it; otherwise just "حاضر استاذ 🙏". Never write "لحظة نتأكدلك ونرجعلك". Apologize ("سامحنا على هذا 🙏") only when the customer complains that something went wrong, never for a question. Never say "سيتم تحويلك" or mention a team or an agent taking over, except in the urgent message above and where the knowledge gives the message.
 
 # Photos and voice notes
 - You can see photos the customer sends. Often it's a screenshot of a product, to show what they want. Customers often send our OLD ads (our logo, a model we don't sell anymore) or photos from other stores, so each product photo was compared with our current product photos, and the result is on its line as "[photo check: ...]". Trust it over your own look at the photo:
@@ -200,7 +206,7 @@ const HANDOFF_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
   function: {
     name: "handoff_to_human",
     description:
-      "Transfer the conversation to a human support agent. Use when you cannot answer confidently or the request needs a person.",
+      "Transfer the conversation to our team, only in the cases listed in the instructions. Anything else you answer yourself.",
     strict: true,
     parameters: {
       type: "object",
@@ -211,13 +217,13 @@ const HANDOFF_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
         },
         message_to_customer: {
           type: "string",
-          description: "Short natural message to the customer in their language, like the same person continuing the chat (e.g. \"حاضر استاذ، لحظة نتأكدلك ونرجعلك 🙏\"). Never mention a team or a transfer. Empty when silent.",
+          description: "Short natural message to the customer in their language, like the same person continuing the chat (the knowledge's message for the case, or just \"حاضر استاذ 🙏\"). Never mention a team or a transfer. Empty when silent.",
         },
         kind: {
           type: "string",
-          enum: [...HANDOFF_KINDS],
+          enum: [...AI_HANDOFF_KINDS],
           description:
-            "dont_know: the knowledge doesn't answer it or you're not sure; order_problem: an existing order (change, cancel, where is it, late, wrong item); complaint: unhappy or angry; policy: the knowledge says this case goes to the team (e.g. bulk discount, questions about the company); wants_person: they asked for a human; media: a video, file or photo you can't read; other.",
+            "discount: asks for a discount or a wholesale price; order_problem: an order already confirmed or delivered (cancel, change, defect, missing, wrong size, late); payment: says they transferred or sent a receipt; abroad: outside Libya; wants_person: asked for a person; complaint: about the company or its management, rude, or angry and complaining.",
         },
         silent: {
           type: "boolean",
@@ -248,7 +254,8 @@ const NO_REPLY_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
 
 // location: the last map link the customer sent in this chat, even one older than the messages the AI sees.
 // sentPhotos: names of the catalog photos already sent in this chat (the AI sees only its last messages).
-type CustomerContext = { customerPhone?: string; background?: string; location?: string; sentPhotos?: string[] };
+// customerName: the name on their WhatsApp profile, so "استاذ" or "استاذة" is right from the first message.
+type CustomerContext = { customerPhone?: string; customerName?: string; background?: string; location?: string; sentPhotos?: string[] };
 
 // So customers don't all get the same template: each one gets one of 3 wordings, the same for the whole chat
 // (from their number; random in the playground).
@@ -262,6 +269,8 @@ function wordingWay(phone?: string): number {
 // The instructions, product photos, knowledge and what we know about the customer, then the chat.
 function chatMessages(history: ChatTurn[], context: CustomerContext): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   const facts = [
+    context.customerName &&
+      `The name on their WhatsApp profile: «${context.customerName}». Use it to tell whether to say "استاذ" or "استاذة" (a woman's name → "استاذة"); not as their name for the order, and don't greet them with it.`,
     context.customerPhone &&
       `The customer's own WhatsApp number: ${context.customerPhone} (theirs, not ours; use it as the order phone if the customer says to use this number).`,
     libyanPhone(context.customerPhone)
@@ -408,8 +417,12 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
   const sentBefore = new Set(listCatalog().filter((p) => context.sentPhotos?.includes(p.name)).map((p) => p.id));
   const againOk = asksForPhotos(history);
 
-  // A reply the check rejects gets one rewrite with the reviewer's notes; a second miss goes to the team.
+  // A reply the check rejects gets one rewrite with the reviewer's notes; then the better of the two is sent.
+  // The check never hands a chat to the team.
   let rejected: ReplyCheck | undefined;
+  let firstDraft: { text: string; check: ReplyCheck } | undefined;
+  // A handoff outside the allowed cases is refused once; after that the AI has no handoff tool and must answer.
+  let handoffRefused = false;
   let silenceRefused = false;
   // A reply in the wrong dialect or language (or more than 2 messages) gets one rewrite too, then is fixed and sent.
   let restyled = false;
@@ -427,7 +440,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       reasoning: { effort: config.openai.reasoningEffort },
       input,
       // Silence is a first-round choice only: on a rewrite the model sees its own draft and thinks it already answered.
-      tools: [HANDOFF_TOOL, ORDER_TOOL, ...(rejected || restyled || silenceRefused ? [] : [NO_REPLY_TOOL]), ...(knownPhotos.size ? [PHOTOS_TOOL] : [])].map(
+      tools: [...(handoffRefused ? [] : [HANDOFF_TOOL]), ORDER_TOOL, ...(rejected || restyled || silenceRefused ? [] : [NO_REPLY_TOOL]), ...(knownPhotos.size ? [PHOTOS_TOOL] : [])].map(
         responseTool,
       ),
       // Once photos are queued, the next step is the text that goes with them.
@@ -474,7 +487,12 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     const decision = readDecision(message);
     if (decision.action === "order") {
       const order = withoutPlaceholders(withLocation(decision.order, history, context.location));
-      const problems = orderProblems(order);
+      const gone = missingStock(order.items);
+      const problems = [
+        ...orderProblems(order),
+        // A color or size we don't have isn't a case for the team: the AI offers what's left.
+        ...(gone.length ? [`Out of stock: ${gone.join(", ")}. Tell the customer kindly and offer the colors or sizes we have.`] : []),
+      ];
       // Not saved: the model asks the customer for what's missing (twice at most, then the team sees the gaps).
       if (problems.length && orderRefused < 2 && round < 4) {
         orderRefused++;
@@ -505,26 +523,16 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
         };
       }
       const check = await checkReply(history, context, decision.text, usage, startedAt);
-      if (check.confidence >= MIN_CONFIDENCE) return { ...decision, photos, confidence: check.confidence, usage };
-      if (!rejected) {
+      if (passes(check)) return { ...decision, photos, confidence: check.confidence, usage };
+      if (!rejected && round < 4) {
         rejected = check;
+        firstDraft = { text: decision.text, check };
         input.push(...outputItems(response, toolResults), { role: "developer", content: checkFeedback(check) });
         continue;
       }
-      // Nothing made up, it just may not answer everything: better sent than silence.
-      if (!check.unsure.length) return { ...decision, photos, confidence: check.confidence, usage };
-      const notes = [
-        check.missed.length && `ما جاوب على: ${check.missed.join("، ")}.`,
-        check.unsure.length && `مش موجود بالمعلومات: ${check.unsure.join("، ")}.`,
-      ].filter(Boolean);
-      return {
-        action: "handoff",
-        kind: "dont_know",
-        reason: `المساعد مش متأكد من الجواب (${check.confidence}/100)، ما بعت شي. ${notes.join(" ")} كان رح يقول: ${decision.text.replace(/\s+/g, " ")}`,
-        messageToCustomer: "",
-        silent: true,
-        usage,
-      };
+      // Still not perfect after one rewrite: the better draft goes out rather than silence or a handoff.
+      const best = firstDraft && better(firstDraft.check, check) ? firstDraft : { text: decision.text, check };
+      return { ...decision, text: best.text, photos, confidence: best.check.confidence, usage };
     }
     if (decision.action === "none") {
       if (silenceRefused || !answersUs(history)) return { ...decision, usage };
@@ -535,6 +543,14 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       continue;
     }
     const emptyReply = decision.reason === EMPTY;
+    if (!emptyReply && decision.action === "handoff" && !handoffRefused && round < 4) {
+      const verdict = await allowedHandoff(history, decision, usage, startedAt);
+      if (!verdict.ok) {
+        handoffRefused = true;
+        input.push(...outputItems(response, toolResults, handoffRefusal(verdict.why)));
+        continue;
+      }
+    }
     if (!emptyReply) return { ...decision, usage }; // a real handoff wins over photos
     if (!photoCalls.length) {
       // Photos alone are a fine answer ("here are the colors").
@@ -544,6 +560,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     input.push(...outputItems(response, toolResults));
     textNext = photos.length > 0;
   }
+  if (firstDraft) return { action: "reply", text: firstDraft.text, photos, confidence: firstDraft.check.confidence, usage };
   return { ...handoff("AI kept calling tools without answering"), usage };
 }
 
@@ -997,7 +1014,7 @@ function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | u
 }
 
 // Before a reply goes out, a second look checks it against the knowledge: the AI rarely doubts its own draft,
-// so a separate call scores it. Below MIN_CONFIDENCE nothing is sent and the team answers.
+// so a separate call scores it. A reply it rejects is rewritten once with its notes; it never stops a reply alone.
 const MIN_CONFIDENCE = 80;
 
 const CHECK_INSTRUCTIONS = `You check a reply our sales assistant wants to send a customer on WhatsApp, before it is sent. The knowledge documents below are the only source of truth about the store and its products.
@@ -1006,7 +1023,8 @@ const CHECK_INSTRUCTIONS = `You check a reply our sales assistant wants to send 
    Always list: any phone number or contact given as ours (we have none to give; the customer's number in their details is theirs).
 2. missed_questions: questions or requests in the customer's latest messages (after our last message) that the reply ignores or doesn't answer (the ad button's automatic text, e.g. "هل يمكنني الحصول على مزيد من المعلومات حول هذا؟" or "Can I get more info?", is only a hello: any answer about the product or price covers it), e.g. they asked the price and the reply only asks about the color. Empty if everything was answered, or if the customer asked nothing. Only what the customer asked: a question our rules say we should ask them (country, size, color) is not a missed question.
 3. confidence 0-100 that the reply is right to send as it is. Anything in either list means below ${MIN_CONFIDENCE}.
-Judge only the facts and the customer's questions, not our sales steps: a reply that doesn't ask the country, size or color yet, or style and wording, is not a problem for you.`;
+Judge only the facts and the customer's questions, not our sales steps: a reply that doesn't ask the country, size or color yet, or style and wording, is not a problem for you.
+The customer's phone number, name and address are only needed when the order is being booked (the summary): never list a reply for not asking them, and never because we don't know the customer's number (customers from ads often write without one). A short reply to thanks or goodbye is fine as it is.`;
 
 const CHECK_SCHEMA: OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"] = {
   type: "json_schema",
@@ -1059,13 +1077,82 @@ async function checkReply(history: ChatTurn[], context: CustomerContext, text: s
   }
 }
 
+// Low confidence alone (nothing listed) is a vague "doesn't fit": the reply goes out.
+const passes = (c: ReplyCheck) => c.confidence >= MIN_CONFIDENCE || (!c.unsure.length && !c.missed.length);
+// Made-up facts weigh more than an unanswered question.
+const better = (a: ReplyCheck, b: ReplyCheck) =>
+  a.unsure.length !== b.unsure.length ? a.unsure.length < b.unsure.length : a.missed.length !== b.missed.length ? a.missed.length < b.missed.length : a.confidence > b.confidence;
+
 // What the reviewer found, for the one rewrite the assistant gets.
 function checkFeedback(check: ReplyCheck): string {
   const lines = [
     ...check.missed.map((q) => `- The customer asked this and your reply doesn't answer it: ${q}`),
     ...check.unsure.map((c) => `- Not backed by the knowledge, remove or fix it: ${c}`),
   ];
-  return `A reviewer checked your reply before it was sent and it was NOT sent:\n${lines.join("\n") || "- It doesn't fit the chat."}\nWrite the reply again: answer what the customer asked, and say only what the knowledge documents back. If the knowledge can't answer it, call handoff_to_human with kind "dont_know" instead.`;
+  return `A reviewer checked your reply before it was sent and it was NOT sent:\n${lines.join("\n") || "- It doesn't fit the chat."}\nWrite the reply again and send it: answer what the customer asked, and say only what the knowledge documents back. Where the knowledge has no answer, leave that claim out (or say you don't have that detail) and carry on with the sale. These notes are never a reason to hand the chat to the team.`;
+}
+
+// The AI hands chats to the team too easily, so a second look checks each handoff against the allowed cases.
+const HANDOFF_CHECK = `Our sales assistant on WhatsApp wants to hand this chat to our team. It may only do so in these cases:
+1. the customer asks for a discount, or a wholesale price to resell (a quantity alone, e.g. 3 or 5 sets, is NOT a case);
+2. a problem with an order already confirmed or delivered: cancel, change, defect, missing piece, wrong size, late;
+3. the customer says they transferred the money, or sent a receipt;
+4. the customer is outside Libya;
+5. the customer clearly asks to talk to a person;
+6. questions about the company or its management, rude words, or an angry customer complaining.
+Anything else the assistant answers itself, e.g. the price, the address or where we are, the ad's text, a city missing from the delivery table, "we'll talk next week", a color they picked or one we don't have, a doubt between "استاذ" and "استاذة", a question the assistant can't answer.
+Judge from the customer's own messages, not from the assistant's reason.`;
+
+const HANDOFF_SCHEMA: OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"] = {
+  type: "json_schema",
+  json_schema: {
+    name: "handoff_check",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        case_number: { type: "integer", description: "1-6, or 0 when none of the cases fits." },
+        why: { type: "string", description: "One short line, in English." },
+      },
+      required: ["case_number", "why"],
+      additionalProperties: false,
+    },
+  },
+};
+
+async function allowedHandoff(
+  history: ChatTurn[],
+  decision: Extract<AgentDecision, { action: "handoff" }>,
+  usage: AiUsage,
+  startedAt: number,
+): Promise<{ ok: boolean; why: string }> {
+  const chat = history.slice(-12).map((t) => `${t.role === "customer" ? "CUSTOMER" : "US"}: ${t.text}`).join("\n");
+  try {
+    const completion = await client!.chat.completions.create({
+      model: config.openai.supportModel,
+      prompt_cache_key: "handoff-check",
+      reasoning_effort: "low",
+      messages: [
+        { role: "developer", content: HANDOFF_CHECK },
+        { role: "user", content: `The chat:
+${chat}
+
+The assistant's reason (${decision.kind ?? "other"}): ${decision.reason}` },
+      ],
+      response_format: HANDOFF_SCHEMA,
+    });
+    addUsage(usage, completion, startedAt);
+    const parsed = JSON.parse(completion.choices[0]?.message.content ?? "") as { case_number?: number; why?: string };
+    const n = parsed.case_number ?? 0;
+    return { ok: n >= 1 && n <= 6, why: parsed.why ?? "" };
+  } catch {
+    // The check failing never blocks a handoff the assistant asked for.
+    return { ok: true, why: "" };
+  }
+}
+
+function handoffRefusal(why: string): string {
+  return `NOT handed off: this is not one of the cases for the team${why ? ` (${why})` : ""}. Answer the customer yourself now, from the knowledge, and carry on with the sale. Where the knowledge has no answer, say what it does say and keep going; don't promise to check and come back.`;
 }
 
 // Fallback handoff when the AI itself fails; the caller sends a default customer message.

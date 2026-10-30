@@ -19,7 +19,7 @@ export type MessageCreatedEvent = {
   conversation?: { id: number; status: string };
 };
 
-const DEFAULT_HANDOFF_MESSAGE = "حاضر، لحظة نتأكدلك ونرجعلك 🙏";
+const DEFAULT_HANDOFF_MESSAGE = "حاضر استاذ 🙏";
 const DEFAULT_ORDER_MESSAGE = "تم الحجز استاذ 🙏 الفريق يتواصل معاك لتأكيد موعد التوصيل. ترجع بسلامة.";
 
 const seenMessageIds = new Map<number, number>(); // message id -> time seen
