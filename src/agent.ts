@@ -896,7 +896,6 @@ export function addressGaps(order: { city: string; address: string; phone?: stri
   ];
 }
 
-// An order the model wants to save but can't be: told back to it, so it asks the customer (see decideReply).
 const SUMMARY = /المنتج\s*:/;
 
 // The order summary was sent (by the AI or the team) and the customer wrote after it.
@@ -927,6 +926,7 @@ export function orderSummary(order: CollectedOrder): string {
     .join("\n");
 }
 
+// An order the model wants to save but can't be: told back to it, so it asks the customer (see decideReply).
 function orderProblems(order: CollectedOrder): string[] {
   return [
     ...(libyanMobile(order.phone) ? [] : [`The phone "${order.phone}" is not a full Libyan mobile number (10 digits starting 091-095, or +218).`]),

@@ -261,6 +261,39 @@ export function runChecks() {
   }
 }
 
+// The AI told a customer their order is booked, but no order of theirs is saved: the team would never send it.
+// Checked every tick, at any hour and even with the supervisor off (a lost order is never noise).
+export const BOOKED = /تم\s*(ال)?حجز|تم\s*(ال)?تثبيت|ثبتنالك|انحجز|تم\s*تأكيد\s*(ال)?طلب/;
+
+export function checkBookedWithoutOrder() {
+  const now = Date.now();
+  const said = db
+    .prepare(
+      `SELECT m.id, m.customer, m.text, m.created_at FROM messages m
+       WHERE m.source = 'ai' AND m.history = 0 AND m.created_at > ? AND m.created_at < ?
+         AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer = m.customer AND o.created_at > ? AND o.created_at < m.created_at + ?)`,
+    )
+    .all(now - 6 * HOUR, now - 2 * MINUTE, now - 6 * HOUR - 14 * 24 * HOUR, 5 * MINUTE) as { id: number; customer: string; text: string; created_at: number }[];
+  for (const m of said) {
+    // "اذا تم الحجز…" is a question about later, not a booking.
+    if (!BOOKED.test(m.text) || /(?:إذا|اذا|لو|لما|بعد\s*ما)\s*تم/.test(m.text)) continue;
+    const isNew = raise({
+      key: `booked-no-order:${m.id}`,
+      kind: "booked_no_order",
+      customer: m.customer,
+      severity: "high",
+      title: "البوت قال للزبون «تم الحجز» وما في طلب محفوظ",
+      detail: m.text,
+    });
+    if (isNew) {
+      notify(
+        "error",
+        `🚨 <b>البوت قال «تم الحجز» وما في طلب محفوظ</b>\n${esc(customerLabel(m.customer))}\n«${esc(m.text.slice(0, 200))}»\nسجّلو الطلب من المحادثة وأكدوه مع الزبون. ${dashboardLink(`/inbox/${m.customer}`, "فتح المحادثة")}`,
+      );
+    }
+  }
+}
+
 // --- AI reviews -------------------------------------------------------------------------------
 
 export const ISSUE_TYPES = [
@@ -758,6 +791,7 @@ export function startSupervisor() {
   const tick = async () => {
     ticks++;
     try {
+      checkBookedWithoutOrder();
       runChecks();
       if (ticks % 6 === 1) await runReviews();
       const s = supervisorSettings();
