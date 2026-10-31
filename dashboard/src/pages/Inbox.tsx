@@ -8,6 +8,7 @@ import { Badge, Button, Empty, ErrorNote } from "../components/ui";
 import { ago, country, pauseLabel, phone, time, until } from "../format";
 import { prepareImage } from "../image";
 import { OrderForm } from "../components/OrderForm";
+import { EmojiPicker } from "../components/EmojiPicker";
 import type { OrderInput } from "../api";
 
 const FILTERS: { id: ConversationFilter; label: string }[] = [
@@ -156,6 +157,19 @@ function Thread({ customer }: { customer: string }) {
   const [sending, setSending] = useState<{ done: number; total: number }>();
   const [photoError, setPhotoError] = useState<string>();
   const fileInput = useRef<HTMLInputElement>(null);
+  const textBox = useRef<HTMLTextAreaElement>(null);
+
+  // An emoji goes where the cursor is (or replaces the selection), and the cursor stays right after it.
+  const insertEmoji = (emoji: string) => {
+    const el = textBox.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? text.length;
+    setText(text.slice(0, start) + emoji + text.slice(end));
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(start + emoji.length, start + emoji.length);
+    });
+  };
   const bottom = useRef<HTMLDivElement>(null);
   const d = detail.data;
   const count = d?.messages.length ?? 0;
@@ -343,7 +357,9 @@ function Thread({ customer }: { customer: string }) {
           >
             <ImagePlus size={16} />
           </Button>
+          <EmojiPicker onPick={insertEmoji} disabled={!windowOpen || send.isPending} />
           <textarea
+            ref={textBox}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
