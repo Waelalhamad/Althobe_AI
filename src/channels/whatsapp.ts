@@ -4,7 +4,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { config } from "../config.js";
-import { addressGaps, checkPhoto, decideReply, MAP_LINK, type ChatTurn } from "../agent.js";
+import { addressGaps, checkPhoto, decideReply, MAP_LINK, type ChatTurn, type CollectedOrder } from "../agent.js";
 import { listCatalog, publicPhotoUrl } from "../catalog.js";
 import { downloadWhatsAppMedia, fileAsDataUrl, saveFile, transcribe } from "../media.js";
 import {
@@ -29,6 +29,7 @@ import {
   updateOrderLocation,
   setSetting,
   teamPauseMinutes,
+  PAYMENT_LABEL,
 } from "../store.js";
 import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
@@ -631,7 +632,7 @@ async function respond(customer: string) {
       if (!needsTeam.length) {
         setOrderStatus(id, "confirmed");
         const sir = /استاذة/.test(decision.messageToCustomer) ? "استاذة" : "استاذ";
-        const text = `تمام ${sir}، تم تثبيت طلبك 🙏 المندوب يتصل بيك قبل ما يوصل.`;
+        const text = orderConfirmation(decision.order, sir);
         saveMessage({ customer, role: "business", source: "ai", text, wamid: await sendText(customer, text) });
         log(key, `order #${id} confirmed by the AI (complete): ${orderOneLine(decision.order)}`);
         notifyOrder(id, customer, decision.order, false, "✅ تأكد تلقائياً (كامل والمقاس على الوزن). ابعتوه لدرب.");
@@ -903,6 +904,25 @@ async function showTyping(customer: string) {
 }
 
 // --- Helpers --------------------------------------------------------------
+
+// The confirmation of an order, in the team's own format (as in the dashboard's order form).
+export function orderConfirmation(o: CollectedOrder, sir = "استاذ"): string {
+  const city = o.city.trim();
+  // Without the map link, and without the city twice when the address starts with it.
+  const address = o.address.replace(new RegExp(MAP_LINK.source, "gi"), "").replace(/[\s\-–,،(]+$/, "").trim();
+  const place = city && !address.startsWith(city) ? [city, address].filter(Boolean).join(" - ") : address || city;
+  return [
+    `تم تثبيت طلبك ${sir} 🙏`,
+    o.name.trim() && `الاسم: ${o.name.trim()}`,
+    o.phone.trim() && `الرقم: ${o.phone.trim()}`,
+    ...o.items.map((i) => `${i.quantity || 1} × ${[i.product || "الطقم العربي 3 قطع", i.color, i.size && `مقاس ${i.size}`].filter(Boolean).join(" ")}`),
+    place && `التوصيل: ${place}`,
+    o.total.trim() && `الإجمالي: ${o.total.trim()}`,
+    `الدفع: ${PAYMENT_LABEL[o.payment ?? "cash"]}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
 
 function describe(m: WaMessage): string {
   return adNote(m) + describeContent(m);

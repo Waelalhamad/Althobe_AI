@@ -5,10 +5,7 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, ComposedChart, Legend, L
 import { Bot, CircleDollarSign, Gauge, Hand, MessageCircle, ShieldCheck, ShoppingBag, Timer, UserPlus, Users, TriangleAlert } from "lucide-react";
 import { api, type FunnelDay, type OverviewQuery, type Totals } from "../api";
 import { Badge, Card, Empty, ErrorNote, PageHeader, Stat } from "../components/ui";
-import { ago, num, pct, phone, secs, usd } from "../format";
-
-// Libya is UTC+2 all year (the server's "today" too).
-const libyaDate = (daysAgo = 0) => new Date(Date.now() + 2 * 3600_000 - daysAgo * 86_400_000).toISOString().slice(0, 10);
+import { ago, localDate, num, pct, phone, secs, usd } from "../format";
 
 const PRESETS = [
   { id: "today", label: "اليوم", from: 0, to: 0 },
@@ -39,12 +36,12 @@ const tooltipStyle = {
 
 export function Overview() {
   const [preset, setPreset] = useState<string>("7d");
-  const [custom, setCustom] = useState({ from: libyaDate(6), to: libyaDate(0) });
+  const [custom, setCustom] = useState({ from: localDate(6), to: localDate(0) });
   // Only some hours of each day (e.g. 18:00 → 00:00), or the whole day.
   const [hours, setHours] = useState<{ from: number; to: number } | null>(null);
   const p = PRESETS.find((x) => x.id === preset);
   const query: OverviewQuery = {
-    ...(p ? { from: libyaDate(p.from), to: libyaDate(p.to) } : custom),
+    ...(p ? { from: localDate(p.from), to: localDate(p.to) } : custom),
     ...(hours ? { hourFrom: hours.from, hourTo: hours.to } : {}),
   };
   const q = useQuery({ queryKey: ["overview", query], queryFn: () => api.overview(query), refetchInterval: 30_000 });
@@ -58,7 +55,7 @@ export function Overview() {
     <div className="mx-auto max-w-7xl">
       <PageHeader
         title="نظرة عامة"
-        subtitle="أرقام واتساب والمساعد، بتوقيت ليبيا. كل رقم بينقارن مع نفس المدة اللي قبلها (ونفس الساعات)."
+        subtitle="أرقام واتساب والمساعد، بتوقيت دمشق. كل رقم بينقارن مع نفس المدة اللي قبلها (ونفس الساعات)."
         actions={[...PRESETS, { id: "custom", label: "مخصص" }].map((r) => (
           <button
             key={r.id}
@@ -75,7 +72,7 @@ export function Overview() {
             <span className="text-muted">من</span>
             <input type="date" value={custom.from} max={custom.to} onChange={(e) => e.target.value && setCustom((c) => ({ ...c, from: e.target.value }))} className={select} />
             <span className="text-muted">لـ</span>
-            <input type="date" value={custom.to} min={custom.from} max={libyaDate(0)} onChange={(e) => e.target.value && setCustom((c) => ({ ...c, to: e.target.value }))} className={select} />
+            <input type="date" value={custom.to} min={custom.from} max={localDate(0)} onChange={(e) => e.target.value && setCustom((c) => ({ ...c, to: e.target.value }))} className={select} />
           </label>
         )}
         <label className="flex items-center gap-2">
@@ -193,7 +190,7 @@ export function Overview() {
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
             <Card className="xl:col-span-3">
               <h2 className="mb-1 font-semibold">أوقات رسائل الزباين</h2>
-              <p className="mb-4 text-xs text-muted">كل ساعة من اليوم، بتوقيت ليبيا، لكل أيام الفترة (مش بس الساعات المحددة). بيساعد بتوقيت الإعلانات ودوام الفريق.</p>
+              <p className="mb-4 text-xs text-muted">كل ساعة من اليوم، بتوقيت دمشق، لكل أيام الفترة (مش بس الساعات المحددة). بيساعد بتوقيت الإعلانات ودوام الفريق.</p>
               <div className="h-60" dir="ltr">
                 <ResponsiveContainer>
                   <BarChart data={d.hourly}>

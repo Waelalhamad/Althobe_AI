@@ -120,8 +120,9 @@ export const config = {
   dashboard: {
     // Password for /dashboard. The dashboard stays locked while this is not set.
     password: process.env.DASHBOARD_PASSWORD?.trim() || undefined,
-    // Clock used for "today" and the daily charts. Libya is UTC+2 all year.
-    timezoneOffsetHours: Number(optional("DASHBOARD_TZ_OFFSET_HOURS", "2")),
+    // Clock used for "today", the daily charts and every hour set in the dashboard (working hours, reports):
+    // the team's, in Syria (Damascus is UTC+3 all year). Libya is UTC+2.
+    timezoneOffsetHours: Number(optional("DASHBOARD_TZ_OFFSET_HOURS", "3")),
     // OpenAI prices in US$ per 1M tokens, for the cost estimate (gpt-5-mini by default).
     price: {
       input: Number(optional("OPENAI_PRICE_INPUT", "0.25")),

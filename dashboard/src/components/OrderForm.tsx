@@ -6,19 +6,24 @@ import { Button, ErrorNote } from "./ui";
 
 const inputClass = "w-full rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary";
 
-// The confirmation the customer gets when the team records the order (they can edit it in the form).
+// The confirmation the customer gets when the team records the order (they can edit it in the form), in the
+// team's own format: name and number, then the order, the address, the total and the payment.
 function confirmation(o: OrderInput): string {
   const items = o.items
     .filter((i) => i.color || i.size || i.product)
-    .map((i) => `${i.quantity} × ${[i.product || "الثوب العربي", i.color, i.size && `مقاس ${i.size}`].filter(Boolean).join(" ")}`);
-  const place = [o.city, o.address].filter((s) => s.trim()).join(" - ");
+    .map((i) => `${i.quantity} × ${[i.product || "الطقم العربي 3 قطع", i.color, i.size && `مقاس ${i.size}`].filter(Boolean).join(" ")}`);
+  // The address often starts with the city already ("طبرق - جوار…"): it isn't written twice.
+  const city = o.city.trim();
+  const address = o.address.trim();
+  const place = city && !address.startsWith(city) ? [city, address].filter(Boolean).join(" - ") : address || city;
   return [
     "تم تثبيت طلبك استاذ 🙏",
+    o.name.trim() && `الاسم: ${o.name.trim()}`,
+    o.phone.trim() && `الرقم: ${o.phone.trim()}`,
     ...items,
     place && `التوصيل: ${place}`,
     o.total.trim() && `الإجمالي: ${o.total.trim()}`,
     o.payment && `الدفع: ${PAYMENT_LABEL[o.payment]}`,
-    "تقدر تقيسو وقت يجيك المندوب قبل ما تستلم 👌",
   ]
     .filter(Boolean)
     .join("\n");

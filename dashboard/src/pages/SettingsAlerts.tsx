@@ -224,7 +224,7 @@ export function SupervisorCard() {
         <Button onClick={() => save.mutate(draft)} disabled={!Object.keys(draft).length || save.isPending}>
           حفظ
         </Button>
-        <span className="text-xs text-muted">الساعات بتوقيت ليبيا. نهاية الدوام 24 = نص الليل.</span>
+        <span className="text-xs text-muted">الساعات بتوقيت دمشق. نهاية الدوام 24 = نص الليل.</span>
         <ErrorNote error={save.error} />
       </div>
     </Card>

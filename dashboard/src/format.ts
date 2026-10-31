@@ -6,6 +6,11 @@ export const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((
 export const usd = (n: number) => (n < 0.01 && n > 0 ? "<$0.01" : `$${n.toFixed(2)}`);
 export const secs = (ms: number) => (ms ? `${(ms / 1000).toFixed(1)}ث` : "—");
 
+// The dashboard's day is Damascus time (UTC+3 all year), the team's clock, as on the server
+// (DASHBOARD_TZ_OFFSET_HOURS). YYYY-MM-DD, `daysAgo` days before today.
+export const TZ_OFFSET_HOURS = 3;
+export const localDate = (daysAgo = 0) => new Date(Date.now() + TZ_OFFSET_HOURS * 3600_000 - daysAgo * 86_400_000).toISOString().slice(0, 10);
+
 export function phone(n: string) {
   if (n.startsWith("cw:")) return `Chatwoot #${n.slice(3)}`;
   if (n.startsWith("fb:")) return `ماسنجر · …${n.slice(-6)}`;
