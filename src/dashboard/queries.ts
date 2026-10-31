@@ -12,6 +12,11 @@ export function localDayStart(daysAgo: number): number {
   return now - (now % DAY) - daysAgo * DAY - tzMs();
 }
 
+// Start of a local date ("2026-10-31").
+export function localDateStart(date: string): number {
+  return Date.parse(`${date}T00:00:00Z`) - tzMs();
+}
+
 export function localDay(ms: number): string {
   return new Date(ms + tzMs()).toISOString().slice(0, 10);
 }
@@ -38,24 +43,42 @@ export function costUsd(prompt: number, cached: number, completion: number, mode
   return aiCostUsd(model, prompt, cached, completion);
 }
 
-export function totals(since: number): Totals {
+// A stretch of time for the overview: from/to in ms, and optionally only some hours of each day (local time,
+// hourFrom inclusive, hourTo exclusive; 20 → 2 wraps past midnight). since alone = from then until now.
+export type Range = { from: number; to: number; hourFrom?: number; hourTo?: number };
+
+const asRange = (r: Range | number): Range => (typeof r === "number" ? { from: r, to: Date.now() + DAY } : r);
+const hasHours = (r: Range) => r.hourFrom !== undefined && r.hourTo !== undefined && r.hourFrom !== r.hourTo;
+
+// SQL condition + params for a time column inside the range (and the hours window, when set).
+function within(r: Range, col = "created_at"): { sql: string; params: number[] } {
+  if (!hasHours(r)) return { sql: `${col} >= ? AND ${col} < ?`, params: [r.from, r.to] };
+  const hour = `CAST(strftime('%H', ${col} / 1000 + ${config.dashboard.timezoneOffsetHours * 3600}, 'unixepoch') AS INTEGER)`;
+  const hours = r.hourFrom! < r.hourTo! ? `${hour} >= ? AND ${hour} < ?` : `(${hour} >= ? OR ${hour} < ?)`;
+  return { sql: `${col} >= ? AND ${col} < ? AND ${hours}`, params: [r.from, r.to, r.hourFrom!, r.hourTo!] };
+}
+
+export function totals(range: Range | number): Totals {
+  const r = asRange(range);
+  const w = within(r);
   const msg = db
     .prepare(
       `SELECT
          COUNT(DISTINCT CASE WHEN source = 'customer' THEN customer END) AS conversations,
          SUM(source = 'customer') AS customerMessages,
          SUM(source = 'staff') AS staffMessages
-       FROM messages WHERE history = 0 AND created_at >= ?`,
+       FROM messages WHERE history = 0 AND ${w.sql}`,
     )
-    .get(since) as { conversations: number; customerMessages: number | null; staffMessages: number | null };
+    .get(...w.params) as { conversations: number; customerMessages: number | null; staffMessages: number | null };
 
+  const first = within(r, "first_at");
   const newCustomers = db
     .prepare(
       `SELECT COUNT(*) AS n FROM (
-         SELECT customer FROM messages WHERE source = 'customer' GROUP BY customer HAVING MIN(created_at) >= ?
-       )`,
+         SELECT customer, MIN(created_at) AS first_at FROM messages WHERE source = 'customer' GROUP BY customer
+       ) WHERE ${first.sql}`,
     )
-    .get(since) as { n: number };
+    .get(...first.params) as { n: number };
 
   const ai = db
     .prepare(
@@ -64,36 +87,37 @@ export function totals(since: number): Totals {
          SUM(action = 'order') AS orders, COUNT(DISTINCT customer) AS conversations,
          SUM(prompt_tokens) AS prompt, SUM(cached_tokens) AS cached,
          SUM(completion_tokens) AS completion, SUM(reasoning_tokens) AS reasoning, SUM(cost_usd) AS cost
-       FROM ai_calls WHERE created_at >= ?`,
+       FROM ai_calls WHERE ${w.sql}`,
     )
-    .get(since) as Record<string, number | null>;
+    .get(...w.params) as Record<string, number | null>;
 
   // Conversations the AI handled with no handoff and no error, and either took an order
   // (the team only confirms it) or needed no team message at all.
+  const staff = within(r, "m.created_at");
   const aiOnly = db
     .prepare(
       `SELECT COUNT(*) AS n FROM (
-         SELECT customer, SUM(action = 'order') AS orders FROM ai_calls WHERE created_at >= ? GROUP BY customer
+         SELECT customer, SUM(action = 'order') AS orders FROM ai_calls WHERE ${w.sql} GROUP BY customer
          HAVING SUM(action IN ('handoff', 'error')) = 0
        ) a
        WHERE a.orders > 0 OR NOT EXISTS (
          SELECT 1 FROM messages m
-         WHERE m.customer = a.customer AND m.source = 'staff' AND m.history = 0 AND m.created_at >= ?
+         WHERE m.customer = a.customer AND m.source = 'staff' AND m.history = 0 AND ${staff.sql}
        )`,
     )
-    .get(since, since) as { n: number };
+    .get(...w.params, ...staff.params) as { n: number };
 
   const latencies = (
     db
-      .prepare("SELECT latency_ms AS l FROM ai_calls WHERE created_at >= ? AND action != 'error' ORDER BY l")
-      .all(since) as { l: number }[]
-  ).map((r) => r.l);
+      .prepare(`SELECT latency_ms AS l FROM ai_calls WHERE ${w.sql} AND action != 'error' ORDER BY l`)
+      .all(...w.params) as { l: number }[]
+  ).map((x) => x.l);
   const pick = (q: number) => latencies[Math.min(latencies.length - 1, Math.floor(q * latencies.length))] ?? 0;
 
   // Orders the team recorded from the dashboard (sales they closed themselves).
-  const teamOrders = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE source = 'team' AND created_at >= ?").get(since) as { n: number };
+  const teamOrders = db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE source = 'team' AND ${w.sql}`).get(...w.params) as { n: number };
   // Saved orders, not the AI's order decisions: an order the AI sends again is not saved twice.
-  const aiOrders = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE source = 'ai' AND created_at >= ?").get(since) as { n: number };
+  const aiOrders = db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE source = 'ai' AND ${w.sql}`).get(...w.params) as { n: number };
 
   const prompt = ai.prompt ?? 0;
   const cached = ai.cached ?? 0;
@@ -122,19 +146,29 @@ export function totals(since: number): Totals {
 
 // Where new chats stop, by the day they started (local time): never got the price, got it and stopped, reached
 // the booking (we asked for the name, phone or address, or sent the summary) without an order, or ordered.
-// Read from our messages, so it covers the team's replies too.
+// Read from our messages, so it covers the team's replies too. A chat counts when its first message is in the range.
 export type FunnelDay = { day: string; chats: number; beforePrice: number; afterPrice: number; booking: number; ordered: number };
 
-export function funnel(days: number): FunnelDay[] {
-  const since = localDayStart(days - 1);
+const emptyFunnel = (day: string): FunnelDay => ({ day, chats: 0, beforePrice: 0, afterPrice: 0, booking: 0, ordered: 0 });
+
+// The local days a range covers, oldest first.
+function rangeDays(r: Range): string[] {
+  const days: string[] = [];
+  for (let t = r.from; t < Math.min(r.to, Date.now() + DAY); t += DAY) days.push(localDay(t));
+  return [...new Set(days)];
+}
+
+export function funnel(range: Range | number): FunnelDay[] {
+  const r = asRange(range);
   const offsetSec = config.dashboard.timezoneOffsetHours * 3600;
+  const first = within(r, "first_at");
   const ours = (likes: string[]) =>
     `EXISTS (SELECT 1 FROM messages m WHERE m.customer = f.customer AND m.role = 'business' AND m.history = 0 AND (${likes.map((l) => `m.text LIKE '%${l}%'`).join(" OR ")}))`;
   const rows = db
     .prepare(
       `WITH f AS (
          SELECT customer, MIN(created_at) AS first_at FROM messages WHERE history = 0 AND role = 'customer'
-         GROUP BY customer HAVING first_at >= ?
+         GROUP BY customer HAVING ${first.sql}
        )
        SELECT strftime('%Y-%m-%d', f.first_at / 1000 + ${offsetSec}, 'unixepoch') AS day,
          EXISTS (SELECT 1 FROM orders o WHERE o.customer = f.customer AND o.created_at >= f.first_at) AS ordered,
@@ -142,61 +176,55 @@ export function funnel(days: number): FunnelDay[] {
          ${ours(["دينار", "د.ل"])} AS priced
        FROM f`,
     )
-    .all(since) as { day: string; ordered: number; booking: number; priced: number }[];
-  const byDay = new Map<string, FunnelDay>();
-  for (let i = days - 1; i >= 0; i--) {
-    const day = localDay(localDayStart(i));
-    byDay.set(day, { day, chats: 0, beforePrice: 0, afterPrice: 0, booking: 0, ordered: 0 });
-  }
-  for (const r of rows) {
-    const d = byDay.get(r.day);
+    .all(...first.params) as { day: string; ordered: number; booking: number; priced: number }[];
+  const byDay = new Map(rangeDays(r).map((day) => [day, emptyFunnel(day)]));
+  for (const row of rows) {
+    const d = byDay.get(row.day);
     if (!d) continue;
     d.chats++;
-    if (r.ordered) d.ordered++;
-    else if (r.booking) d.booking++;
-    else if (r.priced) d.afterPrice++;
+    if (row.ordered) d.ordered++;
+    else if (row.booking) d.booking++;
+    else if (row.priced) d.afterPrice++;
     else d.beforePrice++;
   }
   return [...byDay.values()];
 }
 
-export function overview(days: number) {
-  const since = localDayStart(days - 1);
+function funnelTotal(days: FunnelDay[]): FunnelDay {
+  const t = emptyFunnel("");
+  for (const d of days) for (const k of ["chats", "beforePrice", "afterPrice", "booking", "ordered"] as const) t[k] += d[k];
+  return t;
+}
+
+// The overview for a range, with the same numbers for the period just before it (same length, same hours),
+// so the team can compare.
+export function overview(range: Range) {
   const offsetSec = config.dashboard.timezoneOffsetHours * 3600;
+  const w = within(range);
+  const day = `strftime('%Y-%m-%d', created_at / 1000 + ${offsetSec}, 'unixepoch')`;
 
   // One row per local day, with empty days filled in.
-  const daily = new Map<string, Record<string, number>>();
-  for (let i = days - 1; i >= 0; i--) {
-    daily.set(localDay(localDayStart(i)), {
-      conversations: 0, customerMessages: 0, staffMessages: 0, aiReplies: 0, handoffs: 0, orders: 0, errors: 0, costUsd: 0,
-    });
-  }
+  const daily = new Map<string, Record<string, number>>(
+    rangeDays(range).map((d) => [d, { conversations: 0, customerMessages: 0, staffMessages: 0, aiReplies: 0, handoffs: 0, orders: 0, errors: 0, costUsd: 0 }]),
+  );
   const msgRows = db
     .prepare(
-      `SELECT strftime('%Y-%m-%d', created_at / 1000 + ${offsetSec}, 'unixepoch') AS day,
+      `SELECT ${day} AS day,
          COUNT(DISTINCT CASE WHEN source = 'customer' THEN customer END) AS conversations,
          SUM(source = 'customer') AS customerMessages, SUM(source = 'staff') AS staffMessages
-       FROM messages WHERE history = 0 AND created_at >= ? GROUP BY day`,
+       FROM messages WHERE history = 0 AND ${w.sql} GROUP BY day`,
     )
-    .all(since) as { day: string; conversations: number; customerMessages: number; staffMessages: number }[];
+    .all(...w.params) as { day: string; conversations: number; customerMessages: number; staffMessages: number }[];
   for (const r of msgRows) Object.assign(daily.get(r.day) ?? {}, r);
 
   const aiRows = db
     .prepare(
-      `SELECT strftime('%Y-%m-%d', created_at / 1000 + ${offsetSec}, 'unixepoch') AS day,
+      `SELECT ${day} AS day,
          SUM(action = 'reply') AS aiReplies, SUM(action = 'handoff') AS handoffs, SUM(action = 'error') AS errors,
-         SUM(action = 'order') AS orders,
          SUM(cost_usd) AS cost
-       FROM ai_calls WHERE created_at >= ? GROUP BY day`,
+       FROM ai_calls WHERE ${w.sql} GROUP BY day`,
     )
-    .all(since) as {
-    day: string;
-    aiReplies: number;
-    handoffs: number;
-    orders: number;
-    errors: number;
-    cost: number;
-  }[];
+    .all(...w.params) as { day: string; aiReplies: number; handoffs: number; errors: number; cost: number }[];
   for (const r of aiRows) {
     const row = daily.get(r.day);
     if (!row) continue;
@@ -207,42 +235,44 @@ export function overview(days: number) {
   }
   // The chart's orders line: saved orders, the AI's and the team's.
   const orderRows = db
-    .prepare(
-      `SELECT strftime('%Y-%m-%d', created_at / 1000 + ${offsetSec}, 'unixepoch') AS day, COUNT(*) AS n
-       FROM orders WHERE created_at >= ? GROUP BY day`,
-    )
-    .all(since) as { day: string; n: number }[];
+    .prepare(`SELECT ${day} AS day, COUNT(*) AS n FROM orders WHERE ${w.sql} GROUP BY day`)
+    .all(...w.params) as { day: string; n: number }[];
   for (const r of orderRows) {
     const row = daily.get(r.day);
     if (row) row.orders = r.n;
   }
 
-  // Customer messages per local hour of day, to see when the ads bring people in.
+  // Customer messages per local hour of day, over the whole days of the range (not only the chosen hours),
+  // to see when the ads bring people in.
+  const allHours = within({ from: range.from, to: range.to });
   const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, customerMessages: 0 }));
   const hourRows = db
     .prepare(
       `SELECT CAST(strftime('%H', created_at / 1000 + ${offsetSec}, 'unixepoch') AS INTEGER) AS hour, COUNT(*) AS n
-       FROM messages WHERE history = 0 AND source = 'customer' AND created_at >= ? GROUP BY hour`,
+       FROM messages WHERE history = 0 AND source = 'customer' AND ${allHours.sql} GROUP BY hour`,
     )
-    .all(since) as { hour: number; n: number }[];
+    .all(...allHours.params) as { hour: number; n: number }[];
   for (const r of hourRows) if (hourly[r.hour]) hourly[r.hour]!.customerMessages = r.n;
 
   const recentHandoffs = db
     .prepare(
       `SELECT customer, channel, action, reason, created_at AS at FROM ai_calls
-       WHERE action IN ('handoff', 'error') AND created_at >= ? ORDER BY id DESC LIMIT 15`,
+       WHERE action IN ('handoff', 'error') AND ${w.sql} ORDER BY id DESC LIMIT 15`,
     )
-    .all(since);
+    .all(...w.params);
 
+  const before: Range = { ...range, from: range.from - (range.to - range.from), to: range.from };
+  const funnelDays = funnel(range);
   return {
-    days,
-    since,
-    today: totals(localDayStart(0)),
-    period: totals(since),
-    daily: [...daily.entries()].map(([day, v]) => ({ day, ...v })),
+    range,
+    period: totals(range),
+    previous: totals(before),
+    daily: [...daily.entries()].map(([d, v]) => ({ day: d, ...v })),
     hourly,
     recentHandoffs,
-    funnel: funnel(days),
+    funnel: funnelDays,
+    funnelTotal: funnelTotal(funnelDays),
+    previousFunnelTotal: funnelTotal(funnel(before)),
   };
 }
 

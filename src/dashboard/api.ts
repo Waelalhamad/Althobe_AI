@@ -151,7 +151,18 @@ const intParam = (value: unknown, fallback: number, max: number) => {
 };
 
 dashboardApi.get("/overview", (req, res) => {
-  res.json(queries.overview(intParam(req.query.days, 7, 90)));
+  // from/to: local dates (YYYY-MM-DD, both included); else the last `days` days. hourFrom/hourTo: only those hours.
+  const date = (v: unknown) => (typeof v === "string" && /^d{4}-d{2}-d{2}$/.test(v) ? v : undefined);
+  const hour = (v: unknown) => (v === undefined || v === "" ? undefined : Math.min(24, Math.max(0, Math.round(Number(v)))) % 24);
+  const from = date(req.query.from);
+  const to = date(req.query.to) ?? from;
+  const range =
+    from && to && from <= to
+      ? { from: queries.localDateStart(from), to: Math.min(queries.localDateStart(to) + 24 * 60 * 60 * 1000, queries.localDateStart(from) + 92 * 24 * 60 * 60 * 1000) }
+      : { from: queries.localDayStart(intParam(req.query.days, 7, 90) - 1), to: queries.localDayStart(-1) };
+  const hourFrom = hour(req.query.hourFrom);
+  const hourTo = hour(req.query.hourTo);
+  res.json(queries.overview({ ...range, ...(hourFrom !== undefined && hourTo !== undefined && !Number.isNaN(hourFrom + hourTo) ? { hourFrom, hourTo } : {}) }));
 });
 
 const FILTERS = ["all", "unanswered", "ai", "paused", "handoff"] as const;

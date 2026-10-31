@@ -60,11 +60,17 @@ export type AiCallRow = { customer: string; channel: string; action: "reply" | "
 
 export type FunnelDay = { day: string; chats: number; beforePrice: number; afterPrice: number; booking: number; ordered: number };
 
+// Local dates (YYYY-MM-DD, both included) and optionally only some hours of each day (hourTo excluded, 0 = midnight).
+export type OverviewQuery = { from: string; to: string; hourFrom?: number; hourTo?: number };
+
 export type Overview = {
-  days: number;
+  range: { from: number; to: number; hourFrom?: number; hourTo?: number };
   funnel: FunnelDay[];
-  today: Totals;
+  funnelTotal: FunnelDay;
+  previousFunnelTotal: FunnelDay;
   period: Totals;
+  // The same numbers for the period just before (same length, same hours).
+  previous: Totals;
   daily: DailyRow[];
   hourly: { hour: number; customerMessages: number }[];
   recentHandoffs: AiCallRow[];
@@ -322,7 +328,10 @@ export type Decision =
 export const api = {
   login: (password: string) => post<{ ok: true }>("/login", { password }),
   logout: () => post<{ ok: true }>("/logout"),
-  overview: (days: number) => request<Overview>(`/overview?days=${days}`),
+  overview: (q: OverviewQuery) =>
+    request<Overview>(
+      `/overview?${new URLSearchParams({ from: q.from, to: q.to, ...(q.hourFrom !== undefined && q.hourTo !== undefined ? { hourFrom: String(q.hourFrom), hourTo: String(q.hourTo) } : {}) })}`,
+    ),
   conversations: (filter: ConversationFilter, q: string, limit = PAGE) =>
     request<ConversationSummary[]>(`/conversations?filter=${filter}&q=${encodeURIComponent(q)}&limit=${limit}`),
   conversation: (customer: string) => request<ConversationDetail>(`/conversations/${encodeURIComponent(customer)}`),

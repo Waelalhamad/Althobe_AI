@@ -1,17 +1,26 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Bot, CircleDollarSign, Gauge, Hand, MessageCircle, ShieldCheck, ShoppingBag, Timer, UserPlus, Users, TriangleAlert } from "lucide-react";
-import { api, type FunnelDay, type Totals } from "../api";
+import { api, type FunnelDay, type OverviewQuery, type Totals } from "../api";
 import { Badge, Card, Empty, ErrorNote, PageHeader, Stat } from "../components/ui";
 import { ago, num, pct, phone, secs, usd } from "../format";
 
-const RANGES = [
-  { days: 1, label: "اليوم" },
-  { days: 7, label: "7 أيام" },
-  { days: 30, label: "30 يوم" },
-];
+// Libya is UTC+2 all year (the server's "today" too).
+const libyaDate = (daysAgo = 0) => new Date(Date.now() + 2 * 3600_000 - daysAgo * 86_400_000).toISOString().slice(0, 10);
+
+const PRESETS = [
+  { id: "today", label: "اليوم", from: 0, to: 0 },
+  { id: "yesterday", label: "مبارح", from: 1, to: 1 },
+  { id: "2d", label: "آخر يومين", from: 1, to: 0 },
+  { id: "3d", label: "آخر 3 أيام", from: 2, to: 0 },
+  { id: "7d", label: "7 أيام", from: 6, to: 0 },
+  { id: "30d", label: "30 يوم", from: 29, to: 0 },
+] as const;
+
+const HOURS = Array.from({ length: 24 }, (_, h) => h);
+const hourLabel = (h: number) => `${String(h).padStart(2, "0")}:00`;
 
 const C = {
   primary: "hsl(171 36% 52%)",
@@ -29,38 +38,82 @@ const tooltipStyle = {
 };
 
 export function Overview() {
-  const [days, setDays] = useState(7);
-  const q = useQuery({ queryKey: ["overview", days], queryFn: () => api.overview(days), refetchInterval: 30_000 });
+  const [preset, setPreset] = useState<string>("7d");
+  const [custom, setCustom] = useState({ from: libyaDate(6), to: libyaDate(0) });
+  // Only some hours of each day (e.g. 18:00 → 00:00), or the whole day.
+  const [hours, setHours] = useState<{ from: number; to: number } | null>(null);
+  const p = PRESETS.find((x) => x.id === preset);
+  const query: OverviewQuery = {
+    ...(p ? { from: libyaDate(p.from), to: libyaDate(p.to) } : custom),
+    ...(hours ? { hourFrom: hours.from, hourTo: hours.to } : {}),
+  };
+  const q = useQuery({ queryKey: ["overview", query], queryFn: () => api.overview(query), refetchInterval: 30_000 });
   const d = q.data;
-  const t: Totals | undefined = d ? (days === 1 ? d.today : d.period) : undefined;
+  const t: Totals | undefined = d?.period;
+  const b: Totals | undefined = d?.previous;
+  const multiDay = query.from !== query.to;
+  const select = "rounded-lg border border-line bg-card-2 px-2 py-1";
 
   return (
     <div className="mx-auto max-w-7xl">
       <PageHeader
         title="نظرة عامة"
-        subtitle="أرقام واتساب والمساعد. بتتحدّث كل 30 ثانية، بتوقيت ليبيا."
-        actions={RANGES.map((r) => (
+        subtitle="أرقام واتساب والمساعد، بتوقيت ليبيا. كل رقم بينقارن مع نفس المدة اللي قبلها (ونفس الساعات)."
+        actions={[...PRESETS, { id: "custom", label: "مخصص" }].map((r) => (
           <button
-            key={r.days}
-            onClick={() => setDays(r.days)}
-            className={`rounded-xl px-3 py-1.5 text-sm ${days === r.days ? "bg-primary text-white" : "bg-card-2 text-muted hover:text-fg"}`}
+            key={r.id}
+            onClick={() => setPreset(r.id)}
+            className={`rounded-xl px-3 py-1.5 text-sm ${preset === r.id ? "bg-primary text-white" : "bg-card-2 text-muted hover:text-fg"}`}
           >
             {r.label}
           </button>
         ))}
       />
+      <div className="mb-6 flex flex-wrap items-center gap-3 text-sm">
+        {preset === "custom" && (
+          <label className="flex items-center gap-2">
+            <span className="text-muted">من</span>
+            <input type="date" value={custom.from} max={custom.to} onChange={(e) => e.target.value && setCustom((c) => ({ ...c, from: e.target.value }))} className={select} />
+            <span className="text-muted">لـ</span>
+            <input type="date" value={custom.to} min={custom.from} max={libyaDate(0)} onChange={(e) => e.target.value && setCustom((c) => ({ ...c, to: e.target.value }))} className={select} />
+          </label>
+        )}
+        <label className="flex items-center gap-2">
+          <span className="text-muted">الساعات</span>
+          <select value={hours ? "some" : "all"} onChange={(e) => setHours(e.target.value === "all" ? null : { from: 18, to: 0 })} className={select}>
+            <option value="all">كل اليوم</option>
+            <option value="some">ساعات محددة</option>
+          </select>
+        </label>
+        {hours && (
+          <label className="flex items-center gap-2">
+            <span className="text-muted">من</span>
+            <select value={hours.from} onChange={(e) => setHours({ ...hours, from: Number(e.target.value) })} className={`num ${select}`}>
+              {HOURS.map((h) => (
+                <option key={h} value={h}>{hourLabel(h)}</option>
+              ))}
+            </select>
+            <span className="text-muted">لـ</span>
+            <select value={hours.to} onChange={(e) => setHours({ ...hours, to: Number(e.target.value) })} className={`num ${select}`}>
+              {HOURS.map((h) => (
+                <option key={h} value={h}>{hourLabel(h)}</option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
       <ErrorNote error={q.error} />
 
-      {t && d && (
+      {t && b && d && (
         <div className="flex flex-col gap-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-            <Stat icon={Users} label="محادثات" value={num(t.conversations)} hint={`${num(t.customerMessages)} رسالة من الزباين`} />
-            <Stat icon={UserPlus} label="زباين جدد" value={num(t.newCustomers)} hint="أول مرة بيكتبولنا" tone="info" />
+            <Stat icon={Users} label="محادثات" value={num(t.conversations)} hint={<>{num(t.customerMessages)} رسالة من الزباين <Delta now={t.conversations} before={b.conversations} /></>} />
+            <Stat icon={UserPlus} label="زباين جدد" value={num(t.newCustomers)} hint={<>أول مرة بيكتبولنا <Delta now={t.newCustomers} before={b.newCustomers} /></>} tone="info" />
             <Stat
               icon={ShoppingBag}
               label="الطلبات"
               value={<Link href="/orders">{num(t.orders + (t.teamOrders ?? 0))}</Link>}
-              hint={`${num(t.orders)} جمعها المساعد · ${num(t.teamOrders ?? 0)} سجّلها الفريق`}
+              hint={<>{num(t.orders)} جمعها المساعد · {num(t.teamOrders ?? 0)} سجّلها الفريق <Delta now={t.orders + (t.teamOrders ?? 0)} before={b.orders + (b.teamOrders ?? 0)} /></>}
               tone="ok"
             />
             <Stat icon={Bot} label="ردود المساعد" value={num(t.aiReplies)} hint={`${num(t.staffMessages)} رد من الفريق`} tone="ok" />
@@ -68,7 +121,7 @@ export function Overview() {
               icon={Hand}
               label="تحويلات للفريق"
               value={num(t.handoffs)}
-              hint={t.errors ? `${num(t.errors)} خطأ` : "بدون أخطاء"}
+              hint={<>{t.errors ? `${num(t.errors)} خطأ` : "بدون أخطاء"} <Delta now={t.handoffs} before={b.handoffs} lowerIsBetter /></>}
               tone={t.errors ? "bad" : "warn"}
             />
           </div>
@@ -78,13 +131,13 @@ export function Overview() {
               icon={ShieldCheck}
               label="حلّها المساعد لحالو"
               value={pct(t.aiOnlyConversations, t.aiConversations)}
-              hint={`${num(t.aiOnlyConversations)} من ${num(t.aiConversations)} محادثة رد فيها المساعد، بلا تحويل (الطلبات محسوبة نجاح)`}
+              hint={<>{num(t.aiOnlyConversations)} من {num(t.aiConversations)} محادثة رد فيها المساعد، بلا تحويل <Delta now={rate(t.aiOnlyConversations, t.aiConversations)} before={rate(b.aiOnlyConversations, b.aiConversations)} points /></>}
             />
             <Stat
               icon={Gauge}
               label="نسبة التحويل"
               value={pct(t.handoffs + t.errors, t.aiReplies + t.handoffs + t.orders + t.errors)}
-              hint="من كل قرارات المساعد"
+              hint={<>من كل قرارات المساعد <Delta now={rate(t.handoffs + t.errors, t.aiReplies + t.handoffs + t.orders + t.errors)} before={rate(b.handoffs + b.errors, b.aiReplies + b.handoffs + b.orders + b.errors)} points lowerIsBetter /></>}
               tone="warn"
             />
             <Stat
@@ -107,7 +160,7 @@ export function Overview() {
             />
           </div>
 
-          {days > 1 && (
+          {multiDay && (
             <Card>
               <h2 className="mb-4 font-semibold">الحركة اليومية</h2>
               <div className="h-72" dir="ltr">
@@ -135,12 +188,12 @@ export function Overview() {
             </Card>
           )}
 
-          <Funnel data={d.funnel} days={days} />
+          <Funnel data={d.funnel} total={d.funnelTotal} before={d.previousFunnelTotal} multiDay={multiDay} />
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
             <Card className="xl:col-span-3">
               <h2 className="mb-1 font-semibold">أوقات رسائل الزباين</h2>
-              <p className="mb-4 text-xs text-muted">كل ساعة من اليوم، بتوقيت ليبيا. بيساعد بتوقيت الإعلانات ودوام الفريق.</p>
+              <p className="mb-4 text-xs text-muted">كل ساعة من اليوم، بتوقيت ليبيا، لكل أيام الفترة (مش بس الساعات المحددة). بيساعد بتوقيت الإعلانات ودوام الفريق.</p>
               <div className="h-60" dir="ltr">
                 <ResponsiveContainer>
                   <BarChart data={d.hourly}>
@@ -213,19 +266,31 @@ const STOPS = [
   { key: "ordered", label: "طلب", color: C.ok },
 ] as const;
 
-// New chats by the day they started: how many ordered, and where the others stopped.
-function Funnel({ data, days }: { data: FunnelDay[]; days: number }) {
-  const total = data.reduce(
-    (t, d) => ({ chats: t.chats + d.chats, beforePrice: t.beforePrice + d.beforePrice, afterPrice: t.afterPrice + d.afterPrice, booking: t.booking + d.booking, ordered: t.ordered + d.ordered }),
-    { chats: 0, beforePrice: 0, afterPrice: 0, booking: 0, ordered: 0 },
+const rate = (part: number, whole: number) => (whole > 0 ? (100 * part) / whole : 0);
+
+// The change against the period before: a percent for counts, percentage points for rates (points).
+function Delta({ now, before, points, lowerIsBetter }: { now: number; before: number; points?: boolean; lowerIsBetter?: boolean }): ReactNode {
+  const diff = points ? now - before : before > 0 ? (100 * (now - before)) / before : undefined;
+  if (diff === undefined || Math.abs(diff) < 0.5) return <span className="text-muted">· زي قبل</span>;
+  const good = lowerIsBetter ? diff < 0 : diff > 0;
+  return (
+    <span className={good ? "text-ok" : "text-bad"}>
+      · {diff > 0 ? "▲" : "▼"} <span className="num">{Math.abs(Math.round(diff))}{points ? " نقطة" : "%"}</span>
+    </span>
   );
+}
+
+// New chats by the day they started: how many ordered, and where the others stopped.
+function Funnel({ data, total, before, multiDay }: { data: FunnelDay[]; total: FunnelDay; before: FunnelDay; multiDay: boolean }) {
   const daily = data.map((d) => ({ ...d, rate: d.chats ? Math.round((1000 * d.ordered) / d.chats) / 10 : 0 }));
   return (
     <Card>
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-semibold">نسبة الشراء ووين بيوقفو الزباين</h2>
         <span className="text-sm text-muted">
-          <span className="num font-semibold text-fg">{pct(total.ordered, total.chats)}</span> من {num(total.chats)} محادثة جديدة طلبت
+          <span className="num font-semibold text-fg">{pct(total.ordered, total.chats)}</span> من {num(total.chats)} محادثة جديدة طلبت{" "}
+          <Delta now={rate(total.ordered, total.chats)} before={rate(before.ordered, before.chats)} points />
+          <span className="ms-1">(قبل: <span className="num">{pct(before.ordered, before.chats)}</span>)</span>
         </span>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -238,13 +303,16 @@ function Funnel({ data, days }: { data: FunnelDay[]; days: number }) {
             <div className="num mt-1 font-semibold">
               {num(total[s.key])} <span className="text-xs font-normal text-muted">· {pct(total[s.key], total.chats)}</span>
             </div>
+            <div className="mt-1 text-xs">
+              <Delta now={rate(total[s.key], total.chats)} before={rate(before[s.key], before.chats)} points lowerIsBetter={s.key !== "ordered"} />
+            </div>
           </div>
         ))}
       </div>
       <p className="mt-3 text-xs text-muted">
         كل محادثة محسوبة بيوم ما بلّشت. «بنص الحجز»: طلبنا الاسم أو الرقم أو العنوان، أو بعتنا الملخص، وما صار طلب.
       </p>
-      {days > 1 && (
+      {multiDay && (
         <div className="mt-4 h-72" dir="ltr">
           <ResponsiveContainer>
             <ComposedChart data={daily}>
