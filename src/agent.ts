@@ -433,6 +433,8 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
   // An order missing a detail (a full phone, a size) goes back to the model once per round, to ask the customer.
   let orderRefused = 0;
   let refusedOrder: Extract<AgentDecision, { action: "order" }> | undefined;
+  // An order the model tried to save before sending its summary.
+  let noSummary: CollectedOrder | undefined;
   // The last round only asked for photos: the next one writes the text (no more tools).
   let textNext = false;
 
@@ -490,6 +492,22 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     }
 
     const decision = readDecision(message);
+    if (decision.action === "order" && !summaryAnswered(history)) {
+      // No order before the customer has seen its summary and answered it: the model sends the summary now
+      // (and if it still doesn't, our own summary goes), never "تم الحجز".
+      noSummary = withoutPlaceholders(withLocation(decision.order, history, context.location));
+      if (round < 4) {
+        input.push(
+          ...outputItems(
+            response,
+            toolResults,
+            "NOT saved: the customer hasn't seen the order summary yet. Don't say it's booked. Send the summary now, in the exact format of the knowledge documents, ending with «نثبّتلك الطلب استاذ؟», and call submit_order only after they confirm it.",
+          ),
+        );
+        continue;
+      }
+      return { action: "reply", text: orderSummary(noSummary), photos, usage };
+    }
     if (decision.action === "order") {
       const order = withoutPlaceholders(withLocation(decision.order, history, context.location));
       const gone = missingStock(order.items);
@@ -511,6 +529,10 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     // team sees what's missing (see addressGaps), rather than a "booked" customer with no order.
     if (decision.action === "reply" && refusedOrder && /تم\s*(ال)?حجز|تم\s*تثبيت|ثبتنالك|انحجز/.test(decision.text)) {
       return { ...refusedOrder, messageToCustomer: decision.text, usage };
+    }
+    // Refused for a missing summary and the model still didn't write one: our own summary goes instead.
+    if (decision.action === "reply" && noSummary && !SUMMARY.test(decision.text)) {
+      return { action: "reply", text: orderSummary(noSummary), photos, usage };
     }
     if (decision.action === "reply") {
       decision.text = withoutRepeatedCountry(decision.text, history, context.customerPhone);
@@ -875,6 +897,36 @@ export function addressGaps(order: { city: string; address: string; phone?: stri
 }
 
 // An order the model wants to save but can't be: told back to it, so it asks the customer (see decideReply).
+const SUMMARY = /المنتج\s*:/;
+
+// The order summary was sent (by the AI or the team) and the customer wrote after it.
+export function summaryAnswered(history: ChatTurn[]): boolean {
+  const last = history.findLastIndex((t) => t.role === "business" && SUMMARY.test(t.text));
+  return last >= 0 && history.slice(last + 1).some((t) => t.role === "customer");
+}
+
+// The summary in the knowledge documents' format, for when the model won't write it.
+export function orderSummary(order: CollectedOrder): string {
+  const items = order.items.length ? order.items : [{ product: "", color: "", size: "", quantity: 1 }];
+  const one = items.length === 1;
+  const count = items.reduce((n, i) => n + (Number(i.quantity) || 1), 0);
+  return [
+    "المنتج: طقم عربي 3 قطع",
+    ...(one
+      ? [items[0]!.color && `اللون: ${items[0]!.color}`, items[0]!.size && `المقاس: ${items[0]!.size}`]
+      : items.map((i) => `- ${[i.color, i.size && `مقاس ${i.size}`].filter(Boolean).join(" ")}${Number(i.quantity) > 1 ? ` × ${i.quantity}` : ""}`)),
+    `العدد: ${count}`,
+    order.name && `الاسم: ${order.name}`,
+    order.phone && `الرقم: ${order.phone}`,
+    (order.address || order.city) && `العنوان: ${order.address || order.city}`,
+    `الإجمالي: ${order.total || `${385 * count} دينار`} (شامل التوصيل)`,
+    order.payment === "transfer" ? "الدفع: تحويل مصرفي" : "الدفع: كاش عند الاستلام بعد ما تقيس",
+    "نثبّتلك الطلب استاذ؟",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function orderProblems(order: CollectedOrder): string[] {
   return [
     ...(libyanMobile(order.phone) ? [] : [`The phone "${order.phone}" is not a full Libyan mobile number (10 digits starting 091-095, or +218).`]),
