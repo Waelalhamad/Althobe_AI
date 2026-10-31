@@ -10,7 +10,16 @@ import { OrdersExport } from "../components/OrdersExport";
 import { DARB_STATUS, DarbSend } from "../components/DarbSend";
 import { DarbLink, DarbTrackView } from "../components/DarbTrack";
 import { DarbRedirect } from "../components/DarbRedirect";
-import { ago, time } from "../format";
+import { ago, localDate, time } from "../format";
+
+// The date chips: days back from today (Damascus time), both ends included.
+const DATES = [
+  { id: "today", label: "اليوم", from: 0, to: 0 },
+  { id: "yesterday", label: "مبارح", from: 1, to: 1 },
+  { id: "3d", label: "آخر 3 أيام", from: 2, to: 0 },
+  { id: "7d", label: "7 أيام", from: 6, to: 0 },
+  { id: "30d", label: "30 يوم", from: 29, to: 0 },
+] as const;
 
 const STATUSES: { id: OrderStatus; label: string; tone: "warn" | "info" | "ok" | "muted" }[] = [
   { id: "new", label: "جديد، بدو تأكيد", tone: "warn" },
@@ -53,7 +62,17 @@ export function Orders() {
   const redirects = useQuery({ queryKey: ["redirects"], queryFn: api.darbRedirects, enabled: Boolean(q.data?.darb), refetchInterval: 60_000 });
   const [redirecting, setRedirecting] = useState<Order>();
   const set = (patch: Partial<OrderFilters>) => setF((cur) => ({ ...cur, ...patch }));
-  const filtered = Boolean(f.status || f.darb || f.payment || f.source || search.trim());
+  const filtered = Boolean(f.status || f.darb || f.payment || f.source || f.from || f.to || search.trim());
+  // Which date chip is on ("custom" shows the two date fields).
+  const [dates, setDates] = useState<string>("all");
+  const pickDates = (id: string) => {
+    setDates(id);
+    const d = DATES.find((x) => x.id === id);
+    if (d) set({ from: localDate(d.from), to: localDate(d.to) });
+    else if (id === "custom") set({ from: f.from ?? localDate(6), to: f.to ?? localDate(0) });
+    else set({ from: undefined, to: undefined });
+  };
+  const dateInput = "rounded-xl border border-line bg-card-2 px-2 py-1 text-sm";
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -134,6 +153,7 @@ export function Orders() {
             <button
               onClick={() => {
                 setF({});
+                setDates("all");
                 setSearch("");
               }}
               className="flex items-center gap-1 text-sm text-muted hover:text-bad"
@@ -142,6 +162,23 @@ export function Orders() {
             </button>
           )}
           {q.data && <span className="ms-auto text-xs text-muted">{q.data.orders.length} طلب</span>}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="w-16 text-xs text-muted">التاريخ</span>
+          {[{ id: "all", label: "الكل" }, ...DATES, { id: "custom", label: "مخصص" }].map((d) => (
+            <button key={d.id} onClick={() => pickDates(d.id)} className={chip(dates === d.id)}>
+              {d.label}
+            </button>
+          ))}
+          {dates === "custom" && (
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-muted">من</span>
+              <input type="date" value={f.from ?? ""} max={f.to} onChange={(e) => e.target.value && set({ from: e.target.value })} className={dateInput} />
+              <span className="text-muted">لـ</span>
+              <input type="date" value={f.to ?? ""} min={f.from} max={localDate(0)} onChange={(e) => e.target.value && set({ to: e.target.value })} className={dateInput} />
+            </label>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

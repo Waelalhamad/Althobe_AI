@@ -437,6 +437,8 @@ export type OrdersQuery = {
   payment?: string; // "cash" | "transfer"
   source?: string; // "ai" | "team"
   q?: string; // name, phone, city, address, order #, Darb number
+  from?: string; // local dates, YYYY-MM-DD, both included: when the order was made
+  to?: string;
   limit: number;
 };
 
@@ -456,6 +458,20 @@ export function orders(opts: OrdersQuery) {
     where.push("o.source = ?");
     params.push(opts.source);
   }
+  // The dates also narrow the counts on the status and Darb chips, so they match the list.
+  const dateWhere: string[] = [];
+  const dateParams: number[] = [];
+  if (opts.from) {
+    dateWhere.push("o.created_at >= ?");
+    dateParams.push(localDateStart(opts.from));
+  }
+  if (opts.to) {
+    dateWhere.push("o.created_at < ?");
+    dateParams.push(localDateStart(opts.to) + 24 * 60 * 60 * 1000);
+  }
+  where.push(...dateWhere);
+  params.push(...dateParams);
+  const inDates = dateWhere.length ? dateWhere.join(" AND ") : "1";
   const raw = opts.q?.trim() ?? "";
   const q = raw.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
   if (/^#\d+$/.test(q)) {
@@ -483,14 +499,18 @@ export function orders(opts: OrdersQuery) {
     )
     .all(...params, opts.limit) as (Record<string, unknown> & { items: string })[];
   const counts = Object.fromEntries(
-    (db.prepare("SELECT status, COUNT(*) AS n FROM orders GROUP BY status").all() as { status: string; n: number }[]).map(
+    (db.prepare(`SELECT status, COUNT(*) AS n FROM orders o WHERE ${inDates} GROUP BY status`).all(...dateParams) as { status: string; n: number }[]).map(
       (r) => [r.status, r.n],
     ),
   );
   const darbCounts = Object.fromEntries(
     DARB_FILTERS.map((f) => [
       f,
-      (db.prepare(`SELECT COUNT(*) AS n FROM orders o LEFT JOIN darb_shipments d ON d.id = o.darb_id WHERE ${DARB_WHERE[f]}`).get() as { n: number }).n,
+      (
+        db
+          .prepare(`SELECT COUNT(*) AS n FROM orders o LEFT JOIN darb_shipments d ON d.id = o.darb_id WHERE ${DARB_WHERE[f]} AND ${inDates}`)
+          .get(...dateParams) as { n: number }
+      ).n,
     ]),
   ) as Record<DarbFilter, number>;
   return {

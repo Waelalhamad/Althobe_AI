@@ -177,7 +177,8 @@ export type RedirectView = {
 
 // Where an order's shipment is at Darb Assabil (the orders page filter).
 export type DarbFilter = "unsent" | "waiting" | "on_way" | "delayed" | "delivered" | "paid" | "returned";
-export type OrderFilters = { status?: OrderStatus; darb?: DarbFilter; payment?: Payment; source?: "ai" | "team"; q?: string };
+// from / to: dashboard dates (YYYY-MM-DD, both included), when the order was made.
+export type OrderFilters = { status?: OrderStatus; darb?: DarbFilter; payment?: Payment; source?: "ai" | "team"; q?: string; from?: string; to?: string };
 
 export type DarbZone = { city: string; areas: string[] };
 export type DarbPreview = {

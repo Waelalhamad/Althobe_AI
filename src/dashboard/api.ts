@@ -263,6 +263,8 @@ dashboardApi.get("/orders", (req, res) => {
       payment: req.query.payment === "cash" || req.query.payment === "transfer" ? req.query.payment : undefined,
       source: req.query.source === "ai" || req.query.source === "team" ? req.query.source : undefined,
       q: String(req.query.q ?? "").slice(0, 100),
+      from: typeof req.query.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from) ? req.query.from : undefined,
+      to: typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : undefined,
       limit: intParam(req.query.limit, 200, 1000),
     }),
     darb: config.darb.enabled,
