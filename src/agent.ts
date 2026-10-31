@@ -432,6 +432,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
   let restyled = false;
   // An order missing a detail (a full phone, a size) goes back to the model once per round, to ask the customer.
   let orderRefused = 0;
+  let refusedOrder: Extract<AgentDecision, { action: "order" }> | undefined;
   // The last round only asked for photos: the next one writes the text (no more tools).
   let textNext = false;
 
@@ -500,10 +501,16 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       // Not saved: the model asks the customer for what's missing (twice at most, then the team sees the gaps).
       if (problems.length && orderRefused < 2 && round < 4) {
         orderRefused++;
+        refusedOrder = { ...decision, order };
         input.push(...outputItems(response, toolResults, `NOT saved: ${problems.join(" ")} Ask the customer for it (or fix the items), then send the summary again.`));
         continue;
       }
       return { ...decision, order, usage };
+    }
+    // After a refused order the AI may tell the customer it's booked anyway: then it is saved as it was, and the
+    // team sees what's missing (see addressGaps), rather than a "booked" customer with no order.
+    if (decision.action === "reply" && refusedOrder && /تم\s*(ال)?حجز|تم\s*تثبيت|ثبتنالك|انحجز/.test(decision.text)) {
+      return { ...refusedOrder, messageToCustomer: decision.text, usage };
     }
     if (decision.action === "reply") {
       decision.text = withoutRepeatedCountry(decision.text, history, context.customerPhone);
