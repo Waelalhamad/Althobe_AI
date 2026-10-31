@@ -5,6 +5,7 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, ComposedChart, Legend, L
 import { Bot, CircleDollarSign, Gauge, Hand, MessageCircle, ShieldCheck, ShoppingBag, Timer, UserPlus, Users, TriangleAlert } from "lucide-react";
 import { api, type FunnelDay, type OverviewQuery, type Totals } from "../api";
 import { Badge, Card, Empty, ErrorNote, PageHeader, Stat } from "../components/ui";
+import { DateRangePicker } from "../components/DateRangePicker";
 import { ago, localDate, num, pct, phone, secs, usd } from "../format";
 
 const PRESETS = [
@@ -68,12 +69,7 @@ export function Overview() {
       />
       <div className="mb-6 flex flex-wrap items-center gap-3 text-sm">
         {preset === "custom" && (
-          <label className="flex items-center gap-2">
-            <span className="text-muted">من</span>
-            <input type="date" value={custom.from} max={custom.to} onChange={(e) => e.target.value && setCustom((c) => ({ ...c, from: e.target.value }))} className={select} />
-            <span className="text-muted">لـ</span>
-            <input type="date" value={custom.to} min={custom.from} max={localDate(0)} onChange={(e) => e.target.value && setCustom((c) => ({ ...c, to: e.target.value }))} className={select} />
-          </label>
+          <DateRangePicker from={custom.from} to={custom.to} onChange={(from, to) => setCustom({ from, to })} openOnMount />
         )}
         <label className="flex items-center gap-2">
           <span className="text-muted">الساعات</span>

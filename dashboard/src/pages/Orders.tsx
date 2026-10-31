@@ -11,6 +11,7 @@ import { DARB_STATUS, DarbSend } from "../components/DarbSend";
 import { DarbLink, DarbTrackView } from "../components/DarbTrack";
 import { DarbRedirect } from "../components/DarbRedirect";
 import { ago, localDate, time } from "../format";
+import { DateRangePicker } from "../components/DateRangePicker";
 
 // The date chips: days back from today (Damascus time), both ends included.
 const DATES = [
@@ -72,7 +73,6 @@ export function Orders() {
     else if (id === "custom") set({ from: f.from ?? localDate(6), to: f.to ?? localDate(0) });
     else set({ from: undefined, to: undefined });
   };
-  const dateInput = "rounded-xl border border-line bg-card-2 px-2 py-1 text-sm";
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -172,12 +172,7 @@ export function Orders() {
             </button>
           ))}
           {dates === "custom" && (
-            <label className="flex items-center gap-2 text-sm">
-              <span className="text-muted">من</span>
-              <input type="date" value={f.from ?? ""} max={f.to} onChange={(e) => e.target.value && set({ from: e.target.value })} className={dateInput} />
-              <span className="text-muted">لـ</span>
-              <input type="date" value={f.to ?? ""} min={f.from} max={localDate(0)} onChange={(e) => e.target.value && set({ to: e.target.value })} className={dateInput} />
-            </label>
+            <DateRangePicker from={f.from ?? localDate(6)} to={f.to ?? localDate(0)} onChange={(from, to) => set({ from, to })} openOnMount />
           )}
         </div>
 

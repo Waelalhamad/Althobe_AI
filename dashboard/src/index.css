@@ -49,3 +49,25 @@ body {
   background: var(--color-line);
   border-radius: 8px;
 }
+
+/* The date range calendar (react-day-picker) in the dashboard's colors. */
+.rdp-althobe {
+  --rdp-accent-color: var(--color-primary);
+  --rdp-accent-background-color: var(--color-primary-soft);
+  --rdp-range_middle-background-color: var(--color-primary-soft);
+  --rdp-range_start-color: var(--color-bg);
+  --rdp-range_end-color: var(--color-bg);
+  --rdp-today-color: var(--color-primary);
+  --rdp-day-height: 36px;
+  --rdp-day-width: 36px;
+  --rdp-day_button-height: 34px;
+  --rdp-day_button-width: 34px;
+  --rdp-months-gap: 1.25rem;
+  --rdp-nav-height: 2.25rem;
+  font-size: 0.85rem;
+}
+.rdp-althobe .rdp-caption_label { font-weight: 600; }
+.rdp-althobe .rdp-weekday { color: var(--color-muted); font-size: 0.75rem; }
+.rdp-althobe .rdp-chevron { fill: var(--color-primary); }
+.rdp-althobe .rdp-day_button:hover:not([disabled]) { background: var(--color-card-2); }
+.rdp-althobe .rdp-today:not(.rdp-selected) .rdp-day_button { font-weight: 700; }
