@@ -152,7 +152,7 @@ const intParam = (value: unknown, fallback: number, max: number) => {
 
 dashboardApi.get("/overview", (req, res) => {
   // from/to: local dates (YYYY-MM-DD, both included); else the last `days` days. hourFrom/hourTo: only those hours.
-  const date = (v: unknown) => (typeof v === "string" && /^d{4}-d{2}-d{2}$/.test(v) ? v : undefined);
+  const date = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
   const hour = (v: unknown) => (v === undefined || v === "" ? undefined : Math.min(24, Math.max(0, Math.round(Number(v)))) % 24);
   const from = date(req.query.from);
   const to = date(req.query.to) ?? from;

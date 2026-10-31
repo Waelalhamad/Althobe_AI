@@ -843,14 +843,14 @@ export function withoutPlaceholders(order: CollectedOrder): CollectedOrder {
 // A Libyan mobile: 091-095 and 7 more digits (with 0, 218 or +218 in front, or none). 9 digits starting
 // 90 (e.g. 901012457) are not one.
 export function libyanMobile(phone: string): boolean {
-  const d = phone.replace(/[٠-٩]/g, (x) => String(x.charCodeAt(0) - 0x0660)).replace(/D/g, "").replace(/^00/, "");
-  return /^(?:218|0)?9[1-5]d{7}$/.test(d);
+  const d = phone.replace(/[٠-٩]/g, (x) => String(x.charCodeAt(0) - 0x0660)).replace(/\D/g, "").replace(/^00/, "");
+  return /^(?:218|0)?9[1-5]\d{7}$/.test(d);
 }
 
 // The size for a weight, from the size table in the knowledge ("| من 81 إلى 90 كغ | 58 |"), so the team's edits
 // count. undefined above the table's last row, or when the table isn't found.
 export function sizeForWeight(kg: number): string | undefined {
-  const rows = [...loadKnowledge().matchAll(/|s*(?:حتى|منs*d+s*(?:إلى|الى|-))s*(d+)s*(?:كغ|كيلو|kg)[^|]*|s*(d{2})s*|/g)]
+  const rows = [...loadKnowledge().matchAll(/\|\s*(?:حتى|من\s*\d+\s*(?:إلى|الى|-))\s*(\d+)\s*(?:كغ|كيلو|kg)[^|]*\|\s*(\d{2})\s*\|/g)]
     .map((m) => ({ upTo: Number(m[1]), size: m[2]! }))
     .sort((a, b) => a.upTo - b.upTo);
   return rows.find((r) => kg <= r.upTo)?.size;
