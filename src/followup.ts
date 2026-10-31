@@ -31,6 +31,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS followups_created ON followups (created_at);
 `);
+if (!(db.prepare("PRAGMA table_info(followups)").all() as { name: string }[]).some((c) => c.name === "variant")) {
+  db.exec("ALTER TABLE followups ADD COLUMN variant TEXT"); // 'A' | 'B', see followUpVariant
+}
+
+// A test of two follow-ups, half the customers each (by their number's last digit, so a customer keeps one):
+// A, the AI's own check-in (mostly "لقيت اللون اللي يعجبك؟"), and B, the knowledge's line with the reassurance
+// ("التوصيل مجاني والدفع عند الاستلام، نحجزلك؟"). Compare them in Settings → follow-up.
+export type FollowUpVariant = "A" | "B";
+export function followUpVariant(customer: string): FollowUpVariant {
+  return Number(customer.replace(/\D/g, "").slice(-1) || 0) % 2 ? "B" : "A";
+}
 
 export type FollowUpSettings = { enabled: boolean; afterMinutes: number };
 
@@ -115,15 +126,17 @@ export async function runFollowUps(): Promise<number> {
       }
       try {
         const silentHours = Math.max(1, Math.round((Date.now() - c.ourAt) / HOUR));
+        const variant = followUpVariant(c.customer);
         const { text, stage, usage } = await writeFollowUp(historyForAi(c.customer), {
           customerPhone: localPhone(c.customer),
           background: customerBackground(c.customer),
           silentHours,
+          variant,
         });
-        recordAiCall({ customer: c.customer, channel: channelOf(c.customer), action: "followup", reason: text ? "sent" : `skipped (${stage ?? "no answer"})`, usage });
+        recordAiCall({ customer: c.customer, channel: channelOf(c.customer), action: "followup", reason: text ? `sent (${variant})` : `skipped (${stage ?? "no answer"})`, usage });
         // Claim it first, so a crash or a second server never sends it twice.
-        db.prepare("INSERT OR IGNORE INTO followups (customer, after_id, sent, text, created_at) VALUES (?, ?, ?, ?, ?)").run(
-          c.customer, c.afterId, text ? 1 : 0, text ?? "", Date.now(),
+        db.prepare("INSERT OR IGNORE INTO followups (customer, after_id, sent, text, created_at, variant) VALUES (?, ?, ?, ?, ?, ?)").run(
+          c.customer, c.afterId, text ? 1 : 0, text ?? "", Date.now(), variant,
         );
         if (!text) {
           log(key, `follow-up skipped: doesn't fit this chat (${stage ?? "no answer"})`);
@@ -157,7 +170,25 @@ export function followUpStats(days = 7) {
     )
     .get(since) as { sent: number; replied: number | null };
   const skipped = db.prepare("SELECT COUNT(*) AS n FROM followups WHERE sent = 0 AND created_at >= ?").get(since) as { n: number };
-  return { days, sent: row.sent, replied: row.replied ?? 0, skipped: skipped.n };
+  return { days, sent: row.sent, replied: row.replied ?? 0, skipped: skipped.n, test: followUpTest() };
+}
+
+// The A/B test since it started: per variant, follow-ups sent, customers who answered, and who ordered after.
+export function followUpTest() {
+  const rows = db
+    .prepare(
+      `SELECT f.variant, COUNT(*) AS sent,
+         SUM(EXISTS (SELECT 1 FROM messages m WHERE m.customer = f.customer AND m.role = 'customer'
+                     AND m.history = 0 AND m.created_at > f.created_at)) AS replied,
+         SUM(EXISTS (SELECT 1 FROM orders o WHERE o.customer = f.customer AND o.created_at > f.created_at)) AS ordered,
+         MIN(f.created_at) AS since
+       FROM followups f WHERE f.sent = 1 AND f.variant IS NOT NULL GROUP BY f.variant`,
+    )
+    .all() as { variant: FollowUpVariant; sent: number; replied: number; ordered: number; since: number }[];
+  return (["A", "B"] as const).map((v) => {
+    const r = rows.find((x) => x.variant === v);
+    return { variant: v, sent: r?.sent ?? 0, replied: r?.replied ?? 0, ordered: r?.ordered ?? 0, since: r?.since ?? null };
+  });
 }
 
 export function startFollowUps() {

@@ -422,7 +422,14 @@ export const api = {
 export type FollowUpSettings = { enabled: boolean; afterMinutes: number };
 export type FollowUpView = {
   settings: FollowUpSettings;
-  stats: { days: number; sent: number; replied: number; skipped: number };
+  stats: {
+    days: number;
+    sent: number;
+    replied: number;
+    skipped: number;
+    // The A/B test of two follow-up messages, since it started.
+    test: { variant: "A" | "B"; sent: number; replied: number; ordered: number; since: number | null }[];
+  };
   // Order tracking updates to customers (left with Darb, in their city, delivered).
   tracking: { enabled: boolean; stats: { days: number; sent: number; pending: number; skipped: number } };
 };

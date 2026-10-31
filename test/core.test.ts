@@ -77,7 +77,25 @@ test("no regex lost its backslashes", () => {
     fs
       .readFileSync(file, "utf8")
       .split("\n")
-      .flatMap((line, i) => (/(?<=[\]\)\/|(?:^])[dDsSwW](?:[*+?]|\{\d)/.test(line) ? [`${file}:${i + 1}`] : [])),
+      .flatMap((line, i) => (/(?<=[\]\)\/|(?:^])[dDsSwW](?:[*+?]|\{\d)|(?<![\\\w])p\{L\}/.test(line) ? [`${file}:${i + 1}`] : [])),
   );
   assert.deepEqual(broken, []);
+});
+
+test("the price goes with free delivery and cash on delivery", async () => {
+  const { priceProblems, withPaymentTerms } = await import("../src/agent.ts");
+  const asked = [{ role: "customer" as const, text: "[from the ad: «الثوب العربي» 385] السلام عليكم، بكم؟" }];
+  assert.deepEqual(priceProblems("385 دينار، والتوصيل مجاني لباب بيتك والدفع عند الاستلام 😊", asked), []);
+  assert.equal(priceProblems("سعره 385 دينار 😊", asked).length, 1);
+  // From the ad without asking: no price in the first reply ("عليكم" isn't "كم").
+  const notAsked = [{ role: "customer" as const, text: "[from the ad: «الثوب العربي» 385] السلام عليكم، نبي نطلب الثوب العربي" }];
+  assert.equal(priceProblems("385 دينار، والتوصيل مجاني والدفع عند الاستلام", notAsked).length, 1);
+  assert.deepEqual(priceProblems("حياك الله استاذ 😊 طقم كامل 3 قطع", notAsked), []);
+  // A summary isn't checked.
+  assert.deepEqual(priceProblems("المنتج: طقم\nالإجمالي: 385 دينار", notAsked), []);
+
+  assert.equal(withPaymentTerms("سعره 385 دينار، والتوصيل مجاني 😊\nشن اللون اللي عجبك؟", asked), "سعره 385 دينار، والتوصيل مجاني، والدفع عند الاستلام 😊\nشن اللون اللي عجبك؟");
+  assert.equal(withPaymentTerms("385 دينار.", asked), "385 دينار، والتوصيل مجاني لباب بيتك والدفع عند الاستلام");
+  const said = [...asked, { role: "business" as const, text: "385 دينار والدفع عند الاستلام" }];
+  assert.equal(withPaymentTerms("385 دينار بس", said), "385 دينار بس");
 });

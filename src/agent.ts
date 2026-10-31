@@ -538,13 +538,13 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       decision.text = withoutRepeatedCountry(decision.text, history, context.customerPhone);
       if (!decision.text && !photos.length) return { action: "none", reason: "كان بدو يسأل عن البلد مرة تانية بس", usage };
       if (!decision.text) return { ...decision, photos, usage };
-      const style = styleProblems(decision.text);
+      const style = [...styleProblems(decision.text), ...priceProblems(decision.text, history)];
       if (style.length && !restyled && round < 4) {
         restyled = true;
         input.push(...outputItems(response, toolResults), { role: "developer", content: styleFeedback(style) });
         continue;
       }
-      decision.text = fixedStyle(decision.text);
+      decision.text = withPaymentTerms(fixedStyle(decision.text), history);
       // A wrong bank account number is never sent.
       if (wrongAccount(decision.text)) {
         return {
@@ -602,7 +602,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
 // (a free-text "SKIP" was not reliable), and only a customer who was still choosing gets a message.
 export async function writeFollowUp(
   history: ChatTurn[],
-  context: CustomerContext & { silentHours: number },
+  context: CustomerContext & { silentHours: number; variant?: "A" | "B" },
 ): Promise<{ text?: string; stage?: string; usage: AiUsage }> {
   const messages = chatMessages(history, context);
   messages.push({
@@ -616,7 +616,12 @@ First, "stage": where the chat stands, judged by the customer's LAST message and
 - "upset": a complaint, a problem, or they are angry;
 - "with_team": they have an order, or the chat was handed to the team;
 - "nothing_asked": our last message didn't ask them anything.
-Then "message": only for "choosing" (otherwise empty). Follow the "follow-up" part of the "how we talk" document if there is one. Pick up exactly where it stopped (e.g. the color or size they were choosing, or one helpful line); never ask about a choice that never came up. End with one easy question. No pressure, no fake urgency, no discount or anything not in the knowledge; don't repeat the price or the photos; don't greet again or apologize for writing. Same style and dialect rules as all your messages (the words to avoid too).`,
+Then "message": only for "choosing" (otherwise empty). Follow the "follow-up" part of the "how we talk" document if there is one. Pick up exactly where it stopped (e.g. the color or size they were choosing, or one helpful line); never ask about a choice that never came up. End with one easy question. No pressure, no fake urgency, no discount or anything not in the knowledge; don't repeat the price or the photos; don't greet again or apologize for writing. Same style and dialect rules as all your messages (the words to avoid too).${
+      context.variant === "B"
+        ? `
+This message also reassures, then asks to book: "التوصيل مجاني والدفع عند الاستلام" and "نحجزلك؟", fitted to where it stopped. E.g. after the price or the color question: "شن رأيك استاذ؟ التوصيل مجاني والدفع عند الاستلام، نحجزلك؟ 😊"; after the size question: "لقيت مقاسك استاذ؟ قولي وزنك ونختارلك 👌 والتوصيل مجاني والدفع عند الاستلام"; while giving their details: "نكمّلو الحجز استاذ؟ ناقصنا بس الاسم والعنوان". Not "لقيت اللون اللي يعجبك؟" alone.`
+        : ""
+    }`,
   });
   client ??= new OpenAI();
   const startedAt = Date.now();
@@ -966,6 +971,42 @@ export function styleProblems(text: string): string[] {
     ...(wrongAccount(text) ? [`The bank account number is wrong: copy it exactly from the knowledge (${ourAccount()}).`] : []),
     ...(messages > 2 ? [`It has ${messages} messages: at most 2 (usually one).`] : []),
   ];
+}
+
+// The price never goes alone: "free delivery, cash on delivery" with it, the reassurance our team chose
+// (not "try it before you pay", which brings orders that come back). A customer from the ad who didn't ask
+// the price gets the product and photos first: those buy more (7.8% against 4.4%, Oct 2026).
+const PRICE = /385|٣٨٥/;
+const PRICE_ASK = /(?<!\p{L})(?:ب?كم|ب?كام|ب?قداش|قديش|السعر|سعر\S*|بسعر|ثمن\S*|الثمن)(?!\p{L})|price|how much/iu;
+const CASH_ON_DELIVERY = /الاستلام|عند الوصول|تحويل/;
+
+const saidBefore = (history: ChatTurn[], re: RegExp) => history.some((t) => t.role === "business" && re.test(t.text));
+
+export function priceProblems(text: string, history: ChatTurn[]): string[] {
+  if (!PRICE.test(text) || SUMMARY.test(text)) return [];
+  const asked = history.some((t) => t.role === "customer" && PRICE_ASK.test(t.text.replace(/^\[from the ad[^\]]*\]/, "")));
+  return [
+    ...(!asked && !history.some((t) => t.role === "business")
+      ? ["It gives the price, but the customer didn't ask for it: in this first reply, greet, say what the set is in one line and ask which color (photos first), without the price. Give it when they ask."]
+      : []),
+    ...(!CASH_ON_DELIVERY.test(text) && !saidBefore(history, CASH_ON_DELIVERY)
+      ? ["The price goes with \"والتوصيل مجاني لباب بيتك والدفع عند الاستلام\" in the same sentence (e.g. \"385 دينار، والتوصيل مجاني لباب بيتك والدفع عند الاستلام 😊\")."]
+      : []),
+  ];
+}
+
+// After the one rewrite, if the price still goes without the payment terms, they're added to its line.
+export function withPaymentTerms(text: string, history: ChatTurn[]): string {
+  if (!PRICE.test(text) || SUMMARY.test(text) || CASH_ON_DELIVERY.test(text) || saidBefore(history, CASH_ON_DELIVERY)) return text;
+  const lines = text.split("\n");
+  const i = lines.findIndex((l) => PRICE.test(l));
+  const line = lines[i]!;
+  // Before the line's closing dot or emoji: "385 دينار، والتوصيل مجاني 😊" → "…، والدفع عند الاستلام 😊".
+  const end = line.match(/[\s.!،,\p{Extended_Pictographic}️]*$/u)?.[0] ?? "";
+  const body = line.slice(0, line.length - end.length);
+  const emoji = end.match(/\p{Extended_Pictographic}️?/u)?.[0];
+  lines[i] = `${body}${/توصيل/.test(body) ? "، والدفع عند الاستلام" : "، والتوصيل مجاني لباب بيتك والدفع عند الاستلام"}${emoji ? ` ${emoji}` : ""}`;
+  return lines.join("\n");
 }
 
 const styleFeedback = (problems: string[]) =>

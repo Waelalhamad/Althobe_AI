@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MessageCircleMore, Search, Send, ShieldCheck, Truck } from "lucide-react";
-import { api, type NotifyKind, type SupervisorSettings } from "../api";
+import { api, type FollowUpView, type NotifyKind, type SupervisorSettings } from "../api";
 import { Badge, Button, Card, ErrorNote, Toggle } from "../components/ui";
 import { ago } from "../format";
 
@@ -289,8 +289,50 @@ export function FollowUpCard() {
           </div>
         ))}
       </div>
+      <FollowUpTest test={stats.test} />
       <ErrorNote error={save.error} />
     </Card>
+  );
+}
+
+const pct = (n: number, of: number) => (of ? `${Math.round((100 * n) / of)}%` : "–");
+
+// Half the customers get each message (by their number's last digit); the better one stays.
+function FollowUpTest({ test }: { test: FollowUpView["stats"]["test"] }) {
+  const since = test.map((t) => t.since).filter((t): t is number => t !== null);
+  const label = { A: "أ: رسالة المساعد («لقيت اللون اللي يعجبك؟»)", B: "ب: «التوصيل مجاني والدفع عند الاستلام، نحجزلك؟»" };
+  return (
+    <div className="rounded-xl bg-card-2 p-3 text-sm">
+      <div className="mb-2 font-medium">
+        تجربة رسالتين، نص الزباين لكل وحدة
+        {since.length ? <span className="text-xs text-muted"> · من {new Date(Math.min(...since)).toLocaleDateString("ar")}</span> : null}
+      </div>
+      <table className="w-full text-center">
+        <thead className="text-xs text-muted">
+          <tr>
+            <th className="text-start font-normal">الرسالة</th>
+            <th className="font-normal">انبعتت</th>
+            <th className="font-normal">ردّو</th>
+            <th className="font-normal">طلبو</th>
+          </tr>
+        </thead>
+        <tbody>
+          {test.map((t) => (
+            <tr key={t.variant} className="border-t border-line">
+              <td className="py-2 text-start">{label[t.variant]}</td>
+              <td className="num">{t.sent}</td>
+              <td className="num">
+                {t.replied} <span className="text-xs text-muted">({pct(t.replied, t.sent)})</span>
+              </td>
+              <td className="num">
+                {t.ordered} <span className="text-xs text-muted">({pct(t.ordered, t.sent)})</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-2 text-xs text-muted">منحكم بعد ما توصل كل وحدة لـ 250 رسالة تقريباً، قبل هيك الفرق ممكن يكون صدفة.</p>
+    </div>
   );
 }
 
