@@ -58,8 +58,11 @@ export type DailyRow = {
 
 export type AiCallRow = { customer: string; channel: string; action: "reply" | "handoff" | "error"; reason: string | null; at: number };
 
+export type FunnelDay = { day: string; chats: number; beforePrice: number; afterPrice: number; booking: number; ordered: number };
+
 export type Overview = {
   days: number;
+  funnel: FunnelDay[];
   today: Totals;
   period: Totals;
   daily: DailyRow[];

@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Bot, CircleDollarSign, Gauge, Hand, MessageCircle, ShieldCheck, ShoppingBag, Timer, UserPlus, Users, TriangleAlert } from "lucide-react";
-import { api, type Totals } from "../api";
+import { api, type FunnelDay, type Totals } from "../api";
 import { Badge, Card, Empty, ErrorNote, PageHeader, Stat } from "../components/ui";
 import { ago, num, pct, phone, secs, usd } from "../format";
 
@@ -135,6 +135,8 @@ export function Overview() {
             </Card>
           )}
 
+          <Funnel data={d.funnel} days={days} />
+
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
             <Card className="xl:col-span-3">
               <h2 className="mb-1 font-semibold">أوقات رسائل الزباين</h2>
@@ -201,6 +203,66 @@ export function Overview() {
         </div>
       )}
     </div>
+  );
+}
+
+const STOPS = [
+  { key: "beforePrice", label: "وقف قبل السعر", color: C.muted },
+  { key: "afterPrice", label: "وقف بعد السعر", color: C.warn },
+  { key: "booking", label: "وقف بنص الحجز", color: C.info },
+  { key: "ordered", label: "طلب", color: C.ok },
+] as const;
+
+// New chats by the day they started: how many ordered, and where the others stopped.
+function Funnel({ data, days }: { data: FunnelDay[]; days: number }) {
+  const total = data.reduce(
+    (t, d) => ({ chats: t.chats + d.chats, beforePrice: t.beforePrice + d.beforePrice, afterPrice: t.afterPrice + d.afterPrice, booking: t.booking + d.booking, ordered: t.ordered + d.ordered }),
+    { chats: 0, beforePrice: 0, afterPrice: 0, booking: 0, ordered: 0 },
+  );
+  const daily = data.map((d) => ({ ...d, rate: d.chats ? Math.round((1000 * d.ordered) / d.chats) / 10 : 0 }));
+  return (
+    <Card>
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-semibold">نسبة الشراء ووين بيوقفو الزباين</h2>
+        <span className="text-sm text-muted">
+          <span className="num font-semibold text-fg">{pct(total.ordered, total.chats)}</span> من {num(total.chats)} محادثة جديدة طلبت
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {STOPS.map((s) => (
+          <div key={s.key} className="rounded-xl bg-card-2 p-3">
+            <div className="flex items-center gap-2 text-xs text-muted">
+              <span className="size-2 rounded-full" style={{ background: s.color }} />
+              {s.label}
+            </div>
+            <div className="num mt-1 font-semibold">
+              {num(total[s.key])} <span className="text-xs font-normal text-muted">· {pct(total[s.key], total.chats)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-xs text-muted">
+        كل محادثة محسوبة بيوم ما بلّشت. «بنص الحجز»: طلبنا الاسم أو الرقم أو العنوان، أو بعتنا الملخص، وما صار طلب.
+      </p>
+      {days > 1 && (
+        <div className="mt-4 h-72" dir="ltr">
+          <ResponsiveContainer>
+            <ComposedChart data={daily}>
+              <CartesianGrid stroke={C.grid} vertical={false} />
+              <XAxis dataKey="day" tick={{ fill: C.muted, fontSize: 12 }} tickFormatter={(v: string) => v.slice(5)} />
+              <YAxis yAxisId="n" tick={{ fill: C.muted, fontSize: 12 }} allowDecimals={false} width={40} />
+              <YAxis yAxisId="r" orientation="right" tick={{ fill: C.muted, fontSize: 12 }} unit="%" width={40} />
+              <Tooltip {...tooltipStyle} cursor={{ fill: "hsl(224 16% 12%)" }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              {STOPS.map((s) => (
+                <Bar key={s.key} yAxisId="n" dataKey={s.key} name={s.label} stackId="f" fill={s.color} />
+              ))}
+              <Line yAxisId="r" type="monotone" dataKey="rate" name="نسبة الشراء %" stroke={C.primary} strokeWidth={2} dot={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </Card>
   );
 }
 

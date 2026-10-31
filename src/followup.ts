@@ -1,8 +1,9 @@
 // Automatic follow-up: one gentle message to a WhatsApp customer who went quiet after the AI's last reply.
 // Research and our own chats say the first follow-up brings most of the extra replies and more becomes pushy
-// (docs/sales-research.md), so it is sent at most once per customer message, only:
+// (docs/sales-research.md), so a customer gets one follow-up ever (1270 a week brought 18 orders), only:
 // - when the AI may answer this customer (AI replies on, test numbers, not paused by the team);
 // - inside working hours (the supervisor's) and WhatsApp's 24-hour window;
+// - when the customer hasn't said it's too expensive or not now ("غالي", "بعد المرتب", "نفكر");
 // - when the AI judges a follow-up fits the chat (it answers SKIP otherwise).
 import { writeFollowUp } from "./agent.js";
 import { config } from "./config.js";
@@ -56,6 +57,17 @@ export function saveFollowUpSettings(patch: Record<string, unknown>): FollowUpSe
 
 type Candidate = { customer: string; afterId: number; customerAt: number; ourAt: number };
 
+// The customer said the price is too high or it isn't the time: a reminder only pushes.
+const NOT_NOW =
+  /غال[يىيه]|غاليه|غلا|السعر (واجد|كثير|كتير)|ارخص|أرخص|مش (توا|هلق|الحين|الان|الآن)|موش توا|بعدين|بعد (المرتب|الراتب|العيد|الجمعة)|المرتب|الراتب|السيولة|سيوله|ما ?عنديش|ماعندي|ما عندي|ما نقدر|مانقدر|نفكر|نتشاور|خلي(ني)? نشوف|(الأسبوع|الاسبوع|الشهر) (الجاي|القادم)|منبيش|ما ?نبيش|ما ?نبي|لا شكر/;
+
+function saidNotNow(customer: string): boolean {
+  const rows = db
+    .prepare("SELECT text FROM messages WHERE customer = ? AND role = 'customer' AND history = 0 ORDER BY id DESC LIMIT 30")
+    .all(customer) as { text: string }[];
+  return rows.some((r) => NOT_NOW.test(r.text));
+}
+
 // Chats where our last live message is the AI's, old enough, and the customer wrote within the window.
 function candidates(s: FollowUpSettings): Candidate[] {
   const now = Date.now();
@@ -74,7 +86,13 @@ function candidates(s: FollowUpSettings): Candidate[] {
     .all(now - WINDOW, now - s.afterMinutes * MINUTE)
     .filter((r) => {
       const c = r as Candidate;
-      return c.afterId && c.customerAt > now - WINDOW && !db.prepare("SELECT 1 FROM followups WHERE after_id = ?").get(c.afterId);
+      return (
+        c.afterId &&
+        c.customerAt > now - WINDOW &&
+        !db.prepare("SELECT 1 FROM followups WHERE after_id = ?").get(c.afterId) &&
+        // One follow-up per customer, ever.
+        !db.prepare("SELECT 1 FROM followups WHERE customer = ? AND sent = 1").get(c.customer)
+      );
     }) as Candidate[];
 }
 
@@ -89,6 +107,12 @@ export async function runFollowUps(): Promise<number> {
     for (const c of candidates(s)) {
       if (aiBlockedReason(c.customer) || isAiPaused(c.customer)) continue;
       const key = `wa:${c.customer}`;
+      if (saidNotNow(c.customer)) {
+        // Recorded like a skip, so this message isn't looked at again (and no AI call is spent on it).
+        db.prepare("INSERT OR IGNORE INTO followups (customer, after_id, sent, text, created_at) VALUES (?, ?, 0, '', ?)").run(c.customer, c.afterId, Date.now());
+        log(key, "follow-up skipped: the customer said it's expensive or not now");
+        continue;
+      }
       try {
         const silentHours = Math.max(1, Math.round((Date.now() - c.ourAt) / HOUR));
         const { text, stage, usage } = await writeFollowUp(historyForAi(c.customer), {

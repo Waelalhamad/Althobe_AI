@@ -120,6 +120,46 @@ export function totals(since: number): Totals {
   };
 }
 
+// Where new chats stop, by the day they started (local time): never got the price, got it and stopped, reached
+// the booking (we asked for the name, phone or address, or sent the summary) without an order, or ordered.
+// Read from our messages, so it covers the team's replies too.
+export type FunnelDay = { day: string; chats: number; beforePrice: number; afterPrice: number; booking: number; ordered: number };
+
+export function funnel(days: number): FunnelDay[] {
+  const since = localDayStart(days - 1);
+  const offsetSec = config.dashboard.timezoneOffsetHours * 3600;
+  const ours = (likes: string[]) =>
+    `EXISTS (SELECT 1 FROM messages m WHERE m.customer = f.customer AND m.role = 'business' AND m.history = 0 AND (${likes.map((l) => `m.text LIKE '%${l}%'`).join(" OR ")}))`;
+  const rows = db
+    .prepare(
+      `WITH f AS (
+         SELECT customer, MIN(created_at) AS first_at FROM messages WHERE history = 0 AND role = 'customer'
+         GROUP BY customer HAVING first_at >= ?
+       )
+       SELECT strftime('%Y-%m-%d', f.first_at / 1000 + ${offsetSec}, 'unixepoch') AS day,
+         EXISTS (SELECT 1 FROM orders o WHERE o.customer = f.customer AND o.created_at >= f.first_at) AS ordered,
+         ${ours(["الاسم الكامل", "رقم الهاتف", "رقمك", "أقرب معلم", "المنتج:"])} AS booking,
+         ${ours(["دينار", "د.ل"])} AS priced
+       FROM f`,
+    )
+    .all(since) as { day: string; ordered: number; booking: number; priced: number }[];
+  const byDay = new Map<string, FunnelDay>();
+  for (let i = days - 1; i >= 0; i--) {
+    const day = localDay(localDayStart(i));
+    byDay.set(day, { day, chats: 0, beforePrice: 0, afterPrice: 0, booking: 0, ordered: 0 });
+  }
+  for (const r of rows) {
+    const d = byDay.get(r.day);
+    if (!d) continue;
+    d.chats++;
+    if (r.ordered) d.ordered++;
+    else if (r.booking) d.booking++;
+    else if (r.priced) d.afterPrice++;
+    else d.beforePrice++;
+  }
+  return [...byDay.values()];
+}
+
 export function overview(days: number) {
   const since = localDayStart(days - 1);
   const offsetSec = config.dashboard.timezoneOffsetHours * 3600;
@@ -202,6 +242,7 @@ export function overview(days: number) {
     daily: [...daily.entries()].map(([day, v]) => ({ day, ...v })),
     hourly,
     recentHandoffs,
+    funnel: funnel(days),
   };
 }
 
