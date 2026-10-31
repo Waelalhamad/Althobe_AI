@@ -115,9 +115,9 @@ export function totals(range: Range | number): Totals {
   const pick = (q: number) => latencies[Math.min(latencies.length - 1, Math.floor(q * latencies.length))] ?? 0;
 
   // Orders the team recorded from the dashboard (sales they closed themselves).
-  const teamOrders = db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE source = 'team' AND ${w.sql}`).get(...w.params) as { n: number };
+  const teamOrders = db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE source = 'team' AND status != 'cancelled' AND ${w.sql}`).get(...w.params) as { n: number };
   // Saved orders, not the AI's order decisions: an order the AI sends again is not saved twice.
-  const aiOrders = db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE source = 'ai' AND ${w.sql}`).get(...w.params) as { n: number };
+  const aiOrders = db.prepare(`SELECT COUNT(*) AS n FROM orders WHERE source = 'ai' AND status != 'cancelled' AND ${w.sql}`).get(...w.params) as { n: number };
 
   const prompt = ai.prompt ?? 0;
   const cached = ai.cached ?? 0;
@@ -240,7 +240,7 @@ export function overview(range: Range) {
   }
   // The chart's orders line: saved orders, the AI's and the team's.
   const orderRows = db
-    .prepare(`SELECT ${day} AS day, COUNT(*) AS n FROM orders WHERE ${w.sql} GROUP BY day`)
+    .prepare(`SELECT ${day} AS day, COUNT(*) AS n FROM orders WHERE status != 'cancelled' AND ${w.sql} GROUP BY day`)
     .all(...w.params) as { day: string; n: number }[];
   for (const r of orderRows) {
     const row = daily.get(r.day);

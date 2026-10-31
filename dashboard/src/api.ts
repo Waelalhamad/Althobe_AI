@@ -384,7 +384,7 @@ export const api = {
   resendDarb: (id: number, s: DarbShipment) => post<{ id: string; reference: string }>(`/orders/${id}/darb/resend`, s),
   syncDarb: () => post<{ shipments: number; changes: number }>("/darb/sync"),
   money: (from?: number, to?: number) => request<Money>(`/money?${new URLSearchParams({ ...(from && { from: String(from) }), ...(to && { to: String(to) }) })}`),
-  createOrder: (order: OrderInput & { customer?: string; status: OrderStatus; message?: string }) =>
+  createOrder: (order: OrderInput & { customer?: string; status: OrderStatus; message?: string; force?: boolean }) =>
     post<{ id: number; messageError?: string }>("/orders", order),
   updateOrder: (id: number, order: OrderInput) => request(`/orders/${id}`, { method: "PUT", body: JSON.stringify(order) }),
   ordersExportUrl: (q: { from?: string; to?: string; status?: OrderStatus }) =>

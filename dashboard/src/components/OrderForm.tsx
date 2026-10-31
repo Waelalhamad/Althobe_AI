@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, X } from "lucide-react";
-import { api, PAYMENT_LABEL, type OrderInput, type OrderItem, type OrderStatus, type Payment } from "../api";
+import { api, ApiError, PAYMENT_LABEL, type OrderInput, type OrderItem, type OrderStatus, type Payment } from "../api";
 import { Button, ErrorNote } from "./ui";
 
 const inputClass = "w-full rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary";
@@ -82,10 +82,20 @@ export function OrderForm({
   });
 
   const save = useMutation({
-    mutationFn: () =>
-      orderId
-        ? api.updateOrder(orderId, o)
-        : api.createOrder({ ...o, customer, status, message: notify ? (message ?? confirmation(o)) : undefined }),
+    mutationFn: async () => {
+      if (orderId) return api.updateOrder(orderId, o);
+      const order = { ...o, customer, status, message: notify ? (message ?? confirmation(o)) : undefined };
+      try {
+        return await api.createOrder(order);
+      } catch (error) {
+        // The customer already has an open order: saving again would ship it twice.
+        if (!(error instanceof ApiError && error.status === 409)) throw error;
+        if (!window.confirm("هالزبون عندو طلب مفتوح من آخر 3 أيام (شوف صفحة الطلبات).\nإذا هاد طلب جديد غير الأول اضغط OK، وإذا نفس الطلب اضغط Cancel.")) {
+          throw new Error("ما انحفظ: الزبون عندو طلب مفتوح، ما بدنا نكرّرو");
+        }
+        return api.createOrder({ ...order, force: true });
+      }
+    },
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
       const error = result && typeof result === "object" && "messageError" in result ? (result.messageError as string | undefined) : undefined;

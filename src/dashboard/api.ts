@@ -39,6 +39,7 @@ import {
   saveOrder,
   setOrderStatus,
   updateOrder,
+  openOrderOf,
   type OrderFields,
   setTeamPauseMinutes,
   teamPauseMinutes,
@@ -369,6 +370,13 @@ dashboardApi.post("/orders", async (req, res) => {
   const given = String(req.body?.customer ?? "").trim();
   const customer = (/^[A-Z]{2}\.\d+$/.test(given) ? given : given.replace(/\D/g, "")) || customerFromPhone(fields.phone);
   const status = ORDER_STATUSES.find((s) => s === req.body?.status) ?? "confirmed";
+  // The customer already has an open order (the bot's or the team's) in the last 3 days: ask before saving
+  // a second one, so the same order isn't shipped twice.
+  const open = req.body?.force === true ? undefined : openOrderOf(customer, Date.now() - 3 * 86_400_000);
+  if (open) {
+    res.status(409).json({ error: `duplicate`, duplicateOf: open.id, duplicateSource: open.source, duplicateStatus: open.status });
+    return;
+  }
   const id = saveOrder({ customer, channel: channelOf(customer), ...fields, source: "team", status });
   log(`wa:${customer}`, `order #${id} recorded by the team (${status})`);
   notifyOrder(id, customer, fields, true);
@@ -445,7 +453,10 @@ async function darbRoute(res: express.Response, run: () => Promise<unknown>) {
   try {
     res.json(await run());
   } catch (error) {
-    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+    const message = error instanceof Error ? error.message : String(error);
+    // In the logs too (the screen shows it once): which order, what was sent, and Darb's answer.
+    log("darb", `FAILED ${res.req.method} ${res.req.path} ${JSON.stringify(res.req.body ?? {}).slice(0, 300)}: ${message}`);
+    res.status(502).json({ error: message });
   }
 }
 

@@ -381,6 +381,13 @@ export function findSameOrder(customer: string, items: OrderItem[], since: numbe
   return rows.find((r) => sameItemsKey(JSON.parse(r.items) as OrderItem[]) === key)?.id;
 }
 
+// The customer's latest open order (new or confirmed) since a time: the team is warned before recording a second one.
+export function openOrderOf(customer: string, since: number): { id: number; status: string; source: string; createdAt: number } | undefined {
+  return db
+    .prepare("SELECT id, status, source, created_at AS createdAt FROM orders WHERE customer = ? AND status IN ('new', 'confirmed') AND created_at > ? ORDER BY id DESC LIMIT 1")
+    .get(customer, since) as { id: number; status: string; source: string; createdAt: number } | undefined;
+}
+
 // A map location the customer sent after ordering replaces the one in the order's address (or is added to it).
 export function updateOrderLocation(id: number, link: string): { changed: boolean; sentToDarb: boolean } {
   const row = db.prepare("SELECT address, darb_id FROM orders WHERE id = ?").get(id) as { address: string; darb_id: string | null } | undefined;
