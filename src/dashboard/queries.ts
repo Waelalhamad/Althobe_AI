@@ -249,7 +249,8 @@ export function conversations(opts: { filter: ConversationFilter; q: string; lim
        FROM c LEFT JOIN pauses p ON p.customer = c.customer LEFT JOIN customers k ON k.customer = c.customer
        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
        -- Urgent handoffs (about an order already confirmed or sent) first, while the team hasn't answered.
-       ORDER BY (p.until > ? AND p.reason LIKE 'AI handoff: عاجل%') DESC, c.last_at DESC LIMIT ?`,
+       -- COALESCE: a chat with no pause gives NULL, which SQLite sorts after every paused chat (the AI's chats vanished).
+       ORDER BY COALESCE(p.until > ? AND p.reason LIKE 'AI handoff: عاجل%', 0) DESC, c.last_at DESC LIMIT ?`,
     )
     .all(...params, now, opts.limit) as Record<string, unknown>[];
 
