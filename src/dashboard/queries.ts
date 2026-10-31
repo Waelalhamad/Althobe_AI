@@ -145,7 +145,8 @@ export function totals(range: Range | number): Totals {
 }
 
 // Where new chats stop, by the day they started (local time): never got the price, got it and stopped, reached
-// the booking (we asked for the name, phone or address, or sent the summary) without an order, or ordered.
+// the booking without an order (the customer gave a phone number or their location, or we sent the summary;
+// only asking for the details doesn't count, our follow-up asks too), or ordered.
 // Read from our messages, so it covers the team's replies too. A chat counts when its first message is in the range.
 export type FunnelDay = { day: string; chats: number; beforePrice: number; afterPrice: number; booking: number; ordered: number };
 
@@ -172,7 +173,11 @@ export function funnel(range: Range | number): FunnelDay[] {
        )
        SELECT strftime('%Y-%m-%d', f.first_at / 1000 + ${offsetSec}, 'unixepoch') AS day,
          EXISTS (SELECT 1 FROM orders o WHERE o.customer = f.customer AND o.created_at >= f.first_at) AS ordered,
-         ${ours(["الاسم الكامل", "رقم الهاتف", "رقمك", "أقرب معلم", "المنتج:"])} AS booking,
+         (${ours(["المنتج:"])} OR EXISTS (
+           SELECT 1 FROM messages c WHERE c.customer = f.customer AND c.role = 'customer' AND c.history = 0
+             AND (c.text GLOB '*09[1-5][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' OR c.text GLOB '*9[1-5][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*'
+               OR c.text GLOB '*٠٩[١-٥][٠-٩][٠-٩][٠-٩][٠-٩][٠-٩][٠-٩][٠-٩]*' OR c.text LIKE '[sent a location%')
+         )) AS booking,
          ${ours(["دينار", "د.ل"])} AS priced
        FROM f`,
     )
