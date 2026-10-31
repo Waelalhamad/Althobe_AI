@@ -14,6 +14,7 @@ import { db, getSetting, setSetting } from "./store.js";
 import { log } from "./scheduler.js";
 import { costUsd, localDay, localDayStart, totals } from "./dashboard/queries.js";
 import { maybeSendDailySheet } from "./ordersSheet.js";
+import { maybeSendMorningReport } from "./morningReport.js";
 import { customerLabel, dashboardLink, esc, notify, notifyError } from "./telegram.js";
 
 const MINUTE = 60 * 1000;
@@ -768,6 +769,8 @@ export function startSupervisor() {
       }
       // The day's orders as an Excel file in the Telegram group, at the same hour (even with the supervisor off).
       await maybeSendDailySheet(s.reportHour, localHour(Date.now()));
+      // What's stuck on the way to the customer (orders to confirm or send, late or returning shipments).
+      await maybeSendMorningReport(localHour(Date.now()));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log("supervisor", `error: ${message}`);

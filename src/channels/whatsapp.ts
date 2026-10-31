@@ -24,6 +24,7 @@ import {
   saveHistory,
   saveMessage,
   saveOrder,
+  setOrderStatus,
   findSameOrder,
   updateOrderLocation,
   setSetting,
@@ -38,6 +39,7 @@ import { noteHandoff } from "../learning.js";
 import { missingStock } from "../stock.js";
 import { trackingNote } from "../darbTrack.js";
 import { setShipmentLocation } from "../darb.js";
+import { autoConfirmGaps } from "../autoConfirm.js";
 
 // Darb's statuses in the team's words (Telegram).
 const DARB_STATUS_AR: Record<string, string> = {
@@ -613,18 +615,34 @@ async function respond(customer: string) {
         return;
       }
       const gaps = addressGaps(decision.order);
+      const weight = decision.order.weightKg;
       const id = saveOrder({
         customer,
         channel: channelOf(customer),
         ...decision.order,
-        notes: [decision.order.notes, gaps.length ? `⚠️ ناقص: ${gaps.join("، ")}، شيكو بالمحادثة قبل ما تبعتو لدرب` : ""].filter(Boolean).join("\n"),
+        notes: [
+          decision.order.notes,
+          weight && !decision.order.notes.includes(String(weight)) ? `الوزن ${weight} كغ` : "",
+          gaps.length ? `⚠️ ناقص: ${gaps.join("، ")}، شيكو بالمحادثة قبل ما تبعتو لدرب` : "",
+        ].filter(Boolean).join("\n"),
       });
+      // A complete, plain order is confirmed at once (the team still sends it to Darb); the rest waits for the team.
+      const needsTeam = await autoConfirmGaps(id, customer, decision.order);
+      if (!needsTeam.length) {
+        setOrderStatus(id, "confirmed");
+        const sir = /استاذة/.test(decision.messageToCustomer) ? "استاذة" : "استاذ";
+        const text = `تمام ${sir}، تم تثبيت طلبك 🙏 المندوب يتصل بيك قبل ما يوصل.`;
+        saveMessage({ customer, role: "business", source: "ai", text, wamid: await sendText(customer, text) });
+        log(key, `order #${id} confirmed by the AI (complete): ${orderOneLine(decision.order)}`);
+        notifyOrder(id, customer, decision.order, false, "✅ تأكد تلقائياً (كامل والمقاس على الوزن). ابعتوه لدرب.");
+        return;
+      }
       const text = decision.messageToCustomer || DEFAULT_ORDER_MESSAGE;
       const wamid = await sendText(customer, text);
       saveMessage({ customer, role: "business", source: "ai", text, wamid });
       pauseAi(customer, `AI order #${id}: waiting for the team to confirm`);
       log(key, `order #${id} collected, team must confirm: ${orderOneLine(decision.order)}`);
-      notifyOrder(id, customer, decision.order);
+      notifyOrder(id, customer, decision.order, false, `بدو تأكيد لأنه: ${needsTeam.join("، ")}`);
       if (gaps.length) notify("order", `⚠️ <b>طلب #${id} ناقص: ${esc(gaps.join("، "))}</b>\nشيكو بالمحادثة وصلّحو الطلب قبل ما تبعتو لدرب.`);
     } else {
       if (!decision.silent) {

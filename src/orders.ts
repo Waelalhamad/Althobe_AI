@@ -30,12 +30,17 @@ export function orderNote(id: number, order: CollectedOrder): string {
 
 // Telegram: new order for the team to confirm.
 // byTeam: the team recorded it from the dashboard (already agreed with the customer).
-export function notifyOrder(id: number, customer: string, order: CollectedOrder, byTeam = false) {
+// status: one line on what happens next (confirmed by the AI, or why the team must confirm it).
+export function notifyOrder(id: number, customer: string, order: CollectedOrder, byTeam = false, status?: string) {
   const link = customer.startsWith("cw:") ? "" : dashboardLink(`/inbox/${customer}`, "فتح المحادثة");
+  const auto = status?.startsWith("✅");
   notify(
     "order",
     [
-      byTeam ? `🛍 <b>طلب جديد #${id}</b> (سجّلو الفريق من اللوحة)` : `🛍 <b>طلب جديد #${id}</b> (جمعه المساعد، بدو تأكيد)`,
+      byTeam
+        ? `🛍 <b>طلب جديد #${id}</b> (سجّلو الفريق من اللوحة)`
+        : `🛍 <b>طلب جديد #${id}</b> (جمعه المساعد${auto ? "" : "، بدو تأكيد"})`,
+      ...(status ? [`<b>${esc(status)}</b>`] : []),
       `الاسم: ${esc(order.name)}`,
       `الرقم: <code>${esc(order.phone)}</code>`,
       `العنوان: ${esc(order.city)} - ${esc(order.address)}`,

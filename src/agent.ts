@@ -22,6 +22,8 @@ export type CollectedOrder = {
   total: string;
   notes: string;
   payment?: Payment;
+  // The customer's weight, when they gave it: an order whose sizes fit it can be confirmed without the team.
+  weightKg?: number;
 };
 
 // photos: ids of catalog photos, sent before the text (see catalog.ts).
@@ -77,6 +79,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - End almost every reply with ONE easy question that moves to the next step: the product's choices (color, size...) → name, phone and area → confirm. Never ask more than two things at once.
 - Assume the sale in a friendly way: "نحجزلك الفضي مقاس 58؟" is better than "هل تريد الطلب؟".
 - Size: if the customer doesn't know it, ask what the product's size guide needs (often weight and height). If there is no size guide, write their answers in the order notes, tell them naturally the team will confirm the right size, and keep going with the order.
+- Weight: before the order summary we always know the customer's weight. If they picked their size themselves, ask once, lightly, with the next detail you need (e.g. "وكم وزنك تقريباً استاذ؟ باش نتأكدو المقاس يجي عليك 👌"). If the size guide gives another size for that weight, say kindly which one fits and let them choose; their choice wins. If the set is for someone else, ask that person's weight. Put the weight in submit_order's weight_kg and in the notes.
 - Price objection ("غالي", "في أرخص", "اعملي خصم"): stay warm and firm. Never offer, hint at or promise a discount, gift, free extra or "let me ask" about the price unless the knowledge says so, even if they push or haggle several times. Show the value in one or two short lines from the knowledge (what's included, quality, free delivery). If the price is fixed, say it kindly once (e.g. "السعر ثابت، وشامل التوصيل لباب بيتك") and move on to the next choice.
 - "نفكر" / "نشوف" / "بعدين": no pressure. One helpful line (photos, size help) and leave the door open ("على راحتك، اي وقت تبي تحجز احنا هنا 😊").
 - Trust worries ("مضمون؟", "نخاف"): reassure only with facts from the knowledge (delivery to the door, payment options).
@@ -190,12 +193,13 @@ const ORDER_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
           description: "How the customer pays, as in the confirmed summary: cash on delivery (the default) or bank transfer.",
         },
         notes: { type: "string", description: "Anything else the team should know (height/weight, delivery wishes). Empty if nothing." },
+        weight_kg: { type: "integer", description: "The weight in kg of the person the set is for, as the customer said it. 0 if they never gave it." },
         message_to_customer: {
           type: "string",
           description: "Short warm thank-you saying the booking is registered and we will contact them to confirm delivery, e.g. \"تمام استاذ، تم الحجز 🙏 شويه ونتواصلو معاك لتأكيد التوصيل\".",
         },
       },
-      required: ["customer_name", "phone", "city", "address", "items", "total", "payment", "notes", "message_to_customer"],
+      required: ["customer_name", "phone", "city", "address", "items", "total", "payment", "notes", "weight_kg", "message_to_customer"],
       additionalProperties: false,
     },
   },
@@ -836,6 +840,22 @@ export function withoutPlaceholders(order: CollectedOrder): CollectedOrder {
   return { ...order, address };
 }
 
+// A Libyan mobile: 091-095 and 7 more digits (with 0, 218 or +218 in front, or none). 9 digits starting
+// 90 (e.g. 901012457) are not one.
+export function libyanMobile(phone: string): boolean {
+  const d = phone.replace(/[٠-٩]/g, (x) => String(x.charCodeAt(0) - 0x0660)).replace(/D/g, "").replace(/^00/, "");
+  return /^(?:218|0)?9[1-5]d{7}$/.test(d);
+}
+
+// The size for a weight, from the size table in the knowledge ("| من 81 إلى 90 كغ | 58 |"), so the team's edits
+// count. undefined above the table's last row, or when the table isn't found.
+export function sizeForWeight(kg: number): string | undefined {
+  const rows = [...loadKnowledge().matchAll(/|s*(?:حتى|منs*d+s*(?:إلى|الى|-))s*(d+)s*(?:كغ|كيلو|kg)[^|]*|s*(d{2})s*|/g)]
+    .map((m) => ({ upTo: Number(m[1]), size: m[2]! }))
+    .sort((a, b) => a.upTo - b.upTo);
+  return rows.find((r) => kg <= r.upTo)?.size;
+}
+
 // What the courier can't find the customer without: the team hears it before sending to Darb.
 export function addressGaps(order: { city: string; address: string; phone?: string; items?: OrderItem[] }): string[] {
   const words = order.address.replace(MAP_LINK, "").replace(/[\s\-–,،:.()]+/g, " ").trim();
@@ -850,7 +870,7 @@ export function addressGaps(order: { city: string; address: string; phone?: stri
 // An order the model wants to save but can't be: told back to it, so it asks the customer (see decideReply).
 function orderProblems(order: CollectedOrder): string[] {
   return [
-    ...(intlPhone(order.phone) ? [] : [`The phone "${order.phone}" is not a full Libyan mobile number (10 digits starting 091-095, or +218).`]),
+    ...(libyanMobile(order.phone) ? [] : [`The phone "${order.phone}" is not a full Libyan mobile number (10 digits starting 091-095, or +218).`]),
     ...order.items.flatMap((i, n) => [
       ...(String(i.size ?? "").trim() ? [] : [`Item ${n + 1} (${i.color || i.product}) has no size.`]),
       ...(/[،,]|\sو\s?\S/.test(i.color ?? "") ? [`Item ${n + 1} has more than one color ("${i.color}"): each color is its own item with its own size.`] : []),
@@ -961,6 +981,7 @@ function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | u
         total: string;
         notes: string;
         payment?: string;
+        weight_kg?: number;
         message_to_customer: string;
       };
       return {
@@ -974,6 +995,7 @@ function readDecision(message: OpenAI.Chat.Completions.ChatCompletionMessage | u
           total: a.total,
           notes: a.notes,
           payment: a.payment === "transfer" ? "transfer" : "cash",
+          ...(typeof a.weight_kg === "number" && a.weight_kg > 0 ? { weightKg: a.weight_kg } : {}),
         },
         messageToCustomer: a.message_to_customer,
       };
