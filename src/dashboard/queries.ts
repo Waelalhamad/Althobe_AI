@@ -419,17 +419,16 @@ export function handoffs(days: number) {
 const UNSENT = "o.status IN ('new', 'confirmed') AND o.darb_ref IS NULL";
 
 // Where the order's shipment is at Darb (from the copy synced every 15 minutes).
-export const DARB_FILTERS = ["unsent", "waiting", "on_way", "delayed", "delivered", "paid", "returned"] as const;
+// Every status Darb has, one by one, then the money of the completed ones (still at Darb, or paid to our wallet).
+export const DARB_STATUSES = ["pending", "booked", "processing", "on-branch", "delayed", "released", "resent", "completed", "returning", "returned", "cancelled"] as const;
+export const DARB_FILTERS = ["unsent", ...DARB_STATUSES, "unpaid", "paid"] as const;
 export type DarbFilter = (typeof DARB_FILTERS)[number];
-const DARB_WHERE: Record<DarbFilter, string> = {
+const DARB_WHERE = {
   unsent: UNSENT,
-  waiting: "COALESCE(d.status, o.darb_status) IN ('pending', 'booked')",
-  on_way: "COALESCE(d.status, o.darb_status) IN ('processing', 'on-branch', 'resent', 'released')",
-  delayed: "COALESCE(d.status, o.darb_status) = 'delayed'",
-  delivered: "COALESCE(d.status, o.darb_status) = 'completed' AND d.paid_at IS NULL",
+  ...Object.fromEntries(DARB_STATUSES.map((s) => [s, `COALESCE(d.status, o.darb_status) = '${s}'`])),
+  unpaid: "COALESCE(d.status, o.darb_status) = 'completed' AND d.paid_at IS NULL",
   paid: "d.paid_at IS NOT NULL",
-  returned: "COALESCE(d.status, o.darb_status) IN ('returning', 'returned', 'cancelled')",
-};
+} as Record<DarbFilter, string>;
 
 export type OrdersQuery = {
   status?: string;

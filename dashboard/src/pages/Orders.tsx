@@ -32,12 +32,22 @@ const STATUSES: { id: OrderStatus; label: string; tone: "warn" | "info" | "ok" |
 // Where the shipment is at Darb (filter chips), with the tone of its badge.
 const DARB_FILTERS: { id: DarbFilter; label: string; tone: Tone }[] = [
   { id: "unsent", label: "ما انبعتت لدرب", tone: "warn" },
-  { id: "waiting", label: "بانتظار المندوب", tone: "warn" },
-  { id: "on_way", label: "عالطريق", tone: "info" },
-  { id: "delayed", label: "متأخرة", tone: "bad" },
-  { id: "delivered", label: "انسلمت، المبلغ عند درب", tone: "ok" },
+  { id: "pending", label: DARB_STATUS.pending!, tone: "warn" },
+  { id: "booked", label: DARB_STATUS.booked!, tone: "info" },
+  { id: "processing", label: DARB_STATUS.processing!, tone: "info" },
+  { id: "on-branch", label: DARB_STATUS["on-branch"]!, tone: "info" },
+  { id: "delayed", label: DARB_STATUS.delayed!, tone: "bad" },
+  { id: "released", label: DARB_STATUS.released!, tone: "info" },
+  { id: "resent", label: DARB_STATUS.resent!, tone: "info" },
+  { id: "completed", label: DARB_STATUS.completed!, tone: "ok" },
+  { id: "returning", label: DARB_STATUS.returning!, tone: "bad" },
+  { id: "returned", label: DARB_STATUS.returned!, tone: "bad" },
+  { id: "cancelled", label: DARB_STATUS.cancelled!, tone: "bad" },
+];
+// The money of the completed shipments.
+const DARB_MONEY: { id: DarbFilter; label: string; tone: Tone }[] = [
+  { id: "unpaid", label: "مكتملة، المبلغ لسا عند درب", tone: "warn" },
   { id: "paid", label: "وصلنا المبلغ", tone: "ok" },
-  { id: "returned", label: "راجعة / ملغية", tone: "bad" },
 ];
 type Tone = "warn" | "info" | "ok" | "muted" | "bad";
 
@@ -200,6 +210,20 @@ export function Orders() {
               <button
                 key={d.id}
                 // Darb's filter looks at every status, unless the team picks one too.
+                onClick={() => setF((cur) => ({ ...cur, darb: cur.darb === d.id ? undefined : d.id, status: cur.darb === d.id ? cur.status : undefined }))}
+                className={chip(f.darb === d.id, d.tone)}
+              >
+                {d.label} <span className="num">({q.data?.darbCounts[d.id] ?? 0})</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {q.data?.darb && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-16 text-xs text-muted">المبلغ</span>
+            {DARB_MONEY.map((d) => (
+              <button
+                key={d.id}
                 onClick={() => setF((cur) => ({ ...cur, darb: cur.darb === d.id ? undefined : d.id, status: cur.darb === d.id ? cur.status : undefined }))}
                 className={chip(f.darb === d.id, d.tone)}
               >

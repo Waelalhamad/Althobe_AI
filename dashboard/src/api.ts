@@ -176,7 +176,21 @@ export type RedirectView = {
 };
 
 // Where an order's shipment is at Darb Assabil (the orders page filter).
-export type DarbFilter = "unsent" | "waiting" | "on_way" | "delayed" | "delivered" | "paid" | "returned";
+export type DarbFilter =
+  | "unsent"
+  | "pending"
+  | "booked"
+  | "processing"
+  | "on-branch"
+  | "delayed"
+  | "released"
+  | "resent"
+  | "completed"
+  | "returning"
+  | "returned"
+  | "cancelled"
+  | "unpaid"
+  | "paid";
 // from / to: dashboard dates (YYYY-MM-DD, both included), when the order was made.
 export type OrderFilters = { status?: OrderStatus; darb?: DarbFilter; payment?: Payment; source?: "ai" | "team"; q?: string; from?: string; to?: string };
 

@@ -8,18 +8,19 @@ import { num } from "../format";
 const inputClass = "w-full rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary";
 
 // Darb Assabil's shipment statuses, in Arabic.
+// Darb's statuses, named after what Darb writes on each (its timeline).
 export const DARB_STATUS: Record<string, string> = {
-  pending: "بانتظار المندوب",
-  booked: "انحجزت",
-  processing: "عالطريق",
-  "on-branch": "بالفرع",
-  completed: "انسلمت",
+  pending: "قيد الانتظار",
+  booked: "عند مندوب التجميع",
+  processing: "قيد التوصيل",
+  "on-branch": "في الفرع",
+  completed: "مكتملة",
   cancelled: "ملغية",
-  resent: "انبعتت من جديد",
-  delayed: "متأخرة",
-  released: "انسلمت للزبون",
-  returning: "راجعة",
-  returned: "رجعت",
+  resent: "أعيد إرسالها",
+  delayed: "مؤجلة",
+  released: "مفرج عنها",
+  returning: "قيد الإرجاع",
+  returned: "مرتجعة",
 };
 
 // Sends a confirmed order to Darb Assabil: the team checks the guessed city/area, the address note and the amount
