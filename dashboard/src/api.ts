@@ -156,6 +156,22 @@ export type StockProduct = {
 };
 
 export type RedirectCandidate = { orderId: number; reference: string; city: string; matches: number };
+// Goods on their way back to us (see src/darbRedirect.ts incomingReturns).
+export type IncomingReturn = {
+  orderId: number;
+  customer: string;
+  name: string;
+  phone: string;
+  city: string;
+  items: { color: string; size: string; quantity: number }[];
+  orderStatus: string;
+  darbStatus: string;
+  reference: string;
+  lastEvent: string;
+  since: number;
+  back: boolean;
+  matches: number;
+};
 export type RedirectMatch = {
   orderId: number;
   name: string;
@@ -391,6 +407,7 @@ export const api = {
   darbMatches: (id: number) => request<DarbTracked[]>(`/orders/${id}/darb/matches`),
   // A cancelled or refused shipment given to another order in the same city.
   darbRedirects: () => request<RedirectCandidate[]>("/darb/redirects"),
+  incomingReturns: () => request<IncomingReturn[]>("/stock/incoming"),
   redirectMatches: (id: number) => request<RedirectView>(`/orders/${id}/darb/redirect`),
   redirect: (id: number, body: { to: number; area: string; notes: string; total: number; payment: Payment }) =>
     post<{ ok: boolean; pickedUp: boolean; ownCancelled: string }>(`/orders/${id}/darb/redirect`, body),

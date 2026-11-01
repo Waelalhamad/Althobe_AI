@@ -234,14 +234,24 @@ export async function redirectShipment(fromId: number, toId: number, input: Redi
 }
 
 // Telegram, when a cancelled or refused shipment has someone in the same city who could take it.
-export async function tellRedirectChance(orderId: number) {
+// cancelledByTeam: the team just cancelled an order whose shipment is out. Darb's status doesn't change yet, so
+// this is the only alert that the goods will come back; it goes even when no one else could take them.
+export async function tellRedirectChance(orderId: number, cancelledByTeam = false) {
   const order = loadOrder(orderId);
   const shipment = source(order);
   if (!order || !shipment) return;
   const matches = matchesFor(order, shipment, await darbZones());
-  if (!matches.length) return;
   const item = (JSON.parse(order.items) as OrderItem[]).map((i) => `${i.color} ${i.size}`).join("، ");
-  const link = config.publicUrl ? `\n<a href="${config.publicUrl}/dashboard/orders">افتح الطلبات</a>` : "";
+  if (!matches.length) {
+    if (cancelledByTeam)
+      notify(
+        "order",
+        `🚫 <b>طلب #${orderId} انلغى وشحنتو عند درب، البضاعة رح ترجع</b>: ${esc(order.name)} · ${esc(shipment.city)} · <code>${esc(shipment.reference)}</code>\n📦 ${esc(item)}\n` +
+          `ما في طلب متلو بنفس المدينة هلق. قرّروا: تستنوا طلب جديد ولا ترجع للمخزن${config.publicUrl ? `\n<a href="${config.publicUrl}/dashboard/stock">البضاعة الراجعة</a>` : ""}`,
+      );
+    return;
+  }
+  const link = config.publicUrl ? `\n<a href="${config.publicUrl}/dashboard/stock">البضاعة الراجعة</a>` : "";
   notify(
     "order",
     `↪️ <b>في طلب متلو بنفس المدينة</b>: شحنة طلب #${orderId} (${esc(item)}، ${esc(shipment.city)}) فيك تحولها لـ ` +
@@ -297,4 +307,65 @@ export async function resendToDarb(orderId: number, input?: ShipmentInput) {
   notify("order", `🔁 <b>طلب #${orderId} انبعت من جديد لدرب</b>: ${esc(order.name)}\nالشحنة القديمة ${esc(oldRef ?? "")} مش موجودة عند درب، الجديدة ${esc(shipment.reference)}`);
   void syncDarb().catch(() => {});
   return shipment;
+}
+
+// --- Goods on their way back to us ---------------------------------------------------------------------
+// Every sent order whose pieces will come back: cancelled by us while the shipment is still out, refused at the door
+// (returning), or cancelled at Darb. The team decides where each one goes (another customer, or back to the store);
+// the ones back in the last 14 days are listed too, to check they arrived.
+export type IncomingReturn = {
+  orderId: number;
+  customer: string;
+  name: string;
+  phone: string;
+  city: string;
+  items: { color: string; size: string; quantity: number }[];
+  orderStatus: string;
+  darbStatus: string;
+  reference: string;
+  lastEvent: string;
+  since: number; // when the shipment last changed at Darb
+  back: boolean; // already back (returned)
+  matches: number; // orders in the same city that could take it instead (0 once picked up and not redirectable)
+};
+
+const BACK_DAYS = 14;
+
+export async function incomingReturns(): Promise<IncomingReturn[]> {
+  const rows = db
+    .prepare(
+      `SELECT o.*, d.status AS d_status, d.reference AS d_reference, d.city AS d_city, d.last_event, d.last_event_at, d.synced_at
+       FROM orders o JOIN darb_shipments d ON d.id = o.darb_id
+       WHERE (o.status = 'cancelled' AND d.status NOT IN ('completed', 'released'))
+          OR d.status IN ('returning', 'cancelled')
+          OR (d.status = 'returned' AND COALESCE(d.last_event_at, d.synced_at) > ?)
+       ORDER BY COALESCE(d.last_event_at, d.synced_at) DESC`,
+    )
+    .all(Date.now() - BACK_DAYS * 86_400_000) as (OrderRow & {
+    d_status: string;
+    d_reference: string;
+    d_city: string;
+    last_event: string;
+    last_event_at: number | null;
+    synced_at: number;
+  })[];
+  const zones = rows.some((r) => r.d_status !== "returned") ? await darbZones().catch(() => [] as Zone[]) : [];
+  return rows.map((r) => {
+    const shipment = source(r);
+    return {
+      orderId: r.id,
+      customer: r.customer,
+      name: r.name,
+      phone: r.phone,
+      city: r.d_city || r.city,
+      items: (JSON.parse(r.items) as OrderItem[]).map((i) => ({ color: i.color ?? "", size: String(i.size ?? ""), quantity: i.quantity || 1 })),
+      orderStatus: r.status,
+      darbStatus: r.d_status,
+      reference: r.d_reference,
+      lastEvent: r.last_event,
+      since: r.last_event_at ?? r.synced_at,
+      back: r.d_status === "returned",
+      matches: shipment && zones.length ? matchesFor(r, shipment, zones).length : 0,
+    };
+  });
 }

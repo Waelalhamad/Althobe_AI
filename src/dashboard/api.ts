@@ -49,7 +49,7 @@ import * as queries from "./queries.js";
 import { findGroups, sendTest, telegramChatId, setMutedKinds, setTelegramChat, setTelegramToken, telegramStatus } from "../telegram.js";
 import { followUpSettings, followUpStats, saveFollowUpSettings } from "../followup.js";
 import { markTold, saveTrackingSettings, trackingSettings, trackingStats } from "../tracking.js";
-import { redirectCandidates, redirectMatches, redirectShipment, resendToDarb, tellRedirectChance } from "../darbRedirect.js";
+import { incomingReturns, redirectCandidates, redirectMatches, redirectShipment, resendToDarb, tellRedirectChance } from "../darbRedirect.js";
 import { generateReport, resolveAlert, runChecks, runReviews, saveSupervisorSettings, supervisorView } from "../supervisor.js";
 
 export const dashboardApi = express.Router();
@@ -485,6 +485,8 @@ dashboardApi.post("/orders/:id/darb/link", async (req, res) => {
 });
 // A cancelled or refused shipment given to another order in the same city (src/darbRedirect.ts).
 dashboardApi.get("/darb/redirects", (_req, res) => darbRoute(res, () => redirectCandidates()));
+// Goods on their way back (cancelled, refused or cancelled at Darb) and the ones back lately: the stock page.
+dashboardApi.get("/stock/incoming", (_req, res) => darbRoute(res, () => incomingReturns()));
 dashboardApi.get("/orders/:id/darb/redirect", (req, res) => darbRoute(res, () => redirectMatches(Number(req.params.id))));
 dashboardApi.post("/orders/:id/darb/redirect", (req, res) =>
   darbRoute(res, () =>
@@ -522,7 +524,7 @@ dashboardApi.patch("/orders/:id", (req, res) => {
   }
   log("dashboard", `order #${req.params.id} marked ${status}`);
   // A cancelled order whose shipment is out: someone in the same city may take it instead (Telegram).
-  if (status === "cancelled") void tellRedirectChance(Number(req.params.id)).catch(() => {});
+  if (status === "cancelled") void tellRedirectChance(Number(req.params.id), true).catch(() => {});
   res.json({ ok: true });
 });
 

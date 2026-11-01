@@ -5,6 +5,7 @@ import { Boxes, Plus, Save, Trash2, X } from "lucide-react";
 import { api, type StockProduct } from "../api";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { ago, num } from "../format";
+import { IncomingReturns } from "../components/IncomingReturns";
 
 const inputClass = "rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary";
 
@@ -31,6 +32,8 @@ export function Stock() {
         subtitle="شو باقي من كل لون ومقاس. كل طلب بينقّص من هون لحالو، والطلب الملغي بيرجّع. المساعد ما بيبيع شي خلص، وبيقول للزبون إنو خلص وبيعرض الموجود."
       />
       <ErrorNote error={q.error} />
+
+      <IncomingReturns />
 
       {tracked.map((p) => (
         <ProductTable key={p.product} initial={toDraft(p)} saved={p} />

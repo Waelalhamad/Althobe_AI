@@ -172,6 +172,15 @@ const orderFor = (id: string) => (db.prepare("SELECT id FROM orders WHERE darb_i
 
 // Telegram: a shipment delivered, delayed, coming back or cancelled, and money Darb paid us. The problems carry
 // the chat's link, so the team can reach the customer.
+// The pieces in a shipment's order, for the alerts ("أسود 58، 2 × بني 56").
+function pieces(darbId: string): string {
+  const order = db.prepare("SELECT items FROM orders WHERE darb_id = ? LIMIT 1").get(darbId) as { items: string } | undefined;
+  if (!order) return "";
+  return (JSON.parse(order.items) as { color?: string; size?: string | number; quantity?: number }[])
+    .map((i) => `${(i.quantity ?? 1) > 1 ? `${i.quantity} × ` : ""}${i.color ?? ""} ${i.size ?? ""}`.trim())
+    .join("، ");
+}
+
 function tell(changes: Change[]) {
   const label = (r: DarbShipmentRow, chat = false) => {
     const order = db.prepare("SELECT id, customer FROM orders WHERE darb_id = ? LIMIT 1").get(r.id) as { id: number; customer: string } | undefined;
@@ -185,8 +194,14 @@ function tell(changes: Change[]) {
     if (before?.status === row.status) continue;
     if (row.status === "completed") notify("order", `✅ <b>انسلمت</b>: ${label(row)} · ${row.amount} دينار لإلنا`);
     else if (row.status === "delayed") notify("order", `⏳ <b>شحنة متأخرة</b>: ${label(row, true)}`);
-    else if (row.status === "returning" || row.status === "returned") notify("order", `↩️ <b>شحنة راجعة</b>: ${label(row, true)}\n${esc(row.last_event)}`);
-    else if (row.status === "cancelled") notify("order", `🚫 <b>شحنة ملغية</b>: ${label(row, true)}\n${esc(row.last_event)}`);
+    else if (row.status === "returning" || row.status === "cancelled")
+      notify(
+        "order",
+        `${row.status === "returning" ? "↩️ <b>بضاعة راجعة لعنا</b>" : "🚫 <b>شحنة ملغية، البضاعة رح ترجع</b>"}: ${label(row, true)}` +
+          `${pieces(row.id) ? `\n📦 ${esc(pieces(row.id))}` : ""}\n${esc(row.last_event)}\n` +
+          `قرّروا وين تروح: لزبون تاني بنفس المدينة ولا ترجع للمخزن${config.publicUrl ? `\n<a href="${config.publicUrl}/dashboard/stock">البضاعة الراجعة</a>` : ""}`,
+      );
+    else if (row.status === "returned") notify("order", `📥 <b>البضاعة رجعت</b>: ${label(row)}${pieces(row.id) ? `\n📦 ${esc(pieces(row.id))}` : ""}`);
   }
   const paid = changes.filter((c) => !c.before?.paid_at && c.row.paid_at);
   if (paid.length) {

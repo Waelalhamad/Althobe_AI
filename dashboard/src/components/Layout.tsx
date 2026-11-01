@@ -47,6 +47,9 @@ export function Layout({ children }: { children: ReactNode }) {
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const s = settings.data;
   const mode = !s ? null : !s.aiReplies ? "off" : s.testNumbers.length ? "test" : "on";
+  // Goods on their way back: a count on the stock page's link, wherever the team is.
+  const returns = useQuery({ queryKey: ["incoming-returns"], queryFn: api.incomingReturns, refetchInterval: 60_000, retry: false });
+  const coming = (returns.data ?? []).filter((r) => !r.back).length;
 
   const logout = async () => {
     await api.logout();
@@ -70,6 +73,11 @@ export function Layout({ children }: { children: ReactNode }) {
           >
             <Icon size={18} />
             {label}
+            {href === "/stock" && coming > 0 && (
+              <span title="بضاعة راجعة" className="ms-auto rounded-full bg-warn px-2 text-xs font-semibold text-bg">
+                {coming} ↩
+              </span>
+            )}
           </Link>
         );
       })}
