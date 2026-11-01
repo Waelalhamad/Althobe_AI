@@ -194,6 +194,8 @@ export type RedirectView = {
 // Where an order's shipment is at Darb Assabil (the orders page filter).
 export type DarbFilter =
   | "unsent"
+  | "active"
+  | "back"
   | "pending"
   | "booked"
   | "processing"

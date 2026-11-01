@@ -7,6 +7,8 @@ import {
   Banknote,
   BookOpen,
   Boxes,
+  ChevronDown,
+  ClipboardList,
   FlaskConical,
   GraduationCap,
   Hand,
@@ -23,21 +25,45 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 
-const NAV = [
-  { href: "/", label: "نظرة عامة", icon: LayoutDashboard },
-  { href: "/inbox", label: "المحادثات", icon: MessagesSquare },
-  { href: "/orders", label: "الطلبات", icon: ShoppingBag },
-  { href: "/money", label: "الفلوس", icon: Banknote },
-  { href: "/stock", label: "المخزون", icon: Boxes },
-  { href: "/leads", label: "الزباين", icon: Users },
-  { href: "/supervisor", label: "المشرف العام", icon: ShieldCheck },
-  { href: "/handoffs", label: "التحويلات للفريق", icon: Hand },
-  { href: "/learning", label: "التعلّم", icon: GraduationCap },
-  { href: "/knowledge", label: "معلومات المساعد", icon: BookOpen },
-  { href: "/catalog", label: "صور المنتجات", icon: Images },
-  { href: "/playground", label: "جرّب المساعد", icon: FlaskConical },
-  { href: "/activity", label: "سجل النشاط", icon: Activity },
-  { href: "/settings", label: "الإعدادات", icon: Settings },
+// The menu in groups: the daily work first; the assistant's tools and the system folded (open on their pages).
+type NavItem = { href: string; label: string; icon: typeof Activity };
+const NAV: { title?: string; fold?: boolean; items: NavItem[] }[] = [
+  {
+    items: [
+      { href: "/", label: "اليوم", icon: ClipboardList },
+      { href: "/inbox", label: "المحادثات", icon: MessagesSquare },
+      { href: "/orders", label: "الطلبات", icon: ShoppingBag },
+      { href: "/stock", label: "المخزون والراجع", icon: Boxes },
+      { href: "/money", label: "الفلوس", icon: Banknote },
+    ],
+  },
+  {
+    title: "الأرقام",
+    items: [
+      { href: "/stats", label: "أرقام البيع", icon: LayoutDashboard },
+      { href: "/leads", label: "الزباين", icon: Users },
+    ],
+  },
+  {
+    title: "المساعد الذكي",
+    fold: true,
+    items: [
+      { href: "/supervisor", label: "المشرف العام", icon: ShieldCheck },
+      { href: "/handoffs", label: "التحويلات للفريق", icon: Hand },
+      { href: "/learning", label: "التعلّم", icon: GraduationCap },
+      { href: "/knowledge", label: "معلومات المساعد", icon: BookOpen },
+      { href: "/catalog", label: "صور المنتجات", icon: Images },
+      { href: "/playground", label: "جرّب المساعد", icon: FlaskConical },
+    ],
+  },
+  {
+    title: "النظام",
+    fold: true,
+    items: [
+      { href: "/activity", label: "سجل النشاط", icon: Activity },
+      { href: "/settings", label: "الإعدادات", icon: Settings },
+    ],
+  },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -57,28 +83,56 @@ export function Layout({ children }: { children: ReactNode }) {
     window.location.reload();
   };
 
+  const isActive = (href: string) => (href === "/" ? location === "/" : location.startsWith(href));
+  // Folded groups the team opened (kept), and any group holding the page we're on.
+  const [unfolded, setUnfolded] = useState<string[]>(() => JSON.parse(localStorage.getItem("nav-open") ?? "[]") as string[]);
+  const toggle = (title: string) =>
+    setUnfolded((cur) => {
+      const next = cur.includes(title) ? cur.filter((x) => x !== title) : [...cur, title];
+      localStorage.setItem("nav-open", JSON.stringify(next));
+      return next;
+    });
+
+  const link = ({ href, label, icon: Icon }: NavItem) => (
+    <Link
+      key={href}
+      href={href}
+      onClick={() => setOpen(false)}
+      className={clsx(
+        "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition",
+        isActive(href) ? "bg-primary-soft font-semibold text-primary" : "text-muted hover:bg-card-2 hover:text-fg",
+      )}
+    >
+      <Icon size={18} />
+      {label}
+      {href === "/stock" && coming > 0 && (
+        <span title="بضاعة راجعة" className="ms-auto rounded-full bg-warn px-2 text-xs font-semibold text-bg">
+          {coming} ↩
+        </span>
+      )}
+    </Link>
+  );
+
   const nav = (
-    <nav className="flex flex-col gap-1">
-      {NAV.map(({ href, label, icon: Icon }) => {
-        const active = href === "/" ? location === "/" : location.startsWith(href);
+    <nav className="flex flex-col gap-4">
+      {NAV.map((g) => {
+        const shown = !g.fold || unfolded.includes(g.title!) || g.items.some((i) => isActive(i.href));
         return (
-          <Link
-            key={href}
-            href={href}
-            onClick={() => setOpen(false)}
-            className={clsx(
-              "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition",
-              active ? "bg-primary-soft font-semibold text-primary" : "text-muted hover:bg-card-2 hover:text-fg",
-            )}
-          >
-            <Icon size={18} />
-            {label}
-            {href === "/stock" && coming > 0 && (
-              <span title="بضاعة راجعة" className="ms-auto rounded-full bg-warn px-2 text-xs font-semibold text-bg">
-                {coming} ↩
-              </span>
-            )}
-          </Link>
+          <div key={g.title ?? "main"} className="flex flex-col gap-1">
+            {g.title &&
+              (g.fold ? (
+                <button
+                  onClick={() => toggle(g.title!)}
+                  className="flex items-center justify-between px-3 text-xs font-semibold text-muted hover:text-fg"
+                >
+                  {g.title}
+                  <ChevronDown size={14} className={clsx("transition", shown && "rotate-180")} />
+                </button>
+              ) : (
+                <span className="px-3 text-xs font-semibold text-muted">{g.title}</span>
+              ))}
+            {shown && g.items.map(link)}
+          </div>
         );
       })}
     </nav>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertTriangle, Link2, MapPin, MessageCircle, Pencil, Phone, Plus, Search, ShoppingBag, Shuffle, Truck, X } from "lucide-react";
+import { AlertTriangle, Link2, MapPin, MessageCircle, Pencil, Phone, Plus, Search, ShoppingBag, Shuffle, SlidersHorizontal, Truck, X } from "lucide-react";
 import { api, CHANNEL_LABEL, PAYMENT_LABEL, type DarbFilter, type Order, type OrderFilters, type OrderStatus, type Payment, type RedirectCandidate } from "../api";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { emptyOrder, OrderForm } from "../components/OrderForm";
@@ -59,8 +59,72 @@ const chip = (on: boolean, tone: Tone = "muted") =>
       : "bg-card-2 text-muted hover:text-fg",
   );
 
+// The tabs, in the order of the work: each is one step of an order, with what to do there.
+type OrdersData = { counts: Partial<Record<OrderStatus, number>>; darbCounts: Record<DarbFilter, number> };
+type Tab = { id: string; label: string; hint: string; f: Pick<OrderFilters, "status" | "darb">; tone: Tone; count: (d: OrdersData) => number };
+const DARB_TABS: Tab[] = [
+  {
+    id: "new",
+    label: "بدها تأكيد",
+    hint: "طلبات وصلت ولسا ما حدا تأكد منها. راسل الزبون، تأكد من المقاس والعنوان، وغيّر الحالة لـ «متأكد».",
+    f: { status: "new" },
+    tone: "warn",
+    count: (d) => d.counts.new ?? 0,
+  },
+  {
+    id: "unsent",
+    label: "لازم تنبعت لدرب",
+    hint: "متأكدة بس لسا ما انبعتت. افتح الطلب واضغط «ابعت لدرب» (أو اربطها برقم الشحنة إذا بعتّوها من تطبيق درب).",
+    f: { darb: "unsent" },
+    tone: "warn",
+    count: (d) => d.darbCounts.unsent ?? 0,
+  },
+  {
+    id: "active",
+    label: "عند درب",
+    hint: "انبعتت والمندوب عم يوصّلها. ما بدها شي منكم، إلا المؤجلة: راسلوا الزبون.",
+    f: { darb: "active" },
+    tone: "info",
+    count: (d) => d.darbCounts.active ?? 0,
+  },
+  {
+    id: "completed",
+    label: "مكتملة",
+    hint: "الزبون استلم ودفع. درب بتحوّل المصاري عالمحفظة (شوف صفحة الفلوس).",
+    f: { darb: "completed" },
+    tone: "ok",
+    count: (d) => d.darbCounts.completed ?? 0,
+  },
+  {
+    id: "back",
+    label: "ملغية وراجعة",
+    hint: "انلغت أو الزبون رفضها. وين تروح البضاعة الراجعة بتقرروه بصفحة «المخزون والراجع».",
+    f: { darb: "back" },
+    tone: "bad",
+    count: (d) => d.darbCounts.back ?? 0,
+  },
+  { id: "all", label: "الكل", hint: "كل الطلبات.", f: {}, tone: "muted", count: () => 0 },
+];
+// Without Darb: the order's own statuses.
+const PLAIN_TABS: Tab[] = [
+  ...STATUSES.map((s) => ({ id: s.id, label: s.label, hint: "", f: { status: s.id }, tone: s.tone, count: (d: OrdersData) => d.counts[s.id] ?? 0 })),
+  { id: "all", label: "الكل", hint: "كل الطلبات.", f: {}, tone: "muted", count: () => 0 },
+];
+const sameTab = (t: Tab, f: OrderFilters) => t.f.status === f.status && t.f.darb === f.darb;
+
+// The tab to open from a link ("?tab=unsent"): a tab, or any Darb status (opens the extra filters).
+function fromLink(): { f: OrderFilters; more: boolean } {
+  const tab = new URLSearchParams(window.location.search).get("tab");
+  const t = DARB_TABS.find((x) => x.id === tab);
+  if (t) return { f: { ...t.f }, more: false };
+  if (tab && [...DARB_FILTERS, ...DARB_MONEY].some((x) => x.id === tab)) return { f: { darb: tab as DarbFilter }, more: true };
+  return { f: { status: "new" }, more: false };
+}
+
 export function Orders() {
-  const [f, setF] = useState<OrderFilters>({ status: "new" });
+  const [start] = useState(fromLink);
+  const [f, setF] = useState<OrderFilters>(start.f);
+  const [more, setMore] = useState(start.more);
   const [search, setSearch] = useState("");
   const q = useQuery({
     queryKey: ["orders", f, search.trim()],
@@ -69,12 +133,10 @@ export function Orders() {
     placeholderData: (prev) => prev,
   });
   const [adding, setAdding] = useState(false);
-  // Cancelled or refused shipments someone else in the same city could take instead.
+  // Cancelled or refused shipments someone else in the same city could take instead (a button on their card).
   const redirects = useQuery({ queryKey: ["redirects"], queryFn: api.darbRedirects, enabled: Boolean(q.data?.darb), refetchInterval: 60_000 });
-  const [redirecting, setRedirecting] = useState<Order>();
   const set = (patch: Partial<OrderFilters>) => setF((cur) => ({ ...cur, ...patch }));
-  const filtered = Boolean(f.status || f.darb || f.payment || f.source || f.from || f.to || search.trim());
-  // Which date chip is on ("custom" shows the two date fields).
+  // Which date chip is on ("custom" shows the calendar).
   const [dates, setDates] = useState<string>("all");
   const pickDates = (id: string) => {
     setDates(id);
@@ -84,11 +146,21 @@ export function Orders() {
     else set({ from: undefined, to: undefined });
   };
 
+  const tabs = q.data?.darb === false ? PLAIN_TABS : DARB_TABS;
+  const tab = tabs.find((t) => sameTab(t, f));
+  // The extra filters in use (the tab itself isn't one).
+  const extra = [f.from || f.to, f.payment, f.source, !tab && (f.status || f.darb)].filter(Boolean).length;
+  const clear = () => {
+    setF(tab ? { status: f.status, darb: f.darb } : { status: "new" });
+    setDates("all");
+    setSearch("");
+  };
+
   return (
     <div className="mx-auto max-w-5xl">
       <PageHeader
         title="الطلبات"
-        subtitle="الطلبات يلي جمعها المساعد بعد ما أكّد الزبون الملخص، والطلبات يلي سجّلها الفريق. المساعد بيوقف على المحادثة، والفريق بيتواصل مع الزبون ليأكد الحجز."
+        subtitle="كل طلب بيمشي بالترتيب: بدها تأكيد ← لازم تنبعت لدرب ← عند درب ← مكتملة. اضغط على أي خطوة لتشوف طلباتها."
         actions={
           <>
             <Button onClick={() => setAdding(true)}>
@@ -99,145 +171,151 @@ export function Orders() {
         }
       />
       <ErrorNote error={q.error} />
-      {q.data?.darb && q.data.unsent > 0 && f.darb !== "unsent" && (
-        <button
-          onClick={() => setF({ darb: "unsent" })}
-          className="mb-4 flex w-full items-center gap-3 rounded-2xl border-2 border-warn bg-warn/10 p-4 text-start hover:bg-warn/15"
-        >
-          <AlertTriangle size={24} className="shrink-0 text-warn" />
-          <span className="flex-1">
-            <span className="block font-bold text-warn">
-              <span className="num">{q.data.unsent}</span> {q.data.unsent === 1 ? "طلب متأكد لسا ما انبعت" : "طلبات لسا ما انبعتت"} لدرب السبيل
-            </span>
-            <span className="text-sm text-muted">ابعتها، أو إذا انبعتت من تطبيق درب اربطها برقم الشحنة.</span>
-          </span>
-          <span className="text-sm font-semibold text-warn">وريني ياهن ←</span>
-        </button>
-      )}
 
-      {redirects.data && redirects.data.length > 0 && (
-        <div className="mb-4 flex flex-col gap-2 rounded-2xl border-2 border-info bg-info/10 p-4">
-          <span className="flex items-center gap-2 font-bold text-info">
-            <Shuffle size={20} /> <span className="num">{redirects.data.length}</span>{" "}
-            {redirects.data.length === 1 ? "شحنة ملغية فيك تحولها" : "شحنات ملغية فيك تحولها"} لطلب بنفس المدينة بدل ما ترجع
-          </span>
-          <div className="flex flex-wrap gap-2">
-            {redirects.data.map((r) => (
-              <RedirectChip key={r.orderId} r={r} onOpen={setRedirecting} />
-            ))}
-          </div>
-        </div>
-      )}
-      {redirecting && <DarbRedirect order={redirecting} onClose={() => setRedirecting(undefined)} />}
-
-      <Card className="mb-4 flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full sm:w-72">
-            <Search size={16} className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-muted" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="دوّر: اسم، رقم، مدينة، رقم طلب أو شحنة"
-              className="w-full rounded-xl border border-line bg-card-2 py-2 pe-3 ps-9 text-sm outline-none focus:border-primary"
-            />
-          </div>
-          <select
-            value={f.payment ?? ""}
-            onChange={(e) => set({ payment: (e.target.value || undefined) as Payment | undefined })}
-            className="rounded-xl border border-line bg-card-2 px-3 py-2 text-sm"
-          >
-            <option value="">كل طرق الدفع</option>
-            <option value="cash">{PAYMENT_LABEL.cash}</option>
-            <option value="transfer">{PAYMENT_LABEL.transfer}</option>
-          </select>
-          <select
-            value={f.source ?? ""}
-            onChange={(e) => set({ source: (e.target.value || undefined) as OrderFilters["source"] })}
-            className="rounded-xl border border-line bg-card-2 px-3 py-2 text-sm"
-          >
-            <option value="">المساعد والفريق</option>
-            <option value="ai">جمعه المساعد</option>
-            <option value="team">سجّلو الفريق</option>
-          </select>
-          {filtered && (
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        {tabs.map((t) => {
+          const on = tab?.id === t.id;
+          const n = q.data ? t.count(q.data) : 0;
+          return (
             <button
-              onClick={() => {
-                setF({});
-                setDates("all");
-                setSearch("");
-              }}
-              className="flex items-center gap-1 text-sm text-muted hover:text-bad"
+              key={t.id}
+              onClick={() => setF((cur) => ({ ...cur, status: t.f.status, darb: t.f.darb }))}
+              className={clsx(
+                "flex flex-col items-start gap-1 rounded-2xl border p-3 text-start transition",
+                on ? "border-primary bg-primary-soft" : "border-line bg-card hover:border-primary/50",
+              )}
             >
-              <X size={14} /> شيل الفلاتر
+              <span className={clsx("text-sm", on ? "font-semibold text-primary" : "text-muted")}>{t.label}</span>
+              {t.id !== "all" && (
+                <span
+                  className={clsx(
+                    "num text-2xl font-bold",
+                    n > 0 && t.tone === "warn" ? "text-warn" : n > 0 && t.tone === "bad" ? "text-bad" : on ? "text-primary" : "text-fg",
+                  )}
+                >
+                  {n}
+                </span>
+              )}
             </button>
-          )}
-          {q.data && <span className="ms-auto text-xs text-muted">{q.data.orders.length} طلب</span>}
-        </div>
+          );
+        })}
+      </div>
+      {tab?.hint && <p className="mb-4 rounded-xl bg-card-2 px-4 py-2 text-sm text-muted">💡 {tab.hint}</p>}
 
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="w-16 text-xs text-muted">التاريخ</span>
-          {[{ id: "all", label: "الكل" }, ...DATES, { id: "custom", label: "مخصص" }].map((d) => (
-            <button key={d.id} onClick={() => pickDates(d.id)} className={chip(dates === d.id)}>
-              {d.label}
-            </button>
-          ))}
-          {dates === "custom" && (
-            <DateRangePicker from={f.from ?? localDate(6)} to={f.to ?? localDate(0)} onChange={(from, to) => set({ from, to })} openOnMount />
-          )}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="relative w-full sm:w-80">
+          <Search size={16} className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="دوّر: اسم، رقم، مدينة، رقم طلب أو شحنة"
+            className="w-full rounded-xl border border-line bg-card-2 py-2 pe-3 ps-9 text-sm outline-none focus:border-primary"
+          />
         </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="w-16 text-xs text-muted">الحالة</span>
-          <button onClick={() => set({ status: undefined })} className={chip(!f.status)}>
-            الكل
+        <button
+          onClick={() => setMore((v) => !v)}
+          className={clsx(
+            "flex items-center gap-1 rounded-xl border px-3 py-2 text-sm",
+            more || extra ? "border-primary text-primary" : "border-line text-muted hover:text-fg",
+          )}
+        >
+          <SlidersHorizontal size={15} /> فلاتر أكتر
+          {extra > 0 && <span className="num rounded-full bg-primary px-1.5 text-xs text-white">{extra}</span>}
+        </button>
+        {(extra > 0 || search.trim()) && (
+          <button onClick={clear} className="flex items-center gap-1 text-sm text-muted hover:text-bad">
+            <X size={14} /> شيل الفلاتر
           </button>
-          {STATUSES.map((s) => (
-            <button key={s.id} onClick={() => set({ status: f.status === s.id ? undefined : s.id })} className={chip(f.status === s.id)}>
-              {s.label} {q.data?.counts[s.id] ? <span className="num">({q.data.counts[s.id]})</span> : ""}
-            </button>
-          ))}
-        </div>
+        )}
+        {q.data && <span className="ms-auto text-xs text-muted">{q.data.orders.length} طلب</span>}
+      </div>
 
-        {q.data?.darb && (
+      {more && (
+        <Card className="mb-4 flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="flex w-16 items-center gap-1 text-xs text-muted">
-              <Truck size={14} /> درب
-            </span>
-            <button onClick={() => set({ darb: undefined })} className={chip(!f.darb)}>
-              الكل
-            </button>
-            {DARB_FILTERS.map((d) => (
+            <span className="w-20 text-xs text-muted">التاريخ</span>
+            {[{ id: "all", label: "الكل" }, ...DATES, { id: "custom", label: "مخصص" }].map((d) => (
+              <button key={d.id} onClick={() => pickDates(d.id)} className={chip(dates === d.id)}>
+                {d.label}
+              </button>
+            ))}
+            {dates === "custom" && (
+              <DateRangePicker from={f.from ?? localDate(6)} to={f.to ?? localDate(0)} onChange={(from, to) => set({ from, to })} openOnMount />
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-20 text-xs text-muted">الدفع والمصدر</span>
+            <select
+              value={f.payment ?? ""}
+              onChange={(e) => set({ payment: (e.target.value || undefined) as Payment | undefined })}
+              className="rounded-xl border border-line bg-card-2 px-3 py-1.5 text-sm"
+            >
+              <option value="">كل طرق الدفع</option>
+              <option value="cash">{PAYMENT_LABEL.cash}</option>
+              <option value="transfer">{PAYMENT_LABEL.transfer}</option>
+            </select>
+            <select
+              value={f.source ?? ""}
+              onChange={(e) => set({ source: (e.target.value || undefined) as OrderFilters["source"] })}
+              className="rounded-xl border border-line bg-card-2 px-3 py-1.5 text-sm"
+            >
+              <option value="">المساعد والفريق</option>
+              <option value="ai">جمعه المساعد</option>
+              <option value="team">سجّلو الفريق</option>
+            </select>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-20 text-xs text-muted">حالة الطلب</span>
+            {STATUSES.map((s) => (
               <button
-                key={d.id}
-                // Darb's filter looks at every status, unless the team picks one too.
-                onClick={() => setF((cur) => ({ ...cur, darb: cur.darb === d.id ? undefined : d.id, status: cur.darb === d.id ? cur.status : undefined }))}
-                className={chip(f.darb === d.id, d.tone)}
+                key={s.id}
+                onClick={() => set({ status: f.status === s.id ? undefined : s.id, darb: undefined })}
+                className={chip(f.status === s.id && !f.darb)}
               >
-                {d.label} <span className="num">({q.data?.darbCounts[d.id] ?? 0})</span>
+                {s.label} <span className="num">({q.data?.counts[s.id] ?? 0})</span>
               </button>
             ))}
           </div>
-        )}
-        {q.data?.darb && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="w-16 text-xs text-muted">المبلغ</span>
-            {DARB_MONEY.map((d) => (
-              <button
-                key={d.id}
-                onClick={() => setF((cur) => ({ ...cur, darb: cur.darb === d.id ? undefined : d.id, status: cur.darb === d.id ? cur.status : undefined }))}
-                className={chip(f.darb === d.id, d.tone)}
-              >
-                {d.label} <span className="num">({q.data?.darbCounts[d.id] ?? 0})</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </Card>
+
+          {q.data?.darb && (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="flex w-20 items-center gap-1 text-xs text-muted">
+                  <Truck size={14} /> حالة درب
+                </span>
+                {DARB_FILTERS.map((d) => (
+                  <button
+                    key={d.id}
+                    onClick={() => setF((cur) => ({ ...cur, darb: cur.darb === d.id ? undefined : d.id, status: undefined }))}
+                    className={chip(f.darb === d.id, d.tone)}
+                  >
+                    {d.label} <span className="num">({q.data?.darbCounts[d.id] ?? 0})</span>
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-20 text-xs text-muted">المبلغ</span>
+                {DARB_MONEY.map((d) => (
+                  <button
+                    key={d.id}
+                    onClick={() => setF((cur) => ({ ...cur, darb: cur.darb === d.id ? undefined : d.id, status: undefined }))}
+                    className={chip(f.darb === d.id, d.tone)}
+                  >
+                    {d.label} <span className="num">({q.data?.darbCounts[d.id] ?? 0})</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </Card>
+      )}
 
       {adding && <OrderForm initial={emptyOrder()} onClose={() => setAdding(false)} />}
       {q.data?.orders.length === 0 && (
         <Card>
-          <Empty icon={ShoppingBag} text={filtered ? "ما في طلبات بهالفلاتر." : "ما في طلبات هون."} />
+          <Empty icon={ShoppingBag} text={tab && !extra && !search.trim() ? "ما في طلبات هون 👌" : "ما في طلبات بهالفلاتر."} />
         </Card>
       )}
       <div className="flex flex-col gap-4">
@@ -246,28 +324,6 @@ export function Orders() {
         ))}
       </div>
     </div>
-  );
-}
-
-// One shipment in the banner: opens its redirect (the order is fetched, it may not be in the filtered list).
-function RedirectChip({ r, onOpen }: { r: RedirectCandidate; onOpen: (o: Order) => void }) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <button
-      disabled={busy}
-      onClick={async () => {
-        setBusy(true);
-        try {
-          const found = (await api.orders({ q: `#${r.orderId}` })).orders[0];
-          if (found) onOpen(found);
-        } finally {
-          setBusy(false);
-        }
-      }}
-      className="rounded-xl bg-card px-3 py-1.5 text-sm hover:text-primary"
-    >
-      طلب <span className="num">#{r.orderId}</span> · {r.city} ← <span className="num">{r.matches}</span> {r.matches === 1 ? "طلب متلو" : "طلبات متلو"}
-    </button>
   );
 }
 

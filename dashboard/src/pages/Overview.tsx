@@ -55,7 +55,7 @@ export function Overview() {
   return (
     <div className="mx-auto max-w-7xl">
       <PageHeader
-        title="نظرة عامة"
+        title="أرقام البيع"
         subtitle="أرقام واتساب والمساعد، بتوقيت دمشق. كل رقم بينقارن مع نفس المدة اللي قبلها (ونفس الساعات)."
         actions={[...PRESETS, { id: "custom", label: "مخصص" }].map((r) => (
           <button

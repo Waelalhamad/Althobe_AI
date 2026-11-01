@@ -6,6 +6,7 @@ import { api, ApiError } from "./api";
 import { Layout } from "./components/Layout";
 import { Login } from "./pages/Login";
 import { Overview } from "./pages/Overview";
+import { Today } from "./pages/Today";
 import { Inbox } from "./pages/Inbox";
 import { Handoffs } from "./pages/Handoffs";
 import { Learning } from "./pages/Learning";
@@ -44,7 +45,8 @@ function App() {
     <Router base="/dashboard">
       <Layout>
         <Switch>
-          <Route path="/" component={Overview} />
+          <Route path="/" component={Today} />
+          <Route path="/stats" component={Overview} />
           <Route path="/inbox/:customer?" component={Inbox} />
           <Route path="/orders" component={Orders} />
           <Route path="/money" component={Money} />

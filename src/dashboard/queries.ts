@@ -421,10 +421,14 @@ const UNSENT = "o.status IN ('new', 'confirmed') AND o.darb_ref IS NULL";
 // Where the order's shipment is at Darb (from the copy synced every 15 minutes).
 // Every status Darb has, one by one, then the money of the completed ones (still at Darb, or paid to our wallet).
 export const DARB_STATUSES = ["pending", "booked", "processing", "on-branch", "delayed", "released", "resent", "completed", "returning", "returned", "cancelled"] as const;
-export const DARB_FILTERS = ["unsent", ...DARB_STATUSES, "unpaid", "paid"] as const;
+// Plus the orders page's tabs: "active" = with Darb on its way, "back" = cancelled or coming back (or back).
+export const DARB_FILTERS = ["unsent", "active", "back", ...DARB_STATUSES, "unpaid", "paid"] as const;
 export type DarbFilter = (typeof DARB_FILTERS)[number];
 const DARB_WHERE = {
   unsent: UNSENT,
+  active:
+    "o.status != 'cancelled' AND o.darb_ref IS NOT NULL AND COALESCE(d.status, o.darb_status) IN ('pending', 'booked', 'processing', 'on-branch', 'delayed', 'released', 'resent')",
+  back: "(o.status = 'cancelled' OR COALESCE(d.status, o.darb_status) IN ('returning', 'returned', 'cancelled'))",
   ...Object.fromEntries(DARB_STATUSES.map((s) => [s, `COALESCE(d.status, o.darb_status) = '${s}'`])),
   unpaid: "COALESCE(d.status, o.darb_status) = 'completed' AND d.paid_at IS NULL",
   paid: "d.paid_at IS NOT NULL",
