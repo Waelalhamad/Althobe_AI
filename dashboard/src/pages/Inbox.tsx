@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation, useParams } from "wouter";
+import { Link, useLocation, useParams, useSearch } from "wouter";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { ArrowRight, Bot, History, ImagePlus, ShoppingBag, Inbox as InboxIcon, Pause, Play, Search, Send, User, UserRound, X } from "lucide-react";
@@ -149,6 +149,8 @@ const MAX_PHOTOS = 10;
 
 function Thread({ customer }: { customer: string }) {
   const [, navigate] = useLocation();
+  // Opened from an order: a button back to the orders, on the same view and the same order.
+  const fromOrders = new URLSearchParams(useSearch()).get("from") === "orders";
   const queryClient = useQueryClient();
   const detail = useQuery({ queryKey: ["conversation", customer], queryFn: () => api.conversation(customer), refetchInterval: 5_000 });
   const [text, setText] = useState("");
@@ -233,9 +235,18 @@ function Thread({ customer }: { customer: string }) {
   return (
     <>
       <header className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3">
-        <button onClick={() => navigate("/inbox")} className="text-muted md:hidden" aria-label="رجوع">
-          <ArrowRight />
-        </button>
+        {fromOrders ? (
+          <button
+            onClick={() => navigate("/orders")}
+            className="flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-sm font-semibold text-white hover:brightness-110"
+          >
+            <ArrowRight size={16} /> رجوع للطلبات
+          </button>
+        ) : (
+          <button onClick={() => navigate("/inbox")} className="text-muted md:hidden" aria-label="رجوع">
+            <ArrowRight />
+          </button>
+        )}
         <div className="flex-1">
           <div className="text-start font-semibold">
             {d?.name && <span className="me-2">{d.name}</span>}

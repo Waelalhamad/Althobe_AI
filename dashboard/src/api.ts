@@ -141,7 +141,13 @@ export type Order = {
   darbAmount?: number | null;
   createdAt: number;
   updatedAt: number;
+  // An order still to confirm: when the team last wrote to the customer (or marked it by hand), and when the customer answered since.
+  askedAt?: number | null;
+  repliedAt?: number | null;
+  askedByHand?: number | null;
 };
+// The orders to confirm, by where the talk with the customer is.
+export type ContactFilter = "untouched" | "waiting" | "replied";
 
 export type Payment = "cash" | "transfer";
 export const PAYMENT_LABEL: Record<Payment, string> = { cash: "كاش عند الاستلام", transfer: "تحويل مصرفي" };
@@ -210,7 +216,7 @@ export type DarbFilter =
   | "unpaid"
   | "paid";
 // from / to: dashboard dates (YYYY-MM-DD, both included), when the order was made.
-export type OrderFilters = { status?: OrderStatus; darb?: DarbFilter; payment?: Payment; source?: "ai" | "team"; q?: string; from?: string; to?: string };
+export type OrderFilters = { status?: OrderStatus; darb?: DarbFilter; contact?: ContactFilter; payment?: Payment; source?: "ai" | "team"; q?: string; from?: string; to?: string };
 
 export type DarbZone = { city: string; areas: string[] };
 export type DarbPreview = {
@@ -396,6 +402,7 @@ export const api = {
     request<{
       counts: Partial<Record<OrderStatus, number>>;
       darbCounts: Record<DarbFilter, number>;
+      contactCounts: Record<ContactFilter, number>;
       unsent: number;
       orders: Order[];
       darb: boolean;
@@ -427,6 +434,7 @@ export const api = {
   leads: (q: LeadsQuery) => request<{ counts: Record<LeadFilter, number>; leads: Lead[] }>(`/leads?${leadsParams(q)}`),
   leadsExportUrl: (q: LeadsQuery) => `${BASE}/leads/export?${leadsParams(q)}`,
   orderDraft: (customer: string) => post<OrderInput>(`/conversations/${encodeURIComponent(customer)}/order-draft`),
+  setOrderAsked: (id: number, asked: boolean) => post<{ ok: boolean }>(`/orders/${id}/asked`, { asked }),
   setOrderStatus: (id: number, status: OrderStatus) =>
     request(`/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   catalog: () => request<CatalogItem[]>("/catalog"),

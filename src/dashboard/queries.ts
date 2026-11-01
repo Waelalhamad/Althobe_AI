@@ -434,8 +434,23 @@ const DARB_WHERE = {
   paid: "d.paid_at IS NOT NULL",
 } as Record<DarbFilter, string>;
 
+// An order still to confirm: did the team write to the customer after it came (or mark it by hand), and did the customer answer since?
+// asked: the team's latest message after the order, or the hand mark, whichever is later. replied: the customer's latest message after that.
+const ASKED_AT = `MAX(COALESCE(o.asked_at, 0), COALESCE((SELECT MAX(m.created_at) FROM messages m
+  WHERE m.customer = o.customer AND m.source = 'staff' AND m.history = 0 AND m.created_at > o.created_at), 0))`;
+const REPLIED_AT = `(SELECT MAX(r.created_at) FROM messages r
+  WHERE r.customer = o.customer AND r.source = 'customer' AND r.history = 0 AND r.created_at > ${ASKED_AT})`;
+export const CONTACT_FILTERS = ["untouched", "waiting", "replied"] as const;
+export type ContactFilter = (typeof CONTACT_FILTERS)[number];
+const CONTACT_WHERE: Record<ContactFilter, string> = {
+  untouched: `o.status = 'new' AND ${ASKED_AT} = 0`,
+  waiting: `o.status = 'new' AND ${ASKED_AT} > 0 AND ${REPLIED_AT} IS NULL`,
+  replied: `o.status = 'new' AND ${ASKED_AT} > 0 AND ${REPLIED_AT} IS NOT NULL`,
+};
+
 export type OrdersQuery = {
   status?: string;
+  contact?: ContactFilter;
   darb?: DarbFilter;
   payment?: string; // "cash" | "transfer"
   source?: string; // "ai" | "team"
@@ -453,6 +468,7 @@ export function orders(opts: OrdersQuery) {
     params.push(opts.status);
   }
   if (opts.darb) where.push(DARB_WHERE[opts.darb]);
+  if (opts.contact) where.push(CONTACT_WHERE[opts.contact]);
   if (opts.payment) {
     where.push("o.payment = ?");
     params.push(opts.payment);
@@ -496,11 +512,20 @@ export function orders(opts: OrdersQuery) {
       `SELECT o.id, o.customer, o.channel, o.name, o.phone, o.city, o.address, o.items, o.total, o.notes, o.payment, o.status, o.source,
          o.darb_ref AS darbRef, COALESCE(d.status, o.darb_status) AS darbStatus, o.darb_at AS darbAt,
          d.sh AS darbSh, d.last_event AS darbEvent, d.last_event_at AS darbEventAt, d.paid_at AS darbPaidAt, d.amount AS darbAmount,
-         o.created_at AS createdAt, o.updated_at AS updatedAt
+         o.created_at AS createdAt, o.updated_at AS updatedAt,
+         CASE WHEN o.status = 'new' THEN NULLIF(${ASKED_AT}, 0) END AS askedAt,
+         CASE WHEN o.status = 'new' THEN ${REPLIED_AT} END AS repliedAt,
+         o.asked_at AS askedByHand
        FROM orders o LEFT JOIN darb_shipments d ON d.id = o.darb_id
        ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY o.id DESC LIMIT ?`,
     )
     .all(...params, opts.limit) as (Record<string, unknown> & { items: string })[];
+  const contactCounts = Object.fromEntries(
+    CONTACT_FILTERS.map((c) => [
+      c,
+      (db.prepare(`SELECT COUNT(*) AS n FROM orders o WHERE ${CONTACT_WHERE[c]} AND ${inDates}`).get(...dateParams) as { n: number }).n,
+    ]),
+  ) as Record<ContactFilter, number>;
   const counts = Object.fromEntries(
     (db.prepare(`SELECT status, COUNT(*) AS n FROM orders o WHERE ${inDates} GROUP BY status`).all(...dateParams) as { status: string; n: number }[]).map(
       (r) => [r.status, r.n],
@@ -519,6 +544,7 @@ export function orders(opts: OrdersQuery) {
   return {
     counts,
     darbCounts,
+    contactCounts,
     unsent: darbCounts.unsent,
     orders: rows.map((r) => ({ ...r, items: JSON.parse(r.items) as unknown })),
   };

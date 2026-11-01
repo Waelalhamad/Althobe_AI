@@ -445,6 +445,14 @@ if (!(db.prepare("PRAGMA table_info(orders)").all() as { name: string }[]).some(
   db.exec("ALTER TABLE orders ADD COLUMN stock_applied INTEGER NOT NULL DEFAULT 0");
 }
 
+// When someone of the team marked "we asked the customer" by hand (a call, another phone). Messages the team sends count on their own.
+if (!(db.prepare("PRAGMA table_info(orders)").all() as { name: string }[]).some((c) => c.name === "asked_at")) {
+  db.exec("ALTER TABLE orders ADD COLUMN asked_at INTEGER");
+}
+export function setOrderAsked(id: number, asked: boolean): boolean {
+  return db.prepare("UPDATE orders SET asked_at = ? WHERE id = ?").run(asked ? Date.now() : null, id).changes > 0;
+}
+
 export type StockRow = { product: string; color: string; size: string; quantity: number; updatedAt: number };
 
 export function listStock(): StockRow[] {

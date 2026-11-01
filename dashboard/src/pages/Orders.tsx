@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertTriangle, Link2, MapPin, MessageCircle, Pencil, Phone, Plus, Search, ShoppingBag, Shuffle, SlidersHorizontal, Truck, X } from "lucide-react";
-import { api, CHANNEL_LABEL, PAYMENT_LABEL, type DarbFilter, type Order, type OrderFilters, type OrderStatus, type Payment, type RedirectCandidate } from "../api";
+import { AlertTriangle, Bell, Check, Hourglass, Link2, MapPin, MessageCircle, Pencil, Phone, Plus, Search, ShoppingBag, Shuffle, SlidersHorizontal, Truck, X } from "lucide-react";
+import { api, CHANNEL_LABEL, PAYMENT_LABEL, type ContactFilter, type DarbFilter, type Order, type OrderFilters, type OrderStatus, type Payment, type RedirectCandidate } from "../api";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { emptyOrder, OrderForm } from "../components/OrderForm";
 import { OrdersExport } from "../components/OrdersExport";
@@ -70,7 +70,7 @@ const DARB_TABS: Tab[] = [
   {
     id: "new",
     label: "بدها تأكيد",
-    hint: "طلبات وصلت ولسا ما حدا تأكد منها. راسل الزبون، تأكد من المقاس والعنوان، وغيّر الحالة لـ «متأكد».",
+    hint: "طلبات وصلت ولسا ما حدا تأكد منها. راسل الزبون من «المحادثة»، تأكد من المقاس والعنوان، وغيّر الحالة لـ «متأكد». اللي بعتّولو بيطلع عليه «عم نستنى ردّو»، ولما يردّ بيصير «ردّ، ارجعلو».",
     f: { status: "new" },
     tone: "warn",
     count: (d) => d.counts.new ?? 0,
@@ -116,20 +116,46 @@ const PLAIN_TABS: Tab[] = [
 ];
 const sameTab = (t: Tab, f: OrderFilters) => t.f.status === f.status && t.f.darb === f.darb;
 
-// The tab to open from a link ("?tab=unsent"): a tab, or any Darb status (opens the extra filters).
-function fromLink(): { f: OrderFilters; more: boolean } {
+// The orders to confirm, by where the talk with the customer is (under the "بدها تأكيد" tab).
+const CONTACTS: { id: ContactFilter | undefined; label: string; tone: Tone }[] = [
+  { id: undefined, label: "الكل", tone: "muted" },
+  { id: "untouched", label: "لسا ما حدا حكاه", tone: "warn" },
+  { id: "waiting", label: "بعتنالو وعم نستنى ردّو", tone: "info" },
+  { id: "replied", label: "ردّ، ارجعلو", tone: "ok" },
+];
+
+// What the page shows (tab, filters, search), kept for this browser tab: coming back from a conversation opens the same view.
+type View = { f: OrderFilters; more: boolean; search: string; dates: string };
+const VIEW_KEY = "orders-view";
+// The order whose conversation was opened from here: coming back scrolls to it and marks it.
+const BACK_KEY = "orders-back";
+
+// The view to open: a link's tab ("?tab=unsent": a tab, or any Darb status, which opens the extra filters), else the last one.
+function startView(): View {
   const tab = new URLSearchParams(window.location.search).get("tab");
   const t = DARB_TABS.find((x) => x.id === tab);
-  if (t) return { f: { ...t.f }, more: false };
-  if (tab && [...DARB_FILTERS, ...DARB_MONEY].some((x) => x.id === tab)) return { f: { darb: tab as DarbFilter }, more: true };
-  return { f: { status: "new" }, more: false };
+  const fresh = { more: false, search: "", dates: "all" };
+  if (t) return { ...fresh, f: { ...t.f } };
+  if (tab && [...DARB_FILTERS, ...DARB_MONEY].some((x) => x.id === tab)) return { ...fresh, f: { darb: tab as DarbFilter }, more: true };
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(VIEW_KEY) ?? "null") as View | null;
+    if (saved?.f) return saved;
+  } catch {
+    // A broken copy: start fresh.
+  }
+  return { ...fresh, f: { status: "new" } };
 }
 
 export function Orders() {
-  const [start] = useState(fromLink);
+  const [start] = useState(startView);
   const [f, setF] = useState<OrderFilters>(start.f);
   const [more, setMore] = useState(start.more);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(start.search);
+  // Which date chip is on ("custom" shows the calendar).
+  const [dates, setDates] = useState<string>(start.dates);
+  useEffect(() => {
+    sessionStorage.setItem(VIEW_KEY, JSON.stringify({ f, more, search, dates } satisfies View));
+  }, [f, more, search, dates]);
   const q = useQuery({
     queryKey: ["orders", f, search.trim()],
     queryFn: () => api.orders({ ...f, q: search.trim() }),
@@ -140,8 +166,16 @@ export function Orders() {
   // Cancelled or refused shipments someone else in the same city could take instead (a button on their card).
   const redirects = useQuery({ queryKey: ["redirects"], queryFn: api.darbRedirects, enabled: Boolean(q.data?.darb), refetchInterval: 60_000 });
   const set = (patch: Partial<OrderFilters>) => setF((cur) => ({ ...cur, ...patch }));
-  // Which date chip is on ("custom" shows the calendar).
-  const [dates, setDates] = useState<string>("all");
+  // Back from an order's conversation: scroll to that order and mark it for a few seconds.
+  const [back, setBack] = useState<number | null>(() => Number(sessionStorage.getItem(BACK_KEY)) || null);
+  const loaded = Boolean(q.data);
+  useEffect(() => {
+    if (!back || !loaded) return;
+    sessionStorage.removeItem(BACK_KEY);
+    document.getElementById(`order-${back}`)?.scrollIntoView({ block: "center" });
+    const t = setTimeout(() => setBack(null), 4000);
+    return () => clearTimeout(t);
+  }, [back, loaded]);
   const pickDates = (id: string) => {
     setDates(id);
     const d = DATES.find((x) => x.id === id);
@@ -155,7 +189,7 @@ export function Orders() {
   // The extra filters in use (the tab itself isn't one).
   const extra = [f.from || f.to, f.payment, f.source, !tab && (f.status || f.darb)].filter(Boolean).length;
   const clear = () => {
-    setF(tab ? { status: f.status, darb: f.darb } : { status: "new" });
+    setF(tab ? { status: f.status, darb: f.darb, contact: f.contact } : { status: "new" });
     setDates("all");
     setSearch("");
   };
@@ -183,7 +217,7 @@ export function Orders() {
           return (
             <button
               key={t.id}
-              onClick={() => setF((cur) => ({ ...cur, status: t.f.status, darb: t.f.darb }))}
+              onClick={() => setF((cur) => ({ ...cur, status: t.f.status, darb: t.f.darb, contact: undefined }))}
               className={clsx(
                 "flex flex-col items-start gap-1 rounded-2xl border p-3 text-start transition",
                 on ? "border-primary bg-primary-soft" : "border-line bg-card hover:border-primary/50",
@@ -205,6 +239,16 @@ export function Orders() {
         })}
       </div>
       {tab?.hint && <p className="mb-4 rounded-xl bg-card-2 px-4 py-2 text-sm text-muted">💡 {tab.hint}</p>}
+      {f.status === "new" && !f.darb && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {CONTACTS.map((c) => (
+            <button key={c.id ?? "all"} onClick={() => set({ contact: c.id })} className={chip(f.contact === c.id, c.tone)}>
+              {c.label}
+              {c.id && <span className="num"> ({q.data?.contactCounts[c.id] ?? 0})</span>}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative w-full sm:w-80">
@@ -324,7 +368,7 @@ export function Orders() {
       )}
       <div className="flex flex-col gap-4">
         {q.data?.orders.map((o) => (
-          <OrderCard key={o.id} o={o} darb={q.data.darb} redirect={redirects.data?.find((r) => r.orderId === o.id)} />
+          <OrderCard key={o.id} o={o} darb={q.data.darb} redirect={redirects.data?.find((r) => r.orderId === o.id)} marked={back === o.id} />
         ))}
       </div>
     </div>
@@ -380,7 +424,52 @@ function DarbLine({ o, onTrack }: { o: Order; onTrack: () => void }) {
   );
 }
 
-function OrderCard({ o, darb, redirect }: { o: Order; darb: boolean; redirect?: RedirectCandidate }) {
+// Where the talk with the customer is, on an order still to confirm: not asked yet, asked and waiting, or answered.
+function ContactLine({ o }: { o: Order }) {
+  const queryClient = useQueryClient();
+  const mark = useMutation({
+    mutationFn: (asked: boolean) => api.setOrderAsked(o.id, asked),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["orders"] }),
+  });
+  // Only the hand mark can be taken off (a message sent stays sent).
+  const byHand = Boolean(o.askedByHand && o.askedByHand === o.askedAt);
+  const box = "flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-sm";
+  if (o.askedAt && o.repliedAt)
+    return (
+      <div className={clsx(box, "border-ok/40 bg-ok/10")}>
+        <Bell size={16} className="text-ok" />
+        <span className="font-semibold text-ok">الزبون ردّ {ago(o.repliedAt)}</span>
+        <span className="text-xs text-muted">بعتنالو {ago(o.askedAt)} · افتح المحادثة وكمّل التأكيد</span>
+      </div>
+    );
+  if (o.askedAt)
+    return (
+      <div className={clsx(box, "border-info/40 bg-info/10")}>
+        <Hourglass size={16} className="text-info" />
+        <span className="font-semibold text-info">بعتنالو {ago(o.askedAt)}، عم نستنى ردّو</span>
+        {byHand && (
+          <button onClick={() => mark.mutate(false)} disabled={mark.isPending} className="ms-auto text-xs text-muted hover:text-bad">
+            شيل العلامة
+          </button>
+        )}
+      </div>
+    );
+  return (
+    <div className={clsx(box, "border-line bg-card-2")}>
+      <span className="text-muted">لسا ما حدا حكى الزبون عن هالطلب.</span>
+      <button
+        onClick={() => mark.mutate(true)}
+        disabled={mark.isPending}
+        title="إذا حكيتوه بالتلفون أو من رقم تاني. الرسائل اللي بتبعتوها من المحادثة بتتعلّم لحالها"
+        className="ms-auto flex items-center gap-1 rounded-lg border border-line bg-card px-2 py-1 text-xs hover:border-primary hover:text-primary"
+      >
+        <Check size={14} /> حكيتو من برّا
+      </button>
+    </div>
+  );
+}
+
+function OrderCard({ o, darb, redirect, marked }: { o: Order; darb: boolean; redirect?: RedirectCandidate; marked: boolean }) {
   const queryClient = useQueryClient();
   const update = useMutation({
     mutationFn: (status: OrderStatus) => api.setOrderStatus(o.id, status),
@@ -395,7 +484,7 @@ function OrderCard({ o, darb, redirect }: { o: Order; darb: boolean; redirect?: 
   const unsent = darb && !o.darbRef && (o.status === "new" || o.status === "confirmed");
 
   return (
-    <Card className={clsx("flex flex-col gap-4", unsent && "ring-2 ring-warn")}>
+    <Card id={`order-${o.id}`} className={clsx("flex scroll-m-4 flex-col gap-4 transition-shadow", marked ? "ring-4 ring-primary" : unsent && "ring-2 ring-warn")}>
       {unsent && (
         <div className="-mx-1 -mt-1 flex items-center gap-2 rounded-xl bg-warn/15 px-3 py-2 text-sm font-semibold text-warn">
           <AlertTriangle size={16} /> لسا ما انبعت لدرب السبيل
@@ -454,7 +543,10 @@ function OrderCard({ o, darb, redirect }: { o: Order; darb: boolean; redirect?: 
             <Pencil size={16} /> تعديل
           </button>
           {o.channel !== "chatwoot" && (
-            <Link href={`/inbox/${o.customer}`} className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
+            <Link
+              href={`/inbox/${o.customer}?from=orders`}
+              onClick={() => sessionStorage.setItem(BACK_KEY, String(o.id))}
+              className="flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm hover:text-primary">
               <MessageCircle size={16} /> المحادثة
             </Link>
           )}
@@ -465,6 +557,7 @@ function OrderCard({ o, darb, redirect }: { o: Order; darb: boolean; redirect?: 
       </div>
 
       {o.darbRef && <DarbLine o={o} onTrack={() => setTracking(true)} />}
+      {o.status === "new" && <ContactLine o={o} />}
 
       <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
         <Field k="الرقم" v={<span className="ltr num">{o.phone}</span>} />

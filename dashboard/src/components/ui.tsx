@@ -3,8 +3,12 @@ import type { ReactNode } from "react";
 import clsx from "clsx";
 import type { LucideIcon } from "lucide-react";
 
-export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={clsx("glass rounded-2xl p-5", className)}>{children}</div>;
+export function Card({ className, children, id }: { className?: string; children: ReactNode; id?: string }) {
+  return (
+    <div id={id} className={clsx("glass rounded-2xl p-5", className)}>
+      {children}
+    </div>
+  );
 }
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {

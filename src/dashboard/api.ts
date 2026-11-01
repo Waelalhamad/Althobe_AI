@@ -38,6 +38,7 @@ import {
   resumeAi,
   saveOrder,
   setOrderStatus,
+  setOrderAsked,
   updateOrder,
   openOrderOf,
   type OrderFields,
@@ -261,6 +262,7 @@ dashboardApi.get("/orders", (req, res) => {
     ...queries.orders({
       status,
       darb,
+      contact: queries.CONTACT_FILTERS.find((c) => c === req.query.contact),
       payment: req.query.payment === "cash" || req.query.payment === "transfer" ? req.query.payment : undefined,
       source: req.query.source === "ai" || req.query.source === "team" ? req.query.source : undefined,
       q: String(req.query.q ?? "").slice(0, 100),
@@ -527,6 +529,15 @@ dashboardApi.patch("/orders/:id", (req, res) => {
   log("dashboard", `order #${req.params.id} marked ${status}`);
   // A cancelled order whose shipment is out: someone in the same city may take it instead (Telegram).
   if (status === "cancelled") void tellRedirectChance(Number(req.params.id), true).catch(() => {});
+  res.json({ ok: true });
+});
+
+// "We asked the customer" by hand (a call, a message from another phone), or taken off.
+dashboardApi.post("/orders/:id/asked", (req, res) => {
+  if (!setOrderAsked(Number(req.params.id), req.body?.asked !== false)) {
+    res.status(404).json({ error: "Unknown order" });
+    return;
+  }
   res.json({ ok: true });
 });
 
