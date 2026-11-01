@@ -106,3 +106,13 @@ test("one color is never booked in two sizes (try both, return one)", async () =
   assert.deepEqual(twoSizesOneColor([{ color: "أبيض", size: "58" }, { color: "أسود", size: "58" }]), []);
   assert.deepEqual(twoSizesOneColor([{ color: "بني", size: "56" }, { color: "بني", size: 56 }]), []);
 });
+
+test("a message that corrects itself is caught", async () => {
+  const { selfCorrects, styleProblems } = await import("../src/agent.ts");
+  assert.ok(selfCorrects("باهي استاذة، المقاسات 62 المتوفرة عندنا: أبيض، أبيض؟ لا — غلط. نعيد: أبيض، أسود، بيج، فضي."));
+  assert.ok(selfCorrects("المتوفر: أسود، أسود، بني"));
+  assert.ok(selfCorrects("مقاس 58 لا - غلط، 60"));
+  assert.ok(!selfCorrects("المتوفر عندنا: أبيض، أسود، بيج، فضي. شن اللون اللي تبيه؟"));
+  assert.ok(!selfCorrects("لا استاذ، التوصيل مجاني لباب بيتك"));
+  assert.ok(styleProblems("شن اللون اللي تريديه؟").some((p) => p.includes("تريديه")));
+});

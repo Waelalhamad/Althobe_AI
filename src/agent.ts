@@ -545,6 +545,16 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
         continue;
       }
       decision.text = withPaymentTerms(fixedStyle(decision.text), history);
+      // Still correcting itself after the rewrite: not sent, the team writes it.
+      if (thinksAloud(decision.text)) {
+        return {
+          action: "handoff",
+          reason: `المساعد صحّح حالو بنص الرسالة (متل «لا — غلط. نعيد»)، ما انبعت شي. ردّو على الزبون. كان رح يقول: ${decision.text.replace(/\s+/g, " ")}`,
+          messageToCustomer: "",
+          silent: true,
+          usage,
+        };
+      }
       // A wrong bank account number is never sent.
       if (wrongAccount(decision.text)) {
         return {
@@ -960,7 +970,7 @@ export function twoSizesOneColor(items: { color?: string; size?: string | number
 
 // Words from other dialects (mostly Syrian, from our own old files) that customers in Libya notice. Whole words
 // only, with an attached و/ف ("وبدك").
-const NOT_LIBYAN = ["وش", "شنو", "عشان", "علشان", "هلق", "شو", "بدك", "بدو", "كتير", "ليش", "منيح", "هيك", "نحنا", "تبغي", "دلوقتي", "عايز", "تريد", "تريده", "تريدها", "تريدي", "الحين"];
+const NOT_LIBYAN = ["وش", "شنو", "عشان", "علشان", "هلق", "شو", "بدك", "بدو", "كتير", "ليش", "منيح", "هيك", "نحنا", "تبغي", "دلوقتي", "عايز", "تريد", "تريده", "تريدها", "تريدي", "تريديه", "تريديها", "تريدين", "تريدينه", "الحين"];
 const NOT_LIBYAN_WORD = new RegExp(`(?<![\\p{L}\\p{M}])[وف]?(${NOT_LIBYAN.join("|")})(?![\\p{L}\\p{M}])`, "gu");
 // The Syrian "-و" for "his" is fixed in place ("سعرو" → "سعره").
 const SYRIAN_HIS: [RegExp, string][] = ["سعر", "قماش", "جودت", "لون", "مقاس", "توصيل", "شكل", "حجم"].map((w) => [
@@ -986,8 +996,18 @@ export function styleProblems(text: string): string[] {
     ...(latin > arabic ? ["It isn't in Arabic. Always answer in Arabic (Libyan dialect), whatever language the customer wrote in."] : []),
     ...(wrongAccount(text) ? [`The bank account number is wrong: copy it exactly from the knowledge (${ourAccount()}).`] : []),
     ...(messages > 2 ? [`It has ${messages} messages: at most 2 (usually one).`] : []),
+    ...(selfCorrects(text)
+      ? ["It corrects itself in the message (a slip, then «لا — غلط»/«نعيد» or the same word twice in a list). The customer only sees the final answer: write it clean, once, without the slip."]
+      : []),
   ];
 }
+
+// The model thinking aloud in the message: «أبيض، أبيض؟ لا — غلط. نعيد: …», «قصدي: …», a word twice in a list.
+const SELF_CORRECTION = /(?:لا|لأ)\s*[—–-]+\s*غلط|غلط\s*[.،!]\s*(?:نعيد|أعيد|اعيد|قصدي|أقصد)|(?<![\p{L}\p{M}])(?:نعيد|أعيد|قصدي|أقصد)\s*:|؟\s*لا\s*[—–-]/u;
+const REPEATED_ITEM = /(?<![\p{L}\p{M}])([\p{L}\p{M}]{2,})[،,]\s*\1(?![\p{L}\p{M}])/u;
+export const selfCorrects = (text: string) => SELF_CORRECTION.test(text) || REPEATED_ITEM.test(text);
+// Only the clear «لا — غلط. نعيد» stops the message after the rewrite; a word twice can be right («ما عندنا، عندنا كاش»).
+const thinksAloud = (text: string) => SELF_CORRECTION.test(text);
 
 // The price never goes alone: "free delivery, cash on delivery" with it, the reassurance our team chose
 // (not "try it before you pay", which brings orders that come back). A customer from the ad who didn't ask
