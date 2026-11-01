@@ -622,3 +622,10 @@ export function leads(opts: { filter: LeadFilter; q: string; from?: number; to?:
     .sort((a, b) => b.lastAt - a.lastAt);
   return { counts, leads };
 }
+
+// Darb's own numbers, the way its app shows them: every shipment of the account (also the ones made in Darb's
+// app with no order here), by status.
+export function darbShipmentCounts(): { total: number; byStatus: Record<string, number> } {
+  const rows = db.prepare("SELECT status, COUNT(*) AS n FROM darb_shipments GROUP BY status").all() as { status: string; n: number }[];
+  return { total: rows.reduce((t, r) => t + r.n, 0), byStatus: Object.fromEntries(rows.map((r) => [r.status, r.n])) };
+}

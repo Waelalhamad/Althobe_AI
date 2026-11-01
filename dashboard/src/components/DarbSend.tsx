@@ -8,19 +8,35 @@ import { num } from "../format";
 const inputClass = "w-full rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary";
 
 // Darb Assabil's shipment statuses, in Arabic.
-// Darb's statuses, named after what Darb writes on each (its timeline).
+// Darb's statuses with the names Darb's own app shows (its order and colors: DARB_ORDER, DARB_COLOR).
 export const DARB_STATUS: Record<string, string> = {
   pending: "قيد الانتظار",
-  booked: "عند مندوب التجميع",
-  processing: "قيد التوصيل",
-  "on-branch": "في الفرع",
-  completed: "مكتملة",
+  "on-branch": "قيد التعديل",
+  completed: "تم التوصيل",
   cancelled: "ملغية",
-  resent: "أعيد إرسالها",
-  delayed: "مؤجلة",
-  released: "مفرج عنها",
-  returning: "قيد الإرجاع",
-  returned: "مرتجعة",
+  returned: "راجعة",
+  delayed: "مؤجل",
+  processing: "تحت المعالجة",
+  released: "مكتمل",
+  booked: "تم القبول",
+  resent: "إعادة إرسال",
+  returning: "راجع في الطريق",
+  deleted: "انحذفت عند درب",
+};
+export const DARB_ORDER = ["pending", "on-branch", "completed", "cancelled", "returned", "delayed", "processing", "released", "booked", "resent", "returning"] as const;
+export const DARB_COLOR: Record<string, string> = {
+  all: "#55565b",
+  pending: "#f2b01e",
+  "on-branch": "#1f8fa8",
+  completed: "#2e9e4f",
+  cancelled: "#d62b2b",
+  returned: "#a3a3a3",
+  delayed: "#e53935",
+  processing: "#2fbf6a",
+  released: "#7a2323",
+  booked: "#a7b51f",
+  resent: "#6d28d9",
+  returning: "#9a9a9a",
 };
 
 // Sends a confirmed order to Darb Assabil: the team checks the guessed city/area, the address note and the amount

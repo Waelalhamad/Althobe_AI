@@ -485,6 +485,8 @@ dashboardApi.post("/orders/:id/darb/link", async (req, res) => {
 });
 // A cancelled or refused shipment given to another order in the same city (src/darbRedirect.ts).
 dashboardApi.get("/darb/redirects", (_req, res) => darbRoute(res, () => redirectCandidates()));
+// Every shipment by status, as in Darb's app (the home page).
+dashboardApi.get("/darb/counts", (_req, res) => darbRoute(res, async () => queries.darbShipmentCounts()));
 // Goods on their way back (cancelled, refused or cancelled at Darb) and the ones back lately: the stock page.
 dashboardApi.get("/stock/incoming", (_req, res) => darbRoute(res, () => incomingReturns()));
 dashboardApi.get("/orders/:id/darb/redirect", (req, res) => darbRoute(res, () => redirectMatches(Number(req.params.id))));

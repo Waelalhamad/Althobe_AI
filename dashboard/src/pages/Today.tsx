@@ -19,6 +19,7 @@ import {
 import { api } from "../api";
 import { Card, ErrorNote } from "../components/ui";
 import { ago, localDate, num, phone } from "../format";
+import { DARB_COLOR, DARB_ORDER, DARB_STATUS } from "../components/DarbSend";
 
 // The team's home page: what needs doing now, in the order of the work, each with where to do it.
 // Above it, an order's journey from the first message to the money, with how many orders are at each step.
@@ -28,6 +29,7 @@ export function Today() {
   const overview = useQuery({ queryKey: ["overview", { from: today, to: today }], queryFn: () => api.overview({ from: today, to: today }), refetchInterval: 60_000 });
   const supervisor = useQuery({ queryKey: ["supervisor", 1], queryFn: () => api.supervisor(1), refetchInterval: 60_000 });
   const returns = useQuery({ queryKey: ["incoming-returns"], queryFn: api.incomingReturns, refetchInterval: 60_000, retry: false });
+  const darbCounts = useQuery({ queryKey: ["darb-counts"], queryFn: api.darbCounts, refetchInterval: 60_000, retry: false });
 
   const o = orders.data;
   const darb = o?.darb ?? false;
@@ -158,6 +160,8 @@ export function Today() {
         </div>
       )}
 
+      {darb && darbCounts.data && <DarbBoard counts={darbCounts.data} />}
+
       {t && (
         <Card className="flex flex-wrap items-center gap-x-8 gap-y-3">
           <span className="text-sm font-semibold">اليوم لهلق</span>
@@ -252,5 +256,38 @@ function Mini({ icon: Icon, label, value }: { icon: LucideIcon; label: string; v
       <span className="num font-bold">{num(value)}</span>
       <span className="text-muted">{label}</span>
     </span>
+  );
+}
+
+// The shipments at Darb, exactly as Darb's app shows them: every shipment of the account (also the ones made in
+// Darb's app with no order here), in its order and colors. A tile opens those orders.
+function DarbBoard({ counts }: { counts: { total: number; byStatus: Record<string, number> } }) {
+  const tiles = [
+    { id: "all", label: "الكل", n: counts.total },
+    ...DARB_ORDER.map((id) => ({ id, label: DARB_STATUS[id]!, n: counts.byStatus[id] ?? 0 })),
+  ];
+  return (
+    <Card className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="font-semibold">شحناتي عند درب السبيل</span>
+        <span className="text-xs text-muted">نفس أرقام تطبيق درب، بتتحدّث كل ربع ساعة</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+        {tiles.map((x) => (
+          <Link
+            key={x.id}
+            href={`/orders?tab=${x.id}`}
+            className="flex flex-col items-center gap-1.5 rounded-xl bg-card-2 px-2 py-3 text-center hover:bg-line"
+          >
+            <span className="num text-2xl font-bold">{num(x.n)}</span>
+            <span className="h-1.5 w-8 rounded-full" style={{ background: DARB_COLOR[x.id] }} />
+            <span className="text-sm text-muted">{x.label}</span>
+          </Link>
+        ))}
+      </div>
+      <p className="text-xs text-muted">
+        بصفحة الطلبات بتطلع بس الشحنات المربوطة بطلب عنا، فبعض الأرقام هونيك أقل (الشحنات اللي انعملت من تطبيق درب بلا طلب عنا).
+      </p>
+    </Card>
   );
 }

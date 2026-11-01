@@ -410,6 +410,7 @@ export const api = {
   // A cancelled or refused shipment given to another order in the same city.
   darbRedirects: () => request<RedirectCandidate[]>("/darb/redirects"),
   incomingReturns: () => request<IncomingReturn[]>("/stock/incoming"),
+  darbCounts: () => request<{ total: number; byStatus: Record<string, number> }>("/darb/counts"),
   redirectMatches: (id: number) => request<RedirectView>(`/orders/${id}/darb/redirect`),
   redirect: (id: number, body: { to: number; area: string; notes: string; total: number; payment: Payment }) =>
     post<{ ok: boolean; pickedUp: boolean; ownCancelled: string }>(`/orders/${id}/darb/redirect`, body),

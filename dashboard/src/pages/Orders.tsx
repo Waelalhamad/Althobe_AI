@@ -7,7 +7,7 @@ import { api, CHANNEL_LABEL, PAYMENT_LABEL, type DarbFilter, type Order, type Or
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { emptyOrder, OrderForm } from "../components/OrderForm";
 import { OrdersExport } from "../components/OrdersExport";
-import { DARB_STATUS, DarbSend } from "../components/DarbSend";
+import { DARB_ORDER, DARB_STATUS, DarbSend } from "../components/DarbSend";
 import { DarbLink, DarbTrackView } from "../components/DarbTrack";
 import { DarbRedirect } from "../components/DarbRedirect";
 import { ago, localDate, time } from "../format";
@@ -30,19 +30,23 @@ const STATUSES: { id: OrderStatus; label: string; tone: "warn" | "info" | "ok" |
 ];
 
 // Where the shipment is at Darb (filter chips), with the tone of its badge.
+const DARB_TONE_OF: Record<string, Tone> = {
+  pending: "warn",
+  "on-branch": "info",
+  completed: "ok",
+  cancelled: "bad",
+  returned: "bad",
+  delayed: "bad",
+  processing: "info",
+  released: "ok",
+  booked: "info",
+  resent: "info",
+  returning: "bad",
+};
+// "Not sent yet", then Darb's statuses in the order and with the names of Darb's app.
 const DARB_FILTERS: { id: DarbFilter; label: string; tone: Tone }[] = [
   { id: "unsent", label: "ما انبعتت لدرب", tone: "warn" },
-  { id: "pending", label: DARB_STATUS.pending!, tone: "warn" },
-  { id: "booked", label: DARB_STATUS.booked!, tone: "info" },
-  { id: "processing", label: DARB_STATUS.processing!, tone: "info" },
-  { id: "on-branch", label: DARB_STATUS["on-branch"]!, tone: "info" },
-  { id: "delayed", label: DARB_STATUS.delayed!, tone: "bad" },
-  { id: "released", label: DARB_STATUS.released!, tone: "info" },
-  { id: "resent", label: DARB_STATUS.resent!, tone: "info" },
-  { id: "completed", label: DARB_STATUS.completed!, tone: "ok" },
-  { id: "returning", label: DARB_STATUS.returning!, tone: "bad" },
-  { id: "returned", label: DARB_STATUS.returned!, tone: "bad" },
-  { id: "cancelled", label: DARB_STATUS.cancelled!, tone: "bad" },
+  ...DARB_ORDER.map((id) => ({ id: id as DarbFilter, label: DARB_STATUS[id]!, tone: DARB_TONE_OF[id]! })),
 ];
 // The money of the completed shipments.
 const DARB_MONEY: { id: DarbFilter; label: string; tone: Tone }[] = [

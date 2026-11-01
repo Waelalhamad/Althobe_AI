@@ -301,15 +301,31 @@ export const onDarbSynced = (run: () => Promise<unknown>) => void afterSync.push
 export function syncDarb(): Promise<{ shipments: number; changes: number }> {
   syncing ??= (async () => {
     const all: Shipment[] = [];
+    let expected = 0; // Darb's own count: the list is complete when we have them all
     for (let page = 0; page < 50; page++) {
       const data = await darb<{ totalCount?: number; results: Shipment[] }>(
         "GET",
         `/api/local/shipments?offset=${page * 100}&limit=100&includeTotalCount=true`,
       );
       all.push(...data.results);
-      if (!data.results.length || all.length >= (data.totalCount ?? 0)) break;
+      expected = data.totalCount ?? 0;
+      if (!data.results.length || all.length >= expected) break;
     }
     const changes = save(all);
+    // Shipments deleted at Darb leave our copy too (so our numbers are Darb's); only from a full list, and never
+    // most of them at once (a short answer from Darb must not wipe our copy).
+    const total = all.length;
+    if (total > 0 && expected > 0 && total >= expected) {
+      const live = new Set(all.map((s) => s._id));
+      const ours = (db.prepare("SELECT id, reference FROM darb_shipments").all() as { id: string; reference: string }[]).filter((r) => !live.has(r.id));
+      if (ours.length && ours.length <= Math.max(3, total * 0.1)) {
+        for (const r of ours) {
+          db.prepare("DELETE FROM darb_shipments WHERE id = ?").run(r.id);
+          db.prepare("UPDATE orders SET darb_status = 'deleted', updated_at = ? WHERE darb_id = ?").run(Date.now(), r.id);
+        }
+        log("darb", `${ours.length} shipment(s) deleted at Darb, removed from our copy: ${ours.map((r) => r.reference).join(", ")}`);
+      } else if (ours.length) log("darb", `${ours.length} shipments missing from Darb's list: kept (too many to be deletions)`);
+    }
     tell(changes);
     for (const c of changes) if (c.before?.status !== c.row.status) for (const run of onChange) run(c.row);
     for (const run of afterSync) await run().catch((error) => log("darb", `after sync: ${error instanceof Error ? error.message : error}`));
