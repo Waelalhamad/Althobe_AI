@@ -99,3 +99,10 @@ test("the price goes with free delivery and cash on delivery", async () => {
   const said = [...asked, { role: "business" as const, text: "385 دينار والدفع عند الاستلام" }];
   assert.equal(withPaymentTerms("385 دينار بس", said), "385 دينار بس");
 });
+
+test("one color is never booked in two sizes (try both, return one)", async () => {
+  const { twoSizesOneColor } = await import("../src/agent.ts");
+  assert.deepEqual(twoSizesOneColor([{ color: "أسود", size: "56" }, { color: "أسود", size: "58" }]), ["أسود"]);
+  assert.deepEqual(twoSizesOneColor([{ color: "أبيض", size: "58" }, { color: "أسود", size: "58" }]), []);
+  assert.deepEqual(twoSizesOneColor([{ color: "بني", size: "56" }, { color: "بني", size: 56 }]), []);
+});

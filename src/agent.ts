@@ -939,7 +939,23 @@ function orderProblems(order: CollectedOrder): string[] {
       ...(String(i.size ?? "").trim() ? [] : [`Item ${n + 1} (${i.color || i.product}) has no size.`]),
       ...(/[،,]|\sو\s?\S/.test(i.color ?? "") ? [`Item ${n + 1} has more than one color ("${i.color}"): each color is its own item with its own size.`] : []),
     ]),
+    ...twoSizesOneColor(order.items).map(
+      (color) =>
+        `The same color (${color}) in two sizes: we never send two sizes so the customer tries both and returns one. Ask their weight, pick ONE size from the size table and book that size only (they try it in front of the courier and pay nothing if it doesn't fit). If the second set is really for another person, hand off to the team.`,
+    ),
   ];
+}
+
+// Colors ordered in more than one size (one customer trying sizes and sending one back).
+export function twoSizesOneColor(items: { color?: string; size?: string | number }[]): string[] {
+  const sizes = new Map<string, Set<string>>();
+  for (const i of items) {
+    const color = String(i.color ?? "").trim();
+    const size = String(i.size ?? "").trim();
+    if (!color || !size) continue;
+    sizes.set(color, (sizes.get(color) ?? new Set()).add(size));
+  }
+  return [...sizes].filter(([, s]) => s.size > 1).map(([color]) => color);
 }
 
 // Words from other dialects (mostly Syrian, from our own old files) that customers in Libya notice. Whole words
