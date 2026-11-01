@@ -33,7 +33,8 @@ export function Today() {
   const darb = o?.darb ?? false;
   const d = o?.darbCounts;
   // Five minutes or more: the assistant answers within a few minutes, so these really wait for someone.
-  const waiting = (supervisor.data?.waiting ?? []).filter((w) => w.minutes >= 5);
+  // Older than a day is a lost chat, not today's work. Newest first: the ones still likely to answer.
+  const waiting = (supervisor.data?.waiting ?? []).filter((w) => w.minutes >= 5 && w.minutes < 24 * 60).sort((a, b) => b.since - a.since);
   const coming = (returns.data ?? []).filter((r) => !r.back);
   const t = overview.data?.period;
 
@@ -41,7 +42,7 @@ export function Today() {
     {
       icon: MessageCircle,
       title: "زباين ناطرين رد",
-      how: "آخر رسالة منهم ما إلها رد من 5 دقايق أو أكتر (غالباً المحادثة مع الفريق). افتح المحادثة ورد.",
+      how: "آخر رسالة منهم (آخر 24 ساعة) ما إلها رد من 5 دقايق أو أكتر، غالباً لأنو المحادثة مع الفريق. الأحدث فوق: افتح المحادثة ورد.",
       count: waiting.length,
       href: "/inbox",
       go: "المحادثات",
