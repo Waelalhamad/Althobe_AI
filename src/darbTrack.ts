@@ -31,6 +31,23 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS darb_shipments_created ON darb_shipments (created_at);
 `);
+// Who has the shipment now (Darb's "handler": the courier delivering it, or an office) and its office, the courier's
+// last note (why it's delayed: "الزبون لم يرد ع التلفون", "يستلم بعد العصر"), until when it's delayed, and when the
+// courier who delivers it took it ("accepted"). Only in a shipment's details, fetched for the ones that moved.
+for (const [name, type] of [
+  ["courier_name", "TEXT"],
+  ["courier_phone", "TEXT"],
+  ["office_name", "TEXT"],
+  ["office_phone", "TEXT"],
+  ["delayed_until", "INTEGER"],
+  ["note", "TEXT"],
+  ["note_at", "INTEGER"],
+  ["accepted_at", "INTEGER"],
+] as const) {
+  if (!(db.prepare("PRAGMA table_info(darb_shipments)").all() as { name: string }[]).some((c) => c.name === name)) {
+    db.exec(`ALTER TABLE darb_shipments ADD COLUMN ${name} ${type}`);
+  }
+}
 
 type Shipment = {
   _id: string;
@@ -42,11 +59,22 @@ type Shipment = {
   invoices?: { _sums?: { product?: { sum?: number }; shipping?: { sum?: number } } }[];
   salesWithdrawalAt?: string;
   salesWithdrawalReferences?: string[];
-  timeline?: { type: string; description?: { ar?: string; en?: string } | string; timestamp: string }[];
+  timeline?: {
+    type: string;
+    description?: { ar?: string; en?: string } | string;
+    timestamp: string;
+    remarks?: string;
+    createdBy?: { fname?: string; lname?: string; phone?: string };
+  }[];
   createdAt: string;
+  // In a shipment's details only (not in the list).
+  handler?: { fname?: string; lname?: string; phone?: string };
+  handlerAccount?: { name?: string; phone?: string };
+  delayedUntil?: string;
 };
 
-export type TimelineEvent = { type: string; text: string; at: number };
+// note: what the courier wrote with it; by: who did it.
+export type TimelineEvent = { type: string; text: string; at: number; note?: string; by?: string };
 
 export type DarbShipmentRow = {
   id: string;
@@ -67,6 +95,14 @@ export type DarbShipmentRow = {
   timeline: string;
   created_at: number;
   synced_at: number;
+  courier_name: string | null;
+  courier_phone: string | null;
+  office_name: string | null;
+  office_phone: string | null;
+  delayed_until: number | null;
+  note: string | null;
+  note_at: number | null;
+  accepted_at: number | null;
 };
 
 // Where the money of a shipment stands.
@@ -89,7 +125,10 @@ function toRow(s: Shipment): DarbShipmentRow {
     type: t.type,
     text: (typeof t.description === "string" ? t.description : t.description?.ar || t.description?.en) ?? t.type,
     at: Date.parse(t.timestamp) || 0,
+    ...(t.remarks?.trim() && { note: t.remarks.trim() }),
+    ...(t.createdBy && { by: personName(t.createdBy) }),
   }));
+  const handler = s.handler && personName(s.handler);
   const last = timeline.at(-1);
   const contact = s.contacts?.[0];
   const shTag = s.tags?.map(shipmentNumber).find((t) => /^SH\d+$/.test(t));
@@ -113,20 +152,45 @@ function toRow(s: Shipment): DarbShipmentRow {
     timeline: JSON.stringify(timeline),
     created_at: Date.parse(s.createdAt) || Date.now(),
     synced_at: Date.now(),
+    courier_name: handler || null,
+    courier_phone: phoneOf(s.handler?.phone),
+    office_name: s.handlerAccount?.name?.trim() || null,
+    office_phone: phoneOf(s.handlerAccount?.phone),
+    delayed_until: time(s.delayedUntil),
+    ...notesOf(timeline),
+  };
+}
+
+const personName = (p: { fname?: string; lname?: string }) => [p.fname, p.lname].map((x) => x?.trim()).filter(Boolean).join(" ");
+// "+2180919884455" (a 0 after the country code) → "+218919884455"; empty → null.
+const phoneOf = (p?: string) => (p?.trim() ? p.trim().replace(/^\+2180/, "+218") : null);
+// From the timeline: the courier's latest note, and when the courier delivering it accepted it.
+function notesOf(timeline: TimelineEvent[]) {
+  const noted = timeline.findLast((t) => t.note);
+  return {
+    note: noted?.note ?? null,
+    note_at: noted?.at ?? null,
+    accepted_at: timeline.findLast((t) => t.type === "accepted")?.at ?? null,
   };
 }
 
 const getRow = db.prepare("SELECT * FROM darb_shipments WHERE id = ?");
 const upsert = db.prepare(`
   INSERT INTO darb_shipments (id, reference, sh, status, name, phone, city, area, amount, shipping, delivered_at, paid_at,
-    payout_ref, last_event, last_event_at, timeline, created_at, synced_at)
+    payout_ref, last_event, last_event_at, timeline, created_at, synced_at, courier_name, courier_phone, office_name,
+    office_phone, delayed_until, note, note_at, accepted_at)
   VALUES (@id, @reference, @sh, @status, @name, @phone, @city, @area, @amount, @shipping, @delivered_at, @paid_at,
-    @payout_ref, @last_event, @last_event_at, @timeline, @created_at, @synced_at)
+    @payout_ref, @last_event, @last_event_at, @timeline, @created_at, @synced_at, @courier_name, @courier_phone, @office_name,
+    @office_phone, @delayed_until, @note, @note_at, @accepted_at)
   ON CONFLICT (id) DO UPDATE SET reference = excluded.reference, sh = COALESCE(excluded.sh, sh), status = excluded.status,
     name = excluded.name, phone = excluded.phone, city = excluded.city, area = excluded.area, amount = excluded.amount,
     shipping = excluded.shipping, delivered_at = excluded.delivered_at, paid_at = excluded.paid_at,
     payout_ref = excluded.payout_ref, last_event = excluded.last_event, last_event_at = excluded.last_event_at,
-    timeline = excluded.timeline, created_at = excluded.created_at, synced_at = excluded.synced_at`);
+    timeline = excluded.timeline, created_at = excluded.created_at, synced_at = excluded.synced_at,
+    courier_name = COALESCE(excluded.courier_name, courier_name), courier_phone = COALESCE(excluded.courier_phone, courier_phone),
+    office_name = COALESCE(excluded.office_name, office_name), office_phone = COALESCE(excluded.office_phone, office_phone),
+    delayed_until = COALESCE(excluded.delayed_until, delayed_until), note = COALESCE(excluded.note, note),
+    note_at = COALESCE(excluded.note_at, note_at), accepted_at = COALESCE(excluded.accepted_at, accepted_at)`);
 
 type Change = { row: DarbShipmentRow; before?: DarbShipmentRow };
 
@@ -140,6 +204,16 @@ function save(shipments: Shipment[]): Change[] {
     for (const s of shipments) {
       const row = toRow(s);
       const before = getRow.get(row.id) as DarbShipmentRow | undefined;
+      // The list carries no notes: the ones already fetched with the details stay on their events.
+      if (before) {
+        const known = new Map((JSON.parse(before.timeline) as TimelineEvent[]).map((t) => [`${t.type}|${t.at}`, t]));
+        const timeline = (JSON.parse(row.timeline) as TimelineEvent[]).map((t) => {
+          const old = known.get(`${t.type}|${t.at}`);
+          return { ...t, ...(!t.note && old?.note && { note: old.note }), ...(!t.by && old?.by && { by: old.by }) };
+        });
+        row.timeline = JSON.stringify(timeline);
+        Object.assign(row, notesOf(timeline));
+      }
       upsert.run(row);
       if (before && (before.status !== row.status || (!before.paid_at && row.paid_at))) changes.push({ row, before });
       const orders = db.prepare("SELECT id, status, darb_status FROM orders WHERE darb_id = ?").all(row.id) as {
@@ -181,7 +255,33 @@ function pieces(darbId: string): string {
     .join("، ");
 }
 
-function tell(changes: Change[]) {
+// Shipments that won't move any more.
+const FINAL = ["completed", "released", "returned", "cancelled"];
+// How many times a shipment was delayed.
+const delays = (r: DarbShipmentRow) => (JSON.parse(r.timeline) as TimelineEvent[]).filter((t) => t.type === "delayed").length;
+
+// Libya's time, "الثلاثاء 3/11 2:30 م".
+export function libyaTime(ms: number): string {
+  try {
+    return new Intl.DateTimeFormat("ar-LY-u-nu-latn", { timeZone: "Africa/Tripoli", weekday: "long", day: "numeric", month: "numeric", hour: "numeric", minute: "2-digit" }).format(ms);
+  } catch {
+    return new Date(ms + 2 * 3_600_000).toISOString().slice(5, 16).replace("T", " ");
+  }
+}
+const local = (phone: string) => phone.replace(/^\+218/, "0");
+
+// Why it's delayed, until when, and who has it: the lines under a delay or a return alert.
+function courierLines(r: DarbShipmentRow, whyLabel = "سبب المندوب"): string {
+  const lines: string[] = [];
+  if (r.note) lines.push(`📝 ${whyLabel}: «${esc(r.note)}»`);
+  else if (r.status === "delayed") lines.push("📝 المندوب ما كتب سبب");
+  if (r.status === "delayed" && r.delayed_until && r.delayed_until > Date.now()) lines.push(`🗓 مأجّلة لـ ${esc(libyaTime(r.delayed_until))}`);
+  if (r.courier_phone && r.courier_phone !== r.office_phone) lines.push(`🚚 المندوب: ${esc(r.courier_name ?? "")} · <code>${esc(local(r.courier_phone))}</code>`);
+  if (r.office_name) lines.push(`🏢 ${esc(r.office_name)}${r.office_phone ? ` · <code>${esc(local(r.office_phone))}</code>` : ""}`);
+  return lines.length ? `\n${lines.join("\n")}` : "";
+}
+
+function tell(changes: Change[], again: DarbShipmentRow[] = []) {
   const label = (r: DarbShipmentRow, chat = false) => {
     const order = db.prepare("SELECT id, customer FROM orders WHERE darb_id = ? LIMIT 1").get(r.id) as { id: number; customer: string } | undefined;
     const link =
@@ -193,16 +293,18 @@ function tell(changes: Change[]) {
   for (const { row, before } of changes) {
     if (before?.status === row.status) continue;
     if (row.status === "completed") notify("order", `✅ <b>انسلمت</b>: ${label(row)} · ${row.amount} دينار لإلنا`);
-    else if (row.status === "delayed") notify("order", `⏳ <b>شحنة متأخرة</b>: ${label(row, true)}`);
+    else if (row.status === "delayed")
+      notify("order", `⏳ <b>شحنة مأجّلة</b>: ${label(row, true)}${courierLines(row)}\nراسلوا الزبون وخبّروه يتواصل مع المندوب.`);
     else if (row.status === "returning" || row.status === "cancelled")
       notify(
         "order",
         `${row.status === "returning" ? "↩️ <b>بضاعة راجعة لعنا</b>" : "🚫 <b>شحنة ملغية، البضاعة رح ترجع</b>"}: ${label(row, true)}` +
-          `${pieces(row.id) ? `\n📦 ${esc(pieces(row.id))}` : ""}\n${esc(row.last_event)}\n` +
+          `${pieces(row.id) ? `\n📦 ${esc(pieces(row.id))}` : ""}\n${esc(row.last_event)}${courierLines(row, "ملاحظة المندوب")}\n` +
           `قرّروا وين تروح: لزبون تاني بنفس المدينة ولا ترجع للمخزن${config.publicUrl ? `\n<a href="${config.publicUrl}/dashboard/stock">البضاعة الراجعة</a>` : ""}`,
       );
     else if (row.status === "returned") notify("order", `📥 <b>البضاعة رجعت</b>: ${label(row)}${pieces(row.id) ? `\n📦 ${esc(pieces(row.id))}` : ""}`);
   }
+  for (const row of again) notify("order", `⏳ <b>تأجّلت مرة تانية</b> (${delays(row)} مرات): ${label(row, true)}${courierLines(row)}`);
   const paid = changes.filter((c) => !c.before?.paid_at && c.row.paid_at);
   if (paid.length) {
     notify("order", `💰 <b>درب السبيل حوّلولنا ${sum(paid.map((c) => c.row.amount))} دينار</b> (${paid.length} شحنة)`);
@@ -239,11 +341,11 @@ export function trackingNote(customer: string): string {
   const orders = db
     .prepare(
       `SELECT o.id, o.status, o.total, o.payment, d.id AS shipment, d.reference, d.sh, d.status AS darb, d.city, d.area,
-         d.last_event_at, d.created_at
+         d.last_event_at, d.created_at, d.courier_name, d.courier_phone, d.office_phone, d.note, d.delayed_until, d.accepted_at
        FROM orders o LEFT JOIN darb_shipments d ON d.id = o.darb_id
        WHERE (o.customer = ? OR REPLACE(o.phone, ' ', '') LIKE ?) AND o.status != 'cancelled' ORDER BY o.id DESC LIMIT 3`,
     )
-    .all(customer, like) as {
+    .all(customer, like) as ({
     id: number;
     status: string;
     total: string; // as stated, "385 دينار"
@@ -256,7 +358,7 @@ export function trackingNote(customer: string): string {
     area: string | null;
     last_event_at: number | null;
     created_at: number | null;
-  }[];
+  } & CourierInfo)[];
   const loose = like
     ? (db
         .prepare(
@@ -265,12 +367,16 @@ export function trackingNote(customer: string): string {
         )
         .all(like, Date.now() - 60 * 24 * 3_600_000) as DarbShipmentRow[])
     : [];
-  const describe = (d: { sh: string | null; reference: string | null; status: string | null; city: string | null; area: string | null; last_event_at: number | null; created_at: number | null }) =>
+  const describe = (d: { sh: string | null; reference: string | null; status: string | null; city: string | null; area: string | null; last_event_at: number | null; created_at: number | null } & Partial<CourierInfo>) =>
     [
-      `shipment ${d.sh ?? d.reference} with Darb Assabil to ${d.city}${d.area && d.area !== d.city ? `/${d.area}` : ""}`,
+      `shipment ${d.reference ?? d.sh}${d.sh && d.sh !== d.reference ? ` (first number ${d.sh})` : ""} with Darb Assabil to ${d.city}${d.area && d.area !== d.city ? `/${d.area}` : ""}`,
       `Stage: ${TRACKING_STAGE[d.status ?? ""] ?? d.status}`,
       d.created_at && `sent ${hoursAgo(d.created_at)}`,
       d.last_event_at && `last update ${hoursAgo(d.last_event_at)}`,
+      // The courier who delivers it (once he took it): the customer may call him.
+      d.accepted_at && d.courier_phone && !FINAL.includes(d.status ?? "") && `The Darb courier delivering it: ${d.courier_name ?? ""}, phone ${d.courier_phone.replace(/^\+218/, "0")} (give it if they ask how to reach him or where it is)`,
+      d.status === "delayed" && d.note && `The courier's note on the delay: "${d.note}"`,
+      d.status === "delayed" && d.delayed_until && d.delayed_until > Date.now() && `delayed until ${libyaTime(d.delayed_until)} (Libya time)`,
     ]
       .filter(Boolean)
       .join(". ");
@@ -286,6 +392,15 @@ export function trackingNote(customer: string): string {
   ];
   return lines.length ? `Order tracking (from Darb Assabil, updated every 15 minutes):\n${lines.join("\n")}` : "";
 }
+
+type CourierInfo = {
+  courier_name: string | null;
+  courier_phone: string | null;
+  office_phone: string | null;
+  note: string | null;
+  delayed_until: number | null;
+  accepted_at: number | null;
+};
 
 let syncing: Promise<{ shipments: number; changes: number }> | undefined;
 
@@ -311,7 +426,30 @@ export function syncDarb(): Promise<{ shipments: number; changes: number }> {
       expected = data.totalCount ?? 0;
       if (!data.results.length || all.length >= expected) break;
     }
+    const before = new Map((db.prepare("SELECT * FROM darb_shipments").all() as DarbShipmentRow[]).map((r) => [r.id, r]));
     const changes = save(all);
+    // The details (the courier, his note, until when it's delayed) of the shipments that moved since the last sync,
+    // and of the ones on their way we don't know the courier of yet. One call each, so a few dozen at most.
+    const moving = (s: Shipment) => !FINAL.includes(s.status) || ["cancelled", "returning"].includes(s.status);
+    const toFetch = all
+      .filter((s) => {
+        const b = before.get(s._id);
+        if (!b) return !FINAL.includes(s.status);
+        const lastAt = Date.parse(s.timeline?.at(-1)?.timestamp ?? "") || null;
+        return moving(s) && (b.last_event_at !== lastAt || b.status !== s.status || (!FINAL.includes(s.status) && !b.courier_phone));
+      })
+      .slice(0, 40);
+    for (const s of toFetch) {
+      const detail = await darb<{ results?: Shipment[] }>("GET", `/api/local/shipments/${encodeURIComponent(s._id)}`).catch(() => undefined);
+      const found = detail?.results?.find((x) => x._id === s._id);
+      if (found) save([found]);
+    }
+    // The rows as they are now (with the details) for the alerts, and the shipments delayed once more with a new note.
+    for (const c of changes) c.row = getRow.get(c.row.id) as DarbShipmentRow;
+    const again = toFetch
+      .map((s) => ({ row: getRow.get(s._id) as DarbShipmentRow, b: before.get(s._id) }))
+      .filter(({ row, b }) => b && b.status === "delayed" && row.status === "delayed" && delays(row) > delays(b))
+      .map(({ row }) => row);
     // Shipments deleted at Darb leave our copy too (so our numbers are Darb's); only from a full list, and never
     // most of them at once (a short answer from Darb must not wipe our copy).
     const total = all.length;
@@ -326,7 +464,7 @@ export function syncDarb(): Promise<{ shipments: number; changes: number }> {
         log("darb", `${ours.length} shipment(s) deleted at Darb, removed from our copy: ${ours.map((r) => r.reference).join(", ")}`);
       } else if (ours.length) log("darb", `${ours.length} shipments missing from Darb's list: kept (too many to be deletions)`);
     }
-    tell(changes);
+    tell(changes, again);
     for (const c of changes) if (c.before?.status !== c.row.status) for (const run of onChange) run(c.row);
     for (const run of afterSync) await run().catch((error) => log("darb", `after sync: ${error instanceof Error ? error.message : error}`));
     if (changes.length) log("darb", `synced ${all.length} shipments, ${changes.length} changed`);
@@ -437,6 +575,13 @@ export function shipmentView(row: DarbShipmentRow) {
     lastEvent: row.last_event,
     lastEventAt: row.last_event_at,
     createdAt: row.created_at,
+    courierName: row.courier_name,
+    courierPhone: row.courier_phone,
+    officeName: row.office_name,
+    officePhone: row.office_phone,
+    delayedUntil: row.delayed_until,
+    note: row.note,
+    noteAt: row.note_at,
     orderId: orderFor(row.id) ?? null,
   };
 }

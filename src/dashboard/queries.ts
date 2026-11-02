@@ -534,6 +534,8 @@ export function orders(opts: OrdersQuery) {
       `SELECT o.id, o.customer, o.channel, o.name, o.phone, o.city, o.address, o.items, o.total, o.notes, o.payment, o.status, o.source,
          o.darb_ref AS darbRef, COALESCE(d.status, o.darb_status) AS darbStatus, o.darb_at AS darbAt,
          d.sh AS darbSh, d.last_event AS darbEvent, d.last_event_at AS darbEventAt, d.paid_at AS darbPaidAt, d.amount AS darbAmount,
+         d.courier_name AS courierName, d.courier_phone AS courierPhone, d.note AS darbNote, d.note_at AS darbNoteAt,
+         d.delayed_until AS delayedUntil, d.accepted_at AS acceptedAt,
          o.created_at AS createdAt, o.updated_at AS updatedAt,
          CASE WHEN o.status = 'new' THEN NULLIF(${ASKED_AT}, 0) END AS askedAt,
          CASE WHEN o.status = 'new' THEN ${REPLIED_AT} END AS repliedAt,

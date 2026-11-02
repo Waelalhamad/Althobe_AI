@@ -187,13 +187,41 @@ export function DarbTrackView({ order, onClose }: { order: Order; onClose: () =>
               </div>
             </div>
           </div>
+          {(s.courierPhone || s.officeName || s.delayedUntil) && !["completed", "returned", "cancelled"].includes(s.status) && (
+            <div className="flex flex-col gap-1 rounded-xl bg-card-2 p-3 text-sm">
+              {s.courierPhone && s.courierPhone !== s.officePhone && (
+                <div>
+                  🚚 المندوب: {s.courierName}{" "}
+                  <a href={`tel:${s.courierPhone.replace(/^\+?218/, "0")}`} className="num text-primary" dir="ltr">
+                    {s.courierPhone.replace(/^\+?218/, "0")}
+                  </a>
+                </div>
+              )}
+              {s.officeName && (
+                <div>
+                  🏢 {s.officeName}
+                  {s.officePhone && (
+                    <>
+                      {" "}
+                      <a href={`tel:${s.officePhone.replace(/^\+?218/, "0")}`} className="num text-primary" dir="ltr">
+                        {s.officePhone.replace(/^\+?218/, "0")}
+                      </a>
+                    </>
+                  )}
+                </div>
+              )}
+              {s.status === "delayed" && s.delayedUntil && <div>🗓 مأجّلة لـ {time(s.delayedUntil)}</div>}
+            </div>
+          )}
           <ol className="flex flex-col gap-0 border-s-2 border-line ps-4">
             {[...s.timeline].reverse().map((t, n) => (
               <li key={n} className="relative pb-3">
                 <span className={clsx("absolute -start-[1.4rem] top-1.5 size-2.5 rounded-full", n === 0 ? "bg-primary" : "bg-line")} />
                 <div className={clsx("text-sm", n === 0 && "font-semibold")}>{t.text}</div>
+                {t.note && <div className="mt-0.5 rounded-lg bg-warn/10 px-2 py-1 text-sm">📝 {t.note}</div>}
                 <div className="text-xs text-muted">
                   {time(t.at)} · {ago(t.at)}
+                  {t.by && ` · ${t.by}`}
                 </div>
               </li>
             ))}

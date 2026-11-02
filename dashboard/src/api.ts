@@ -139,6 +139,13 @@ export type Order = {
   darbEventAt?: number | null;
   darbPaidAt?: number | null;
   darbAmount?: number | null;
+  // Who delivers it (once the courier took it), the courier's latest note and the day it's delayed to.
+  courierName?: string | null;
+  courierPhone?: string | null;
+  darbNote?: string | null;
+  darbNoteAt?: number | null;
+  delayedUntil?: number | null;
+  acceptedAt?: number | null;
   createdAt: number;
   updatedAt: number;
   // An order still to confirm: when the team last wrote to the customer (or marked it by hand), and when the customer answered since.
@@ -254,8 +261,15 @@ export type DarbTracked = {
   lastEventAt: number | null;
   createdAt: number;
   orderId: number | null;
+  courierName?: string | null;
+  courierPhone?: string | null;
+  officeName?: string | null;
+  officePhone?: string | null;
+  delayedUntil?: number | null;
+  note?: string | null;
+  noteAt?: number | null;
 };
-export type DarbTimeline = DarbTracked & { timeline: { type: string; text: string; at: number }[] };
+export type DarbTimeline = DarbTracked & { timeline: { type: string; text: string; at: number; note?: string; by?: string }[] };
 export type Money = {
   stages: Record<MoneyStage, { count: number; amount: number }>;
   shipping: number;

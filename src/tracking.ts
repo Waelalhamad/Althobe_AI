@@ -32,16 +32,41 @@ db.exec(`
 export type Stage = "sent" | "in_city" | "delivered";
 const ORDER: Stage[] = ["sent", "in_city", "delivered"];
 
-// The furthest stage a Darb status means; none for cancelled or returned shipments.
-function stageOf(status: string): Stage | undefined {
+// The furthest stage a shipment is at; none for cancelled or returned shipments.
+// in_city: at Darb's office in the customer's city, or the courier (or office) who delivers it took it ("accepted"):
+// most shipments go from "processing" straight to the courier, never "on-branch".
+function stageOf(s: Pick<Candidate, "status" | "accepted_at" | "courier_phone" | "office_phone">): Stage | undefined {
+  const status = s.status;
   if (status === "completed" || status === "released") return "delivered";
-  if (status === "on-branch") return "in_city";
   if (["cancelled", "returning", "returned"].includes(status)) return undefined;
+  if (status === "on-branch") return "in_city";
+  if (s.accepted_at && (s.courier_phone || s.office_phone)) return "in_city";
   return "sent";
 }
 
+type NoticeInfo = { number: string; city: string; courier?: string; phone?: string; office?: boolean };
+
+// The courier or office who has it now, for the customer: name and a local number (0…).
+function courierOf(s: Candidate): Pick<NoticeInfo, "courier" | "phone" | "office"> {
+  const phone = s.courier_phone ?? s.office_phone;
+  if (!s.accepted_at || !phone) return {};
+  const name = (phone === s.courier_phone ? s.courier_name : s.office_name)?.trim() ?? "";
+  const office = phone === s.office_phone || name.startsWith("مكتب");
+  return { courier: name, phone: phone.replace(/^\+?218/, "0"), office };
+}
+
+// When we know who delivers it: who, his number and the shipment's number now (Darb's branch gives it a new one).
+const COURIER_TEXTS: ((s: NoticeInfo) => string)[] = [
+  (s) =>
+    `طلبك توا عند ${s.office ? "" : "مندوب "}درب السبيل${s.courier ? ` ${s.courier}` : ""} 🚚 وهو اللي بيوصّلهولك إن شاء الله.\nرقمه: ${s.phone}\nرقم شحنتك: ${s.number}\nخلي تليفونك مفتوح، وكان ما كلمكش تقدر تكلمه انت.`,
+  (s) =>
+    `خبر باهي 🌟 طلبك ${s.office ? "وصل" : "صار مع"} ${s.office ? "" : "مندوب "}درب السبيل${s.courier ? ` ${s.courier}` : ""}، وقريب يوصلك إن شاء الله.\nرقمه: ${s.phone}\nرقم الشحنة: ${s.number}\nلو تبي تتفق معاه على الوقت أو المكان كلمه مباشرة.`,
+  (s) =>
+    `طلبك في الطريق ليك 📦 اللي بيوصّله ${s.office ? "" : "مندوب "}درب السبيل${s.courier ? ` ${s.courier}` : ""}.\nرقمه: ${s.phone}\nرقم الشحنة: ${s.number}\nالله يخليك رد عليه لما يتصل، وكان تأخر عليك كلمه انت.`,
+];
+
 // 3 wordings per stage, the same one for a customer every time (from their number).
-const TEXTS: Record<Stage, ((s: { number: string; city: string }) => string)[]> = {
+const TEXTS: Record<Stage, ((s: NoticeInfo) => string)[]> = {
   sent: [
     (s) => `طلبك طلع مع درب السبيل 🚚 رقم الشحنة ${s.number}. التوصيل عادة من يومين لـ 3 أيام إن شاء الله، والمندوب بيتصل فيك قبل ما يوصل.`,
     (s) => `بشرى حلوة 🌟 طلبك انبعت مع درب السبيل، ورقم الشحنة ${s.number}. خلال يومين لـ 3 أيام إن شاء الله بيوصلك، والمندوب بيكلمك قبل.`,
@@ -65,7 +90,8 @@ function wording(customer: string): number {
   return sum % 3;
 }
 
-export function noticeText(stage: Stage, customer: string, s: { number: string; city: string }) {
+export function noticeText(stage: Stage, customer: string, s: NoticeInfo) {
+  if (stage === "in_city" && s.phone) return COURIER_TEXTS[wording(customer)]!(s);
   return TEXTS[stage][wording(customer)]!(s);
 }
 
@@ -98,12 +124,26 @@ export function trackingStats(days: number) {
 
 // --- Sending -------------------------------------------------------------------
 
-type Candidate = { id: string; status: string; reference: string; sh: string | null; city: string; customer: string; orderId: number };
+type Candidate = {
+  id: string;
+  status: string;
+  reference: string;
+  sh: string | null;
+  city: string;
+  customer: string;
+  orderId: number;
+  courier_name: string | null;
+  courier_phone: string | null;
+  office_name: string | null;
+  office_phone: string | null;
+  accepted_at: number | null;
+};
 
 const linkedShipments = (orderId?: number) =>
   db
     .prepare(
-      `SELECT d.id, d.status, d.reference, d.sh, d.city, o.customer, o.id AS orderId
+      `SELECT d.id, d.status, d.reference, d.sh, d.city, o.customer, o.id AS orderId,
+              d.courier_name, d.courier_phone, d.office_name, d.office_phone, d.accepted_at
        FROM darb_shipments d JOIN orders o ON o.darb_id = d.id
        WHERE o.status != 'cancelled' ${orderId ? "AND o.id = ?" : ""}`,
     )
@@ -123,7 +163,7 @@ function seed() {
   db.exec("BEGIN");
   try {
     for (const s of linkedShipments()) {
-      const stage = stageOf(s.status);
+      const stage = stageOf(s);
       if (!stage) continue;
       for (const st of ORDER.slice(0, ORDER.indexOf(stage) + 1)) {
         if (!getNotice.get(s.id, st)) mark(s.id, st, "skipped", "before tracking updates");
@@ -161,7 +201,7 @@ export async function notifyCustomers(orderId?: number): Promise<number> {
   try {
     seed();
     for (const s of linkedShipments(orderId)) {
-      const stage = stageOf(s.status);
+      const stage = stageOf(s);
       if (!stage) continue;
       // Earlier stages not told yet are passed: only the latest news goes out.
       for (const st of ORDER.slice(0, ORDER.indexOf(stage))) {
@@ -182,7 +222,8 @@ export async function notifyCustomers(orderId?: number): Promise<number> {
       }
       // Claim it first, so a crash or a second sync never sends it twice.
       mark(s.id, stage, "sent", "");
-      const text = noticeText(stage, s.customer, { number: s.sh ?? s.reference, city: s.city });
+      // The courier's update gives the number the shipment has now (the branch's); the first one gives SH.
+      const text = noticeText(stage, s.customer, { number: stage === "in_city" ? s.reference : (s.sh ?? s.reference), city: s.city, ...courierOf(s) });
       try {
         await sendNotice(s.customer, text);
         sent++;
@@ -217,7 +258,7 @@ onDarbSynced(() => notifyCustomers());
 // An order linked to a shipment sent before: what already happened isn't news, so its stages count as told.
 export function markTold(orderId: number) {
   for (const s of linkedShipments(orderId)) {
-    const stage = stageOf(s.status);
+    const stage = stageOf(s);
     if (!stage) continue;
     for (const st of ORDER.slice(0, ORDER.indexOf(stage) + 1)) {
       if (!getNotice.get(s.id, st)) mark(s.id, st, "skipped", "before tracking updates");

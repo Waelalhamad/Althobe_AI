@@ -402,7 +402,7 @@ function DarbLine({ o, onTrack }: { o: Order; onTrack: () => void }) {
     bad: "border-bad/40 bg-bad/10",
     muted: "border-line bg-card-2",
   };
-  return (
+  const line = (
     <button onClick={onTrack} className={clsx("flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-3 py-2 text-start text-sm", tones[tone])}>
       <span className="flex items-center gap-1 font-semibold">
         <Truck size={16} /> درب السبيل
@@ -424,6 +424,33 @@ function DarbLine({ o, onTrack }: { o: Order; onTrack: () => void }) {
       ) : null}
       <span className="text-xs text-primary">تتبع ←</span>
     </button>
+  );
+  const done = ["completed", "returned", "cancelled"].includes(o.darbStatus ?? "");
+  const showNote = o.darbNote && !done;
+  const showCourier = o.courierPhone && o.acceptedAt && !done;
+  if (!showNote && !showCourier && !o.delayedUntil) return line;
+  return (
+    <div className="flex flex-col gap-1">
+      {line}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-xs">
+        {showNote && (
+          <span className={clsx(o.darbStatus === "delayed" && "font-semibold text-warn")}>
+            📝 ملاحظة المندوب: {o.darbNote}
+            {o.darbNoteAt && <span className="text-muted"> · {ago(o.darbNoteAt)}</span>}
+          </span>
+        )}
+        {o.darbStatus === "delayed" && !o.darbNote && <span className="text-warn">📝 المندوب ما كتب سبب التأجيل</span>}
+        {o.delayedUntil && o.darbStatus === "delayed" && <span>🗓 مأجّلة لـ {time(o.delayedUntil)}</span>}
+        {showCourier && (
+          <span>
+            🚚 المندوب: {o.courierName}{" "}
+            <a href={`tel:${o.courierPhone!.replace(/^\+?218/, "0")}`} className="num text-primary" dir="ltr">
+              {o.courierPhone!.replace(/^\+?218/, "0")}
+            </a>
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 
