@@ -659,10 +659,18 @@ async function respond(customer: string) {
     }
   } catch (error) {
     // Never leave the customer stuck with the bot: stop the AI so the team answers in the app.
-    pauseAi(customer, "AI error");
+    // Meta failing to deliver (tried three times) is usually over within the hour: the AI takes the chat back then and
+    // answers if the customer still waits, instead of leaving them half a day.
+    pauseAi(customer, "AI error", error instanceof SendError && error.passing ? 1 : undefined);
     recordAiCall({ customer, channel: channelOf(customer), action: "error", reason: errorText(error) });
     log(key, `error, AI paused for this customer: ${errorText(error)}`);
-    notifyError(`المساعد ما قدر يرد على ${customerLabel(customer)} (توقف بهالمحادثة، ردو انتو)`, errorText(error));
+    const passing = error instanceof SendError && error.passing;
+    notifyError(
+      passing
+        ? `واتساب (ميتا) ما قبل يوصّل رد المساعد لـ ${customerLabel(customer)} بعد 3 محاولات. غالباً عطل مؤقت عندهم: ردو انتو، أو المساعد بيرجع يرد بعد ساعة إذا الزبون لسا ناطر`
+        : `المساعد ما قدر يرد على ${customerLabel(customer)} (توقف بهالمحادثة، ردو انتو)`,
+      errorText(error),
+    );
   }
 }
 
@@ -865,20 +873,38 @@ function sendImage(to: string, link: string, caption = "") {
   return sendMessage(to, { type: "image", image: caption ? { link, caption } : { link } });
 }
 
+// Meta's passing failures: "(#131000) Something went wrong", "(#131016) Service unavailable", a 5xx or a 429.
+// They usually pass in seconds, so the message is tried again before it counts as failed.
+export const isPassingSendError = (status: number, detail: string) =>
+  status >= 500 || status === 429 || /"code"\s*:\s*(131000|131016|130429|1|2)\b/.test(detail);
+
 async function sendMessage(to: string, content: Record<string, unknown>): Promise<string | undefined> {
   const { url, headers } = sendEndpoint();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { ...headers, "Content-Type": "application/json" },
-    // A customer known only by their user id (WhatsApp usernames) is addressed with `recipient`, not `to`.
-    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", ...(isUserId(to) ? { recipient: to } : { to }), ...content }),
-  });
-  if (!res.ok) {
+  // A customer known only by their user id (WhatsApp usernames) is addressed with `recipient`, not `to`.
+  const body = JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", ...(isUserId(to) ? { recipient: to } : { to }), ...content });
+  for (const wait of [0, 3000, 10000]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    const res = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body });
+    if (res.ok) {
+      const data = (await res.json()) as { messages?: { id?: string }[] };
+      return data.messages?.[0]?.id;
+    }
     const detail = await res.text().catch(() => "");
-    throw new Error(`${config.whatsapp.provider} send failed: ${res.status} ${detail.slice(0, 300)}`);
+    const error = new SendError(`${config.whatsapp.provider} send failed: ${res.status} ${detail.slice(0, 300)}`, isPassingSendError(res.status, detail));
+    if (!error.passing || wait === 10000) throw error;
+    log(`wa:${to}`, `send failed (${res.status}), trying again`);
   }
-  const data = (await res.json()) as { messages?: { id?: string }[] };
-  return data.messages?.[0]?.id;
+  throw new Error("unreachable");
+}
+
+// A send that failed; passing: Meta's side, likely fine again soon.
+export class SendError extends Error {
+  constructor(
+    message: string,
+    readonly passing: boolean,
+  ) {
+    super(message);
+  }
 }
 
 // Blue ticks and "typing…" on the customer's phone while the AI thinks, like a person who opened the chat.
