@@ -10,6 +10,9 @@ import { prepareImage } from "../image";
 import { OrderForm } from "../components/OrderForm";
 import { EmojiPicker } from "../components/EmojiPicker";
 import type { OrderInput } from "../api";
+import { DARB_STATUS } from "../components/DarbSend";
+
+const ORDER_STATUS_LABEL: Record<string, string> = { new: "بدو تأكيد", confirmed: "متأكد", delivered: "انسلّم", cancelled: "ملغي" };
 
 const FILTERS: { id: ConversationFilter; label: string }[] = [
   { id: "all", label: "الكل" },
@@ -259,6 +262,28 @@ function Thread({ customer }: { customer: string }) {
             {d && ` · ${d.messages.length} رسالة`}
             {d?.windowOpenUntil && (windowOpen ? ` · نافذة الرد مفتوحة ${until(d.windowOpenUntil)}` : " · نافذة الـ 24 ساعة مسكّرة")}
           </div>
+          {d && (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+              {d.orders?.length ? (
+                d.orders.map((o) => (
+                  <Link
+                    key={o.id}
+                    href={`/orders?q=${encodeURIComponent(`#${o.id}`)}`}
+                    className={clsx(
+                      "rounded-lg px-2 py-0.5 hover:underline",
+                      o.status === "cancelled" ? "bg-card-2 text-muted" : o.status === "new" ? "bg-warn/15 text-warn" : "bg-ok/15 text-ok",
+                    )}
+                    title={`انعمل ${ago(o.createdAt)}`}
+                  >
+                    طلب <span className="num">#{o.id}</span> · {ORDER_STATUS_LABEL[o.status] ?? o.status}
+                    {o.darbStatus && ` · ${DARB_STATUS[o.darbStatus] ?? o.darbStatus}`}
+                  </Link>
+                ))
+              ) : (
+                <span className="rounded-lg bg-card-2 px-2 py-0.5 text-muted">ما عندو طلب محفوظ</span>
+              )}
+            </div>
+          )}
         </div>
         <Button variant="ghost" onClick={() => draft.mutate()} disabled={draft.isPending} title="المساعد بيعبّي الطلب من المحادثة، وانت بتتأكد وبتحفظ">
           <ShoppingBag size={16} /> {draft.isPending ? "عم يقرا المحادثة…" : "سجّل طلب"}

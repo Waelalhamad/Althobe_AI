@@ -384,6 +384,13 @@ export function conversation(customer: string) {
     username: contact?.username ?? "",
     messages,
     aiCalls,
+    // The customer's orders, newest first: the chat says at once whether the order was saved.
+    orders: db
+      .prepare(
+        `SELECT o.id, o.status, o.created_at AS createdAt, COALESCE(d.status, o.darb_status) AS darbStatus
+         FROM orders o LEFT JOIN darb_shipments d ON d.id = o.darb_id WHERE o.customer = ? ORDER BY o.id DESC LIMIT 5`,
+      )
+      .all(customer) as { id: number; status: string; createdAt: number; darbStatus: string | null }[],
     pausedUntil: pause && pause.until > Date.now() ? pause.until : null,
     pauseReason: pause && pause.until > Date.now() ? pause.reason : null,
     windowOpenUntil: lastCustomer.at ? lastCustomer.at + DAY : null,
@@ -460,6 +467,17 @@ export type OrdersQuery = {
   limit: number;
 };
 
+// Arabic letters people write either way, folded to one: أ إ آ → ا, ة → ه, ى → ي, without tashkeel or tatweel.
+export function arabicFold(text: string): string {
+  return text
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/[ً-ْـ]/g, "");
+}
+// The same in SQL, on a column (tashkeel left as is: names in orders are typed without it).
+const foldSql = (col: string) => `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${col}, 'أ', 'ا'), 'إ', 'ا'), 'آ', 'ا'), 'ة', 'ه'), 'ى', 'ي')`;
+
 export function orders(opts: OrdersQuery) {
   const where: string[] = [];
   const params: (string | number)[] = [];
@@ -501,10 +519,14 @@ export function orders(opts: OrdersQuery) {
     // "0912345678" also finds "218912345678": the number is searched without its leading 0, from 4 digits up.
     const digits = /^\+?\d{4,}$/.test(q.replace(/\s/g, "")) ? q.replace(/\D/g, "").replace(/^0+/, "") : "";
     const like = `%${q}%`;
+    // Names the way people type them: «إدريس عامر» finds «ادريس محمد عامر» (each word anywhere, أ/إ/آ = ا, ة = ه, ى = ي).
+    const words = arabicFold(q).split(/\s+/).filter(Boolean);
+    const wordsSql = words.map(() => `(${foldSql("o.name")} LIKE ? OR ${foldSql("o.city")} LIKE ? OR ${foldSql("o.address")} LIKE ?)`).join(" AND ");
     where.push(
-      `(o.name LIKE ? OR o.city LIKE ? OR o.address LIKE ? OR o.darb_ref LIKE ? OR d.sh LIKE ? OR CAST(o.id AS TEXT) = ?${digits ? " OR o.phone LIKE ? OR o.customer LIKE ?" : ""})`,
+      `((${wordsSql}) OR o.darb_ref LIKE ? OR d.sh LIKE ? OR CAST(o.id AS TEXT) = ?${digits ? " OR o.phone LIKE ? OR o.customer LIKE ?" : ""})`,
     );
-    params.push(like, like, like, like, like, q);
+    for (const w of words) params.push(`%${w}%`, `%${w}%`, `%${w}%`);
+    params.push(like, like, q);
     if (digits) params.push(`%${digits}%`, `%${digits}%`);
   }
   const rows = db

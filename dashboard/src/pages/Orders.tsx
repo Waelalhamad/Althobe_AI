@@ -132,9 +132,12 @@ const BACK_KEY = "orders-back";
 
 // The view to open: a link's tab ("?tab=unsent": a tab, or any Darb status, which opens the extra filters), else the last one.
 function startView(): View {
-  const tab = new URLSearchParams(window.location.search).get("tab");
+  const link = new URLSearchParams(window.location.search);
+  const tab = link.get("tab");
   const t = DARB_TABS.find((x) => x.id === tab);
   const fresh = { more: false, search: "", dates: "all" };
+  // "?q=#110": that order, whatever its step.
+  if (link.get("q")) return { ...fresh, f: {}, search: link.get("q")! };
   if (t) return { ...fresh, f: { ...t.f } };
   if (tab && [...DARB_FILTERS, ...DARB_MONEY].some((x) => x.id === tab)) return { ...fresh, f: { darb: tab as DarbFilter }, more: true };
   try {

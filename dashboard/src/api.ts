@@ -288,9 +288,25 @@ export type ConversationDetail = {
   username: string;
   messages: Message[];
   aiCalls: { action: string; reason: string | null; latencyMs: number; promptTokens: number; completionTokens: number; at: number }[];
+  // The customer's orders, newest first.
+  orders?: { id: number; status: OrderStatus; createdAt: number; darbStatus: string | null }[];
   pausedUntil: number | null;
   pauseReason: string | null;
   windowOpenUntil: number | null;
+};
+
+// A customer who got the order summary and no order came of it.
+export type AlmostOrder = {
+  customer: string;
+  summaryAt: number;
+  name: string;
+  address: string;
+  item: string;
+  total: string;
+  answered: number;
+  lastText: string;
+  lastAt: number | null;
+  teamWrote: boolean;
 };
 
 export type Settings = {
@@ -417,6 +433,8 @@ export const api = {
   // A cancelled or refused shipment given to another order in the same city.
   darbRedirects: () => request<RedirectCandidate[]>("/darb/redirects"),
   incomingReturns: () => request<IncomingReturn[]>("/stock/incoming"),
+  almostOrders: () => request<AlmostOrder[]>("/almost-orders"),
+  dismissAlmostOrder: (customer: string, summaryAt: number) => post<{ ok: boolean }>("/almost-orders/dismiss", { customer, summaryAt }),
   darbCounts: () => request<{ total: number; byStatus: Record<string, number> }>("/darb/counts"),
   redirectMatches: (id: number) => request<RedirectView>(`/orders/${id}/darb/redirect`),
   redirect: (id: number, body: { to: number; area: string; notes: string; total: number; payment: Payment }) =>

@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  HelpCircle,
   ArrowLeft,
   Banknote,
   CheckCircle2,
@@ -16,7 +17,7 @@ import {
   UserPlus,
   type LucideIcon,
 } from "lucide-react";
-import { api } from "../api";
+import { api, type AlmostOrder } from "../api";
 import { Card, ErrorNote } from "../components/ui";
 import { ago, localDate, num, phone } from "../format";
 import { DARB_COLOR, DARB_ORDER, DARB_STATUS } from "../components/DarbSend";
@@ -30,6 +31,9 @@ export function Today() {
   const supervisor = useQuery({ queryKey: ["supervisor", 1], queryFn: () => api.supervisor(1), refetchInterval: 60_000 });
   const returns = useQuery({ queryKey: ["incoming-returns"], queryFn: api.incomingReturns, refetchInterval: 60_000, retry: false });
   const darbCounts = useQuery({ queryKey: ["darb-counts"], queryFn: api.darbCounts, refetchInterval: 60_000, retry: false });
+  const almost = useQuery({ queryKey: ["almost-orders"], queryFn: api.almostOrders, refetchInterval: 60_000, retry: false });
+  // The ones the customer answered first: those are the likely orders.
+  const almostList = [...(almost.data ?? [])].sort((a, b) => Number(b.answered > 0) - Number(a.answered > 0) || b.summaryAt - a.summaryAt);
 
   const o = orders.data;
   const darb = o?.darb ?? false;
@@ -56,6 +60,16 @@ export function Today() {
           <span className="shrink-0 text-warn">من {ago(w.since)}</span>
         </Link>
       )),
+    },
+    {
+      icon: HelpCircle,
+      title: "زباين وصلوا لملخص الطلب وما انحفظ طلب",
+      how: "المساعد بعتلهن الملخص بس ما انحفظ طلب: الزبون ردّ بشي غير «ثبت» (شكراً، 👍، «تمم 56»، «لما ينزل المرتب») أو سكت. افتح المحادثة: إذا موافق سجّل الطلب من «سجّل طلب»، وإذا لأ اضغط «مش طلب». آخر 7 أيام.",
+      count: almostList.length,
+      href: almostList[0] ? `/inbox/${encodeURIComponent(almostList[0].customer)}` : "/inbox",
+      go: "أول واحد",
+      tone: "bad",
+      extra: almostList.slice(0, 8).map((a) => <AlmostRow key={`${a.customer}-${a.summaryAt}`} a={a} />),
     },
     {
       icon: ClipboardCheck,
@@ -174,6 +188,37 @@ export function Today() {
           </Link>
         </Card>
       )}
+    </div>
+  );
+}
+
+// One customer who got the summary: who, what, what they said after it, and "not an order".
+function AlmostRow({ a }: { a: AlmostOrder }) {
+  const queryClient = useQueryClient();
+  const dismiss = useMutation({
+    mutationFn: () => api.dismissAlmostOrder(a.customer, a.summaryAt),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["almost-orders"] }),
+  });
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-2 py-1.5 text-xs hover:bg-card-2">
+      <Link href={`/inbox/${encodeURIComponent(a.customer)}`} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-0.5">
+        <span className="font-semibold">{a.name || phone(a.customer)}</span>
+        <span className="text-muted">{[a.address, a.item].filter(Boolean).join(" · ")}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {a.answered ? (
+            <>
+              ردّ: «{a.lastText.replace(/^\[sent a reaction (\S+) to:.*$/s, "$1")}»
+            </>
+          ) : (
+            <span className="text-muted">سكت بعد الملخص</span>
+          )}
+          {a.teamWrote && <span className="text-info"> · الفريق حكاه</span>}
+        </span>
+        <span className="shrink-0 text-warn">الملخص من {ago(a.summaryAt)}</span>
+      </Link>
+      <button onClick={() => dismiss.mutate()} disabled={dismiss.isPending} className="shrink-0 rounded-md border border-line px-2 py-0.5 text-muted hover:border-bad hover:text-bad">
+        مش طلب
+      </button>
     </div>
   );
 }

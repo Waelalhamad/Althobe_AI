@@ -50,6 +50,7 @@ import * as queries from "./queries.js";
 import { findGroups, sendTest, telegramChatId, setMutedKinds, setTelegramChat, setTelegramToken, telegramStatus } from "../telegram.js";
 import { followUpSettings, followUpStats, saveFollowUpSettings } from "../followup.js";
 import { markTold, saveTrackingSettings, trackingSettings, trackingStats } from "../tracking.js";
+import { almostOrders, dismissAlmostOrder } from "../almostOrders.js";
 import { incomingReturns, redirectCandidates, redirectMatches, redirectShipment, resendToDarb, tellRedirectChance } from "../darbRedirect.js";
 import { generateReport, resolveAlert, runChecks, runReviews, saveSupervisorSettings, supervisorView } from "../supervisor.js";
 
@@ -489,6 +490,20 @@ dashboardApi.post("/orders/:id/darb/link", async (req, res) => {
 dashboardApi.get("/darb/redirects", (_req, res) => darbRoute(res, () => redirectCandidates()));
 // Every shipment by status, as in Darb's app (the home page).
 dashboardApi.get("/darb/counts", (_req, res) => darbRoute(res, async () => queries.darbShipmentCounts()));
+// Customers who got the order summary and no order came of it (home page), and "not an order" on one of them.
+dashboardApi.get("/almost-orders", (_req, res) => {
+  res.json(almostOrders(7));
+});
+dashboardApi.post("/almost-orders/dismiss", (req, res) => {
+  const customer = String(req.body?.customer ?? "");
+  const summaryAt = Number(req.body?.summaryAt);
+  if (!customer || !Number.isFinite(summaryAt)) {
+    res.status(400).json({ error: "customer and summaryAt" });
+    return;
+  }
+  dismissAlmostOrder(customer, summaryAt);
+  res.json({ ok: true });
+});
 // Goods on their way back (cancelled, refused or cancelled at Darb) and the ones back lately: the stock page.
 dashboardApi.get("/stock/incoming", (_req, res) => darbRoute(res, () => incomingReturns()));
 dashboardApi.get("/orders/:id/darb/redirect", (req, res) => darbRoute(res, () => redirectMatches(Number(req.params.id))));
