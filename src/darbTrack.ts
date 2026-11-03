@@ -652,3 +652,27 @@ export async function darbMoney(from?: number, to?: number) {
     shipments: rows.map(shipmentView),
   };
 }
+
+// Shipments the team made in Darb's app that no order here is linked to (most from before the assistant took orders):
+// the orders search finds them too, by number (SH or the branch's), phone or name.
+export function unlinkedShipments(query: string) {
+  const q = query.trim().replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+  if (!q || /^#\d+$/.test(q)) return [];
+  const fold = (t: string) => t.replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي");
+  const digits = /^\+?[\d\s]{4,}$/.test(q) ? q.replace(/\D/g, "").replace(/^0+/, "") : "";
+  const number = shipmentNumber(q);
+  const words = fold(q).split(/\s+/).filter(Boolean);
+  const rows = db
+    .prepare("SELECT * FROM darb_shipments d WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.darb_id = d.id) ORDER BY created_at DESC")
+    .all() as DarbShipmentRow[];
+  return rows
+    .filter(
+      (r) =>
+        r.reference.toUpperCase().includes(number) ||
+        (r.sh ?? "").includes(number) ||
+        (digits && r.phone.replace(/\D/g, "").includes(digits)) ||
+        words.every((w) => fold(`${r.name} ${r.city} ${r.area}`).includes(w)),
+    )
+    .slice(0, 20)
+    .map((r) => ({ ...shipmentView(r), note: r.note, courierName: r.courier_name, courierPhone: r.courier_phone }));
+}

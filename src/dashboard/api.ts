@@ -9,7 +9,7 @@ import { dataPath, transcribe } from "../media.js";
 import { answerIfWaiting, answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
 import { notifyOrder } from "../orders.js";
 import { sendToDarb, shipmentPreview, shipmentQuote, updateDarbShipment, type ShipmentInput } from "../darb.js";
-import { darbMatches, darbMoney, linkDarb, PhoneMismatch, ShipmentGone, syncDarb, trackOrder, unlinkDarb } from "../darbTrack.js";
+import { darbMatches, darbMoney, linkDarb, PhoneMismatch, ShipmentGone, syncDarb, trackOrder, unlinkDarb, unlinkedShipments } from "../darbTrack.js";
 import { leadsWorkbook, ordersWorkbook, sendDailySheet, sheetName, type SheetRange } from "../ordersSheet.js";
 import { approveLesson, ignoreLesson, lessonsView } from "../learning.js";
 import {
@@ -272,6 +272,8 @@ dashboardApi.get("/orders", (req, res) => {
       limit: intParam(req.query.limit, 200, 1000),
     }),
     darb: config.darb.enabled,
+    // Shipments made in Darb's app with no order here, matching the search.
+    unlinked: config.darb.enabled ? unlinkedShipments(String(req.query.q ?? "").slice(0, 100)) : [],
   });
 });
 

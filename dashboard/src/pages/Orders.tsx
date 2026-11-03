@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { AlertTriangle, Bell, Check, Hourglass, Link2, MapPin, MessageCircle, Pencil, Phone, Plus, Search, ShoppingBag, Shuffle, SlidersHorizontal, Truck, X } from "lucide-react";
-import { api, CHANNEL_LABEL, PAYMENT_LABEL, type ContactFilter, type DarbFilter, type Order, type OrderFilters, type OrderStatus, type Payment, type RedirectCandidate } from "../api";
+import { api, CHANNEL_LABEL, PAYMENT_LABEL, type ContactFilter, type DarbFilter, type DarbTracked, type Order, type OrderFilters, type OrderStatus, type Payment, type RedirectCandidate } from "../api";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { emptyOrder, OrderForm } from "../components/OrderForm";
 import { OrdersExport } from "../components/OrdersExport";
@@ -364,7 +364,8 @@ export function Orders() {
       )}
 
       {adding && <OrderForm initial={emptyOrder()} onClose={() => setAdding(false)} />}
-      {q.data?.orders.length === 0 && (
+      {!!q.data?.unlinked?.length && <UnlinkedShipments shipments={q.data.unlinked} />}
+      {q.data?.orders.length === 0 && !q.data.unlinked?.length && (
         <Card>
           <Empty icon={ShoppingBag} text={tab && !extra && !search.trim() ? "ما في طلبات هون 👌" : "ما في طلبات بهالفلاتر."} />
         </Card>
@@ -375,6 +376,48 @@ export function Orders() {
         ))}
       </div>
     </div>
+  );
+}
+
+// Shipments the team made in Darb's app with no order here that match the search (an order can be linked to one by its number).
+function UnlinkedShipments({ shipments }: { shipments: DarbTracked[] }) {
+  return (
+    <Card className="mb-4 flex flex-col gap-2">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <Truck size={16} /> شحنات بدرب ما إلها طلب هون ({shipments.length})
+      </div>
+      <p className="text-xs text-muted">انعملت من تطبيق درب مباشرة، فما في طلب مربوط فيها. لتربطها بطلب: افتح الطلب واربطه برقم الشحنة.</p>
+      {shipments.map((s) => (
+        <div key={s.id} className="flex flex-col gap-1 rounded-xl border border-line bg-card-2 px-3 py-2 text-sm">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Badge tone={DARB_TONE[s.status] ?? "info"}>{DARB_STATUS[s.status] ?? s.status}</Badge>
+            <span className="num text-xs text-muted">{s.sh && s.sh !== s.reference ? `${s.sh} · فرع #${s.reference}` : `#${s.reference}`}</span>
+            <span className="font-semibold">{s.name}</span>
+            <span className="num text-xs" dir="ltr">{s.phone.replace(/^\+?218/, "0")}</span>
+            <span className="text-xs text-muted">
+              {s.city}
+              {s.area && ` / ${s.area}`}
+            </span>
+            <span className="num text-xs">{s.amount} د</span>
+          </div>
+          {s.lastEvent && (
+            <div className="text-xs">
+              {s.lastEvent}
+              {s.lastEventAt && <span className="text-muted"> · {ago(s.lastEventAt)}</span>}
+            </div>
+          )}
+          {s.note && !["completed", "returned", "cancelled"].includes(s.status) && <div className="text-xs">📝 ملاحظة المندوب: {s.note}</div>}
+          {s.courierPhone && !["completed", "returned", "cancelled"].includes(s.status) && (
+            <div className="text-xs">
+              🚚 المندوب: {s.courierName}{" "}
+              <a href={`tel:${s.courierPhone.replace(/^\+?218/, "0")}`} className="num text-primary" dir="ltr">
+                {s.courierPhone.replace(/^\+?218/, "0")}
+              </a>
+            </div>
+          )}
+        </div>
+      ))}
+    </Card>
   );
 }
 

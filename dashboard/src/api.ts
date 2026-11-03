@@ -436,6 +436,7 @@ export const api = {
       unsent: number;
       orders: Order[];
       darb: boolean;
+      unlinked?: DarbTracked[];
     }>(`/orders?${new URLSearchParams(Object.entries(f).filter((e): e is [string, string] => Boolean(e[1])))}`),
   darbPreview: (id: number) => request<DarbPreview>(`/orders/${id}/darb`),
   darbQuote: (id: number, s: DarbShipment) => post<{ shipping: number; charges: number }>(`/orders/${id}/darb/quote`, s),
