@@ -67,7 +67,7 @@ const same = (a: string, b: string) => {
   const n = (t: string) =>
     t
       .trim()
-      .replace(/^اللونs*[:：]?s*/, "")
+      .replace(/^اللون\s*[:：]?\s*/, "")
       .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
       .replace(/[أإآ]/g, "ا")
       .replace(/ة$/, "ه")
