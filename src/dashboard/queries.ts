@@ -339,7 +339,35 @@ export function conversations(opts: { filter: ConversationFilter; q: string; lim
     lastSource: r.last_source as string,
     pausedUntil: (r.paused_until as number | null) && (r.paused_until as number) > now ? (r.paused_until as number) : null,
     pauseReason: (r.paused_until as number | null) && (r.paused_until as number) > now ? (r.pause_reason as string) : null,
+    interest: productInterest(r.customer as string),
   }));
+}
+
+// Which product a customer is about, for the team: "fur" (الفروة), "set" (الطقم), both, or not known yet.
+// From what they ordered; else the ad they came from (its words, not our company name «شركة الثوب العربي»); else
+// what they wrote themselves (our own replies name both products when we ask which one).
+const FUR = /فرو/;
+const SET = /طقم|سوري[هة]|فرمل|سروال|جلاب|سديري|ثلاث قطع|3 قطع/;
+const interestOrders = db.prepare("SELECT items FROM orders WHERE customer = ? AND status != 'cancelled'");
+const interestAd = db.prepare(
+  "SELECT text FROM messages WHERE customer = ? AND role = 'customer' AND text LIKE '[from the ad%' ORDER BY id DESC LIMIT 1",
+);
+const interestWords = db.prepare(
+  "SELECT GROUP_CONCAT(text, ' ') AS text FROM (SELECT text FROM messages WHERE customer = ? AND role = 'customer' AND history = 0 ORDER BY id DESC LIMIT 40)",
+);
+export type Interest = "fur" | "set";
+export function productInterest(customer: string): Interest[] {
+  const found = (text: string): Interest[] => [...(FUR.test(text) ? ["fur" as const] : []), ...(SET.test(text) ? ["set" as const] : [])];
+  const ordered = (interestOrders.all(customer) as { items: string }[])
+    .flatMap((o) => (JSON.parse(o.items) as { product?: string }[]).map((i) => i.product?.trim() || "طقم"))
+    .join(" ");
+  if (ordered) return found(ordered);
+  const ad = (interestAd.get(customer) as { text: string } | undefined)?.text.match(/^\[from the ad[^\]]*\]/)?.[0].replace(/شركة الثوب العربي/g, "");
+  const fromAd = ad ? found(ad) : [];
+  // An ad for the set with no product word in it ("ثوبنا العربي", "الثوب العربي…"): still the set.
+  if (ad && !fromAd.length && /ثوب/.test(ad)) fromAd.push("set");
+  const said = found(((interestWords.get(customer) as { text: string | null }).text ?? "").replace(/\[from the ad[^\]]*\]/g, ""));
+  return [...new Set([...fromAd, ...said])];
 }
 
 export function conversation(customer: string) {

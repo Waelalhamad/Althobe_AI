@@ -22,11 +22,19 @@ const FILTERS: { id: ConversationFilter; label: string }[] = [
   { id: "handoff", label: "محوّلة" },
 ];
 
+// Which product a chat is about: from its ad, its words or its order (of the chats loaded).
+const PRODUCTS: { id?: "set" | "fur"; label: string }[] = [
+  { label: "كل المنتجات" },
+  { id: "set", label: "👔 طقم" },
+  { id: "fur", label: "🧥 فروة" },
+];
+
 export function Inbox() {
   const params = useParams<{ customer?: string }>();
   const selected = params.customer;
   const [filter, setFilter] = useState<ConversationFilter>("all");
-  const [q, setQ] = useState("");
+  const [product, setProduct] = useState<"set" | "fur">();
+  const [q,setQ] = useState("");
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -44,6 +52,7 @@ export function Inbox() {
     placeholderData: keepPreviousData,
   });
   const more = (list.data?.length ?? 0) >= limit;
+  const shown = product ? list.data?.filter((c) => c.interest?.includes(product)) : list.data;
   const loadMore = () => {
     if (more && !list.isFetching) setLimit((l) => l + PAGE);
   };
@@ -79,6 +88,20 @@ export function Inbox() {
               </button>
             ))}
           </div>
+          <div className="flex gap-1 overflow-x-auto">
+            {PRODUCTS.map((p) => (
+              <button
+                key={p.label}
+                onClick={() => setProduct(p.id)}
+                className={clsx(
+                  "rounded-lg px-3 py-1 text-xs whitespace-nowrap",
+                  product === p.id ? "bg-primary text-white" : "bg-card-2 text-muted hover:text-fg",
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div
           className="min-h-0 flex-1 overflow-y-auto"
@@ -88,8 +111,8 @@ export function Inbox() {
           }}
         >
           <ErrorNote error={list.error} />
-          {list.data?.length === 0 && <Empty icon={InboxIcon} text="ما في محادثات هون." />}
-          {list.data?.map((c) => <Row key={c.customer} c={c} active={c.customer === selected} />)}
+          {shown?.length === 0 && <Empty icon={InboxIcon} text="ما في محادثات هون." />}
+          {shown?.map((c) => <Row key={c.customer} c={c} active={c.customer === selected} />)}
           {more && (
             <button onClick={loadMore} className="w-full py-3 text-sm text-muted hover:text-fg">
               {list.isFetching ? "عم نحمّل…" : "عرض محادثات أقدم"}
@@ -135,6 +158,8 @@ function Row({ c, active }: { c: ConversationSummary; active: boolean }) {
       <div className="flex flex-wrap gap-1">
         {channelOf(c.customer) !== "whatsapp" && <Badge tone="info">{CHANNEL_LABEL[channelOf(c.customer)]}</Badge>}
         {country(c.customer) && <Badge>{country(c.customer)}</Badge>}
+        {c.interest?.includes("set") && <Badge>👔 طقم</Badge>}
+        {c.interest?.includes("fur") && <Badge tone="warn">🧥 فروة</Badge>}
         {c.pausedUntil ? <Badge tone="warn">{pauseLabel(c.pauseReason)}</Badge> : <Badge tone="primary">المساعد</Badge>}
         {c.lastSource === "customer" && <Badge tone="info">بلا رد</Badge>}
       </div>

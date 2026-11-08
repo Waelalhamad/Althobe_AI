@@ -97,6 +97,8 @@ export type ConversationSummary = {
   lastSource: "customer" | "ai" | "staff";
   pausedUntil: number | null;
   pauseReason: string | null;
+  // Which product they're about: from their orders, the ad they came from, or their own words (empty: not known).
+  interest?: ("fur" | "set")[];
 };
 
 export type Message = {
