@@ -178,7 +178,11 @@ const ORDER_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
             type: "object",
             properties: {
               product: { type: "string", description: "Product name as in the knowledge documents (e.g. الثوب العربي)." },
-              color: { type: "string", description: "Color or model. Empty if the product has none." },
+              color: {
+                type: "string",
+                description:
+                  "Color or model, written exactly as in the stock or photo list. A model can be several colors in one piece (e.g. \"موديل 1 - أسود وبيج\"): that is ONE item, its full name here. Empty if the product has none.",
+              },
               size: { type: "string" },
               quantity: { type: "integer" },
             },
@@ -956,7 +960,8 @@ function orderProblems(order: CollectedOrder): string[] {
     ...order.items.flatMap((i, n) => [
       // A product sold in one size has none to ask.
       ...(String(i.size ?? "").trim() || !hasSizes(i.product) ? [] : [`Item ${n + 1} (${i.color || i.product}) has no size.`]),
-      ...(/[،,]|\sو\s?\S/.test(i.color ?? "") ? [`Item ${n + 1} has more than one color ("${i.color}"): each color is its own item with its own size.`] : []),
+      // Only for the set: another product's model can be several colors in one piece ("أسود وبيج").
+      ...(SET_NAME.test(i.product || "طقم") && /[،,]|\sو\s?\S/.test(i.color ?? "") ? [`Item ${n + 1} has more than one color ("${i.color}"): each color is its own item with its own size.`] : []),
     ]),
     ...twoSizesOneColor(order.items).map(
       (color) =>
