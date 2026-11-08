@@ -30,6 +30,7 @@ import {
   setSetting,
   teamPauseMinutes,
   PAYMENT_LABEL,
+  SET_NAME,
 } from "../store.js";
 import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
@@ -851,7 +852,9 @@ async function sendPhotos(customer: string, ids: string[]) {
   for (const id of ids) {
     const item = catalog.find((i) => i.id === id);
     if (!item) continue;
-    const wamid = await sendImage(customer, publicPhotoUrl(item));
+    // A product with models (not our set): its name on the photo ("موديل 1 - تطريز ذهبي"), so the customer can say which.
+    const caption = item.product?.trim() && !SET_NAME.test(item.product) ? item.name : "";
+    const wamid = await sendImage(customer, publicPhotoUrl(item), caption);
     saveMessage({
       customer,
       role: "business",
