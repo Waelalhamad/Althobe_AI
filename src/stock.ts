@@ -20,7 +20,7 @@ export function stockForPrompt(): string {
   const lines: string[] = [];
   for (const [product, colors] of products) {
     const oneSize = !hasSizes(product, rows);
-    lines.push(oneSize ? `${product} (ONE standard size: never ask the customer a size or their weight for it; size "ستاندرد" in submit_order):` : `${product}:`);
+    lines.push(oneSize ? `${product} (ONE standard size: never ask a size for it, never use the size table; ask the weight only if its knowledge document says so; size "ستاندرد" in submit_order):` : `${product}:`);
     for (const [color, sizes] of colors) {
       const left = sizes.filter((s) => s.quantity > 0).map((s) => s.size);
       const out = sizes.filter((s) => s.quantity <= 0).map((s) => s.size);
