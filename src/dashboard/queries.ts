@@ -462,8 +462,8 @@ export type DarbFilter = (typeof DARB_FILTERS)[number];
 const DARB_WHERE = {
   unsent: UNSENT,
   active:
-    "o.status != 'cancelled' AND o.darb_ref IS NOT NULL AND COALESCE(d.status, o.darb_status) IN ('pending', 'booked', 'processing', 'on-branch', 'delayed', 'released', 'resent')",
-  back: "(o.status = 'cancelled' OR COALESCE(d.status, o.darb_status) IN ('returning', 'returned', 'cancelled'))",
+    "o.status != 'cancelled' AND o.darb_ref IS NOT NULL AND COALESCE(d.status, o.darb_status) IN ('pending', 'booked', 'processing', 'on-branch', 'delayed', 'resent')",
+  back: "(o.status = 'cancelled' OR COALESCE(d.status, o.darb_status) IN ('returning', 'returned', 'released', 'cancelled'))",
   ...Object.fromEntries(DARB_STATUSES.map((s) => [s, `COALESCE(d.status, o.darb_status) = '${s}'`])),
   unpaid: "COALESCE(d.status, o.darb_status) = 'completed' AND d.paid_at IS NULL",
   paid: "d.paid_at IS NOT NULL",

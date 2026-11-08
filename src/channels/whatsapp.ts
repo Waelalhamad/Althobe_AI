@@ -50,7 +50,7 @@ const DARB_STATUS_AR: Record<string, string> = {
   resent: "انبعتت من جديد",
   delayed: "متأخرة",
   completed: "انسلمت",
-  released: "انسلمت",
+  released: "رجعت لعنا",
   returning: "راجعة",
   returned: "رجعت",
   cancelled: "ملغية",

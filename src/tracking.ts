@@ -37,8 +37,9 @@ const ORDER: Stage[] = ["sent", "in_city", "delivered"];
 // most shipments go from "processing" straight to the courier, never "on-branch".
 function stageOf(s: Pick<Candidate, "status" | "accepted_at" | "courier_phone" | "office_phone">): Stage | undefined {
   const status = s.status;
-  if (status === "completed" || status === "released") return "delivered";
-  if (["cancelled", "returning", "returned"].includes(status)) return undefined;
+  if (status === "completed") return "delivered";
+  // "released": the goods of a cancelled order were handed back to us.
+  if (["cancelled", "returning", "returned", "released"].includes(status)) return undefined;
   if (status === "on-branch") return "in_city";
   if (s.accepted_at && (s.courier_phone || s.office_phone)) return "in_city";
   return "sent";

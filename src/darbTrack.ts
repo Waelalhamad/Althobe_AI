@@ -110,7 +110,8 @@ export type MoneyStage = "paid" | "at_darb" | "on_way" | "returned" | "cancelled
 export function moneyStage(row: Pick<DarbShipmentRow, "status" | "paid_at">): MoneyStage {
   if (row.paid_at) return "paid";
   if (row.status === "completed") return "at_darb";
-  if (row.status === "returning" || row.status === "returned") return "returned";
+  // "released" is Darb's last step of a return: the goods were handed back to us (it always follows a cancel).
+  if (row.status === "returning" || row.status === "returned" || row.status === "released") return "returned";
   if (row.status === "cancelled") return "cancelled";
   return "on_way";
 }
@@ -302,7 +303,7 @@ function tell(changes: Change[], again: DarbShipmentRow[] = []) {
           `${pieces(row.id) ? `\n📦 ${esc(pieces(row.id))}` : ""}\n${esc(row.last_event)}${courierLines(row, "ملاحظة المندوب")}\n` +
           `قرّروا وين تروح: لزبون تاني بنفس المدينة ولا ترجع للمخزن${config.publicUrl ? `\n<a href="${config.publicUrl}/dashboard/stock">البضاعة الراجعة</a>` : ""}`,
       );
-    else if (row.status === "returned") notify("order", `📥 <b>البضاعة رجعت</b>: ${label(row)}${pieces(row.id) ? `\n📦 ${esc(pieces(row.id))}` : ""}`);
+    else if (row.status === "returned" || row.status === "released") notify("order", `📥 <b>البضاعة رجعت</b>: ${label(row)}${pieces(row.id) ? `\n📦 ${esc(pieces(row.id))}` : ""}`);
   }
   for (const row of again) notify("order", `⏳ <b>تأجّلت مرة تانية</b> (${delays(row)} مرات): ${label(row, true)}${courierLines(row)}`);
   const paid = changes.filter((c) => !c.before?.paid_at && c.row.paid_at);
@@ -320,7 +321,7 @@ export const TRACKING_STAGE: Record<string, string> = {
   "on-branch": "at the Darb office in the customer's city: the courier calls the customer before delivering",
   delayed: "delayed",
   completed: "delivered",
-  released: "delivered",
+  released: "returned to us (the order was cancelled)",
   returning: "being returned to us",
   returned: "returned to us",
   cancelled: "cancelled at Darb",
@@ -383,7 +384,7 @@ export function trackingNote(customer: string): string {
   const lines = [
     ...orders.map((o) =>
       o.shipment
-        ? `Order #${o.id}: ${describe({ ...o, status: o.darb })}.${o.darb === "completed" || o.darb === "released" ? "" : o.payment === "transfer" ? " Paid by bank transfer." : ` Pays ${o.total} cash on delivery.`}`
+        ? `Order #${o.id}: ${describe({ ...o, status: o.darb })}.${o.darb === "completed" ? "" : o.payment === "transfer" ? " Paid by bank transfer." : ` Pays ${o.total} cash on delivery.`}`
         : o.status === "delivered"
           ? `Order #${o.id}: delivered.`
           : `Order #${o.id}: ${o.status}, not sent to Darb Assabil yet (the team prepares and sends it).`,

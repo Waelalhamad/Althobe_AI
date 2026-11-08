@@ -17,7 +17,7 @@ export const DARB_STATUS: Record<string, string> = {
   returned: "راجعة",
   delayed: "مؤجل",
   processing: "تحت المعالجة",
-  released: "مكتمل",
+  released: "مكتمل (رجعت لعنا)",
   booked: "تم القبول",
   resent: "إعادة إرسال",
   returning: "راجع في الطريق",
