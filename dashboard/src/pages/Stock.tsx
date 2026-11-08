@@ -76,34 +76,46 @@ const same = (a: string, b: string) => {
   return n(a) === n(b);
 };
 
-// A color's (or model's) photo, from the product photos: the one with this product and this name. Without one, a
-// button adds it there (the assistant sends it to customers, and the team sees which model is which).
-function ColorPhoto({ product, color }: { product: string; color: string }) {
+// A color's (or model's) photos: the product photos with this product and this name, the same ones the assistant
+// sends to customers. Several per color; added here, they go to the product photos (and the other way round).
+function ColorPhotos({ product, color }: { product: string; color: string }) {
   const queryClient = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: api.catalog });
-  const photo = catalog.data?.find((c: CatalogItem) => same(c.product ?? "", product) && same(c.name, color));
+  const photos = catalog.data?.filter((c: CatalogItem) => same(c.product ?? "", product) && same(c.name, color)) ?? [];
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["catalog"] });
   const add = useMutation({
-    mutationFn: async (file: File) => {
-      const img = await prepareImage(file);
-      return api.addPhoto({ product: product.trim(), name: color, description: "", mime: img.mime, data: img.data });
+    // One after another, so the photo ids keep the order they were picked in.
+    mutationFn: async (files: File[]) => {
+      for (const file of files) {
+        const img = await prepareImage(file);
+        await api.addPhoto({ product: product.trim(), name: color, description: "", mime: img.mime, data: img.data });
+      }
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["catalog"] }),
+    onSettled: refresh,
   });
-  if (photo) {
-    return (
-      <a href={mediaUrl(photo.file)} target="_blank" rel="noreferrer" title={`صورة ${color} (من صور المنتجات)`}>
-        <img src={mediaUrl(photo.file)} alt={color} loading="lazy" className="size-10 rounded-lg object-cover" />
-      </a>
-    );
-  }
+  const remove = useMutation({ mutationFn: (id: string) => api.deletePhoto(id), onSuccess: refresh });
   return (
-    <>
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {photos.map((p) => (
+        <span key={p.id} className="group relative">
+          <a href={mediaUrl(p.file)} target="_blank" rel="noreferrer" title={`${color}: المساعد بيبعتها للزباين`}>
+            <img src={mediaUrl(p.file)} alt={color} loading="lazy" className="size-10 rounded-lg object-cover" />
+          </a>
+          <button
+            onClick={() => window.confirm(`نحذف هالصورة من صور ${color}؟ المساعد ما عاد يبعتها.`) && remove.mutate(p.id)}
+            className="absolute -end-1 -top-1 hidden size-4 place-items-center rounded-full bg-bad text-white group-hover:grid"
+            aria-label="احذف الصورة"
+          >
+            <X size={10} />
+          </button>
+        </span>
+      ))}
       <button
         onClick={() => input.current?.click()}
         disabled={!product.trim() || add.isPending}
         className={clsx("grid size-10 place-items-center rounded-lg border border-dashed text-muted hover:text-primary", add.isError ? "border-bad" : "border-line")}
-        title={product.trim() ? `ضيف صورة ${color}` : "اكتب اسم المنتج أول"}
+        title={product.trim() ? `ضيف صور ${color} (فيك تختار كذا صورة)` : "اكتب اسم المنتج أول"}
       >
         {add.isPending ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={16} />}
       </button>
@@ -111,14 +123,15 @@ function ColorPhoto({ product, color }: { product: string; color: string }) {
         ref={input}
         type="file"
         accept="image/jpeg,image/png,image/webp"
+        multiple
         hidden
         onChange={(e) => {
-          const file = e.target.files?.[0];
+          const files = [...(e.target.files ?? [])];
           e.target.value = "";
-          if (file) add.mutate(file);
+          if (files.length) add.mutate(files);
         }}
       />
-    </>
+    </span>
   );
 }
 
@@ -230,7 +243,7 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
                       <button onClick={() => change({ colors: d.colors.filter((c) => c !== color) })} className="text-muted hover:text-bad" aria-label={`شيل ${color}`}>
                         <X size={12} />
                       </button>
-                      <ColorPhoto product={d.product} color={color} />
+                      <ColorPhotos product={d.product} color={color} />
                       {color}
                     </span>
                   </td>

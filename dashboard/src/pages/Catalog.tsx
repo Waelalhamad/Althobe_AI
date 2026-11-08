@@ -58,17 +58,21 @@ export function Catalog() {
 
 function Uploader({ products, onDone }: { products: string[]; onDone: () => void }) {
   const input = useRef<HTMLInputElement>(null);
-  const [preview, setPreview] = useState<{ mime: string; data: string; dataUrl: string }>();
+  // Several photos of one color or model at once: they all get the same product, name and description.
+  const [previews, setPreviews] = useState<{ mime: string; data: string; dataUrl: string }[]>([]);
+  const preview = previews[0];
   const [product, setProduct] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<unknown>();
 
   const upload = useMutation({
-    mutationFn: () => api.addPhoto({ product, name, description, mime: preview!.mime, data: preview!.data }),
+    mutationFn: async () => {
+      for (const p of previews) await api.addPhoto({ product, name, description, mime: p.mime, data: p.data });
+    },
     onSuccess: () => {
       // Keep the product: several colors of the same product are usually uploaded one after another.
-      setPreview(undefined);
+      setPreviews([]);
       setName("");
       setDescription("");
       onDone();
@@ -83,7 +87,10 @@ function Uploader({ products, onDone }: { products: string[]; onDone: () => void
         className="grid aspect-square w-full shrink-0 place-items-center overflow-hidden rounded-xl border border-dashed border-line bg-card-2 text-muted hover:border-primary sm:w-48"
       >
         {preview ? (
-          <img src={preview.dataUrl} alt="" className="size-full object-cover" />
+          <span className="relative size-full">
+            <img src={preview.dataUrl} alt="" className="size-full object-cover" />
+            {previews.length > 1 && <span className="absolute bottom-2 start-2 rounded-lg bg-black/70 px-2 py-0.5 text-xs text-white">{previews.length} صور</span>}
+          </span>
         ) : (
           <span className="flex flex-col items-center gap-2 text-sm">
             <ImagePlus /> اختار صورة
@@ -94,15 +101,16 @@ function Uploader({ products, onDone }: { products: string[]; onDone: () => void
         ref={input}
         type="file"
         accept="image/*"
+        multiple
         hidden
         onChange={async (e) => {
-          const file = e.target.files?.[0];
+          const files = [...(e.target.files ?? [])];
           e.target.value = "";
-          if (!file) return;
+          if (!files.length) return;
           setError(undefined);
           try {
-            setPreview(await prepareImage(file));
-            if (!name) setName(file.name.replace(/\.[^.]+$/, ""));
+            setPreviews(await Promise.all(files.map((f) => prepareImage(f))));
+            if (!name) setName(files[0]!.name.replace(/\.[^.]+$/, ""));
           } catch (err) {
             setError(err);
           }
@@ -132,7 +140,7 @@ function Uploader({ products, onDone }: { products: string[]; onDone: () => void
         />
         <ErrorNote error={error ?? upload.error} />
         <Button disabled={!preview || !name.trim() || upload.isPending} className="self-start">
-          <Upload size={16} /> {upload.isPending ? "جاري الرفع…" : "رفع الصورة"}
+          <Upload size={16} /> {upload.isPending ? "جاري الرفع…" : previews.length > 1 ? `رفع ${previews.length} صور` : "رفع الصورة"}
         </Button>
       </form>
     </Card>
