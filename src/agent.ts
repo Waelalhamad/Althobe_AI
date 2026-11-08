@@ -177,7 +177,10 @@ const ORDER_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
           items: {
             type: "object",
             properties: {
-              product: { type: "string", description: "Product name as in the knowledge documents (e.g. الثوب العربي)." },
+              product: {
+                type: "string",
+                description: "Product name exactly as in the stock or photo list (e.g. طقم عربي ثلاث قطع): a product with several models has one name per model, write that model's full name.",
+              },
               color: {
                 type: "string",
                 description:

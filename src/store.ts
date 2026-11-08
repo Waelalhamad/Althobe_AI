@@ -501,14 +501,21 @@ export const SET_NAME = /طقم|ثوب|جلاب|جلبي|كلابي|سوري/;
 // The stock product an item's product name means. The name the AI writes can differ from the dashboard's
 // ("الثوب العربي" / "طقم عربي ثلاث قطع"): the same name, else the set by any of its names, else one name inside
 // the other. An item with no product is the only product kept, if there is one.
+const words = (t: string) => t.split(" ").map((w) => w.replace(/^ال(?=\S{3,})/, "")).filter(Boolean);
+const only = <T,>(xs: T[]) => (xs.length === 1 ? xs[0] : undefined);
+
 export function stockProductFor(name: string | undefined, rows = listStock()): string | undefined {
   const products = [...new Set(rows.map((r) => r.product))];
   const n = stockName(name ?? "");
-  if (!n) return products.length === 1 ? products[0] : undefined;
+  // No product named: our set (what every order was before other products), or the only product kept.
+  if (!n) return products.find((p) => SET_NAME.test(stockName(p))) ?? (products.length === 1 ? products[0] : undefined);
   return (
     products.find((p) => stockName(p) === n) ??
     (SET_NAME.test(n) ? products.find((p) => SET_NAME.test(stockName(p))) : undefined) ??
-    products.find((p) => stockName(p).includes(n) || n.includes(stockName(p))) ??
+    // Each word the AI wrote is in the product's name ("فروة شبك" → "فروة أبو شهري مطرز شبك"), or the other way:
+    // only when that points to ONE product (plain "فروة" fits all three models and finds none).
+    only(products.filter((p) => words(stockName(p)).every((w) => words(n).includes(w)))) ??
+    only(products.filter((p) => words(n).every((w) => words(stockName(p)).includes(w)))) ??
     (products.length === 1 ? products[0] : undefined)
   );
 }

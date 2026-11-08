@@ -82,10 +82,25 @@ export function catalogForPrompt(): string {
     const product = i.product?.trim() ?? "";
     groups.set(product, [...(groups.get(product) ?? []), i]);
   }
-  return [...groups]
-    .map(([product, photos]) => {
-      const lines = photos.map((i) => `- ${i.id}: ${i.name}${i.description ? ` — ${i.description}` : ""}`).join("\n");
-      return product ? `${product}:\n${lines}` : lines;
-    })
-    .join("\n\n");
+  // Several photos of one color (angles, the embroidery up close) on one line: the first one shows the color, the others
+  // are for a customer who wants to see it better.
+  const many = items.some((i) => items.filter((j) => j.product === i.product && j.name === i.name).length > 1);
+  return (
+    [...groups]
+      .map(([product, photos]) => {
+        const names = new Map<string, CatalogItem[]>();
+        for (const p of photos) names.set(p.name, [...(names.get(p.name) ?? []), p]);
+        const lines = [...names]
+          .map(([name, ps]) => {
+            const description = ps.find((p) => p.description)?.description;
+            return `- ${ps.map((p) => p.id).join(", ")}: ${name}${description ? ` — ${description}` : ""}`;
+          })
+          .join("\n");
+        return product ? `${product}:\n${lines}` : lines;
+      })
+      .join("\n\n") +
+    (many
+      ? "\n\nA line with several ids is several photos of the same color. To show the colors, send the FIRST id of each; send the others only when the customer wants to see that color better (closer, other angles)."
+      : "")
+  );
 }

@@ -852,8 +852,8 @@ async function sendPhotos(customer: string, ids: string[]) {
   for (const id of ids) {
     const item = catalog.find((i) => i.id === id);
     if (!item) continue;
-    // A product with models (not our set): its name on the photo ("موديل 1 - تطريز ذهبي"), so the customer can say which.
-    const caption = item.product?.trim() && !SET_NAME.test(item.product) ? item.name : "";
+    // A product other than our set: the product (model) and the color on the photo, so the customer can say which.
+    const caption = item.product?.trim() && !SET_NAME.test(item.product) ? `${item.product.trim()} - ${item.name}` : "";
     const wamid = await sendImage(customer, publicPhotoUrl(item), caption);
     saveMessage({
       customer,
