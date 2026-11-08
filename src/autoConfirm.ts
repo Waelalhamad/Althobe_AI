@@ -1,7 +1,7 @@
 import { addressGaps, libyanMobile, sizeForWeight, type CollectedOrder } from "./agent.js";
 import { darbZones, guessZone } from "./darb.js";
 import { missingStock } from "./stock.js";
-import { db } from "./store.js";
+import { db, hasSizes } from "./store.js";
 
 // Most AI orders are complete and plain: the team only re-checks them. Those are confirmed at once; the team
 // still sends them to Darb by hand. Returns why an order still needs the team (empty: confirm it).
@@ -12,16 +12,18 @@ export async function autoConfirmGaps(id: number, customer: string, order: Colle
   if (order.payment === "transfer") gaps.push("الدفع تحويل، بدو تأكد من وصول المبلغ");
 
   const quantity = order.items.reduce((n, i) => n + (Number(i.quantity) || 1), 0);
-  if (quantity > 3) gaps.push(`${quantity} أطقم`);
-  if (order.items.some((i) => !String(i.color ?? "").trim() || !String(i.size ?? "").trim())) gaps.push("لون أو مقاس ناقص");
+  if (quantity > 3) gaps.push(`${quantity} قطع`);
+  // Sizes (and the weight that picks them) only for products that come in sizes: the set, not a one-size product.
+  const sized = order.items.filter((i) => hasSizes(i.product));
+  if (sized.some((i) => !String(i.color ?? "").trim() || !String(i.size ?? "").trim())) gaps.push("لون أو مقاس ناقص");
   if (missingStock(order.items).length) gaps.push("مش موجود بالمخزون");
 
   // The size must be the one the size table gives for the weight the customer said.
-  if (!order.weightKg) gaps.push("ما في وزن");
-  else {
+  if (sized.length && !order.weightKg) gaps.push("ما في وزن");
+  else if (sized.length && order.weightKg) {
     const fits = sizeForWeight(order.weightKg);
     if (!fits) gaps.push(`الوزن ${order.weightKg} كغ أكبر من جدول المقاسات`);
-    else if (order.items.some((i) => String(i.size).trim() !== fits)) gaps.push(`الوزن ${order.weightKg} كغ بيجيه ${fits}، والمطلوب غيره`);
+    else if (sized.some((i) => String(i.size).trim() !== fits)) gaps.push(`الوزن ${order.weightKg} كغ بيجيه ${fits}، والمطلوب غيره`);
   }
   if (/مسؤولي|الفريق يحدد|الفريق يأكد|يتأكد/.test(order.notes)) gaps.push("بالملاحظات شي للفريق");
 

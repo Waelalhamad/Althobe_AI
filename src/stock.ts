@@ -1,5 +1,5 @@
 // Stock for the AI and the team: what is left per color and size, so nobody sells what we don't have.
-import { listStock, stockRowFor, whenStockRunsOut, type OrderItem, type StockRow } from "./store.js";
+import { hasSizes, listStock, stockRowFor, whenStockRunsOut, type OrderItem, type StockRow } from "./store.js";
 import { esc, notify } from "./telegram.js";
 
 // Telegram: a color/size just ran out.
@@ -19,7 +19,8 @@ export function stockForPrompt(): string {
   }
   const lines: string[] = [];
   for (const [product, colors] of products) {
-    lines.push(`${product}:`);
+    const oneSize = !hasSizes(product, rows);
+    lines.push(oneSize ? `${product} (ONE standard size: never ask the customer a size or their weight for it; size "ستاندرد" in submit_order):` : `${product}:`);
     for (const [color, sizes] of colors) {
       const left = sizes.filter((s) => s.quantity > 0).map((s) => s.size);
       const out = sizes.filter((s) => s.quantity <= 0).map((s) => s.size);

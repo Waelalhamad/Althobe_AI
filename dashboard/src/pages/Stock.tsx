@@ -222,6 +222,12 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
         <Button variant="ghost" onClick={addSizes} disabled={!newSizes.trim()}>
           <Plus size={16} /> مقاس
         </Button>
+        {/* A product in one size: the assistant asks no size and the weight table doesn't apply to it. */}
+        {d.sizes.length === 0 && (
+          <Button variant="ghost" onClick={() => change({ sizes: ["ستاندرد"] })} title="المنتج إلو مقاس واحد: المساعد ما بيسأل عن مقاس">
+            <Plus size={16} /> مقاس واحد (ستاندرد)
+          </Button>
+        )}
       </div>
       <p className="text-xs text-muted">
         الرقم هو الباقي للبيع: الطلبات يلي انسجلت انقصت منو. "+N بطلبات" يعني في N قطعة بطلبات لسا ما انبعتت (موجودة عندكن بس محجوزة)، فلما تعدّو

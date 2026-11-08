@@ -493,17 +493,47 @@ export function stockName(text: string): string {
     .replace(/\s+/g, " ");
 }
 
-// The stock row an ordered item counts against. The product name the AI writes can differ from the dashboard's
-// ("الثوب العربي" / "طقم عربي ثلاث قطع"): with one product kept in stock, every item is that product.
-// Undefined: that item isn't kept in stock.
-export function stockRowFor(item: OrderItem, rows = listStock()): StockRow | undefined {
+// Products sold in one size: the team writes "ستاندرد" as the size (or none) and no size is asked.
+export const ONE_SIZE = /^(?:ستاندرد|ستاندر|ستاندارد|standard|free ?size|فري ?سايز|مقاس واحد|واحد|-)?$/i;
+// Our set's names, as the AI and the team write them (it has sizes, from the weight table).
+export const SET_NAME = /طقم|ثوب|جلاب|جلبي|كلابي|سوري/;
+
+// The stock product an item's product name means. The name the AI writes can differ from the dashboard's
+// ("الثوب العربي" / "طقم عربي ثلاث قطع"): the same name, else the set by any of its names, else one name inside
+// the other. An item with no product is the only product kept, if there is one.
+export function stockProductFor(name: string | undefined, rows = listStock()): string | undefined {
   const products = [...new Set(rows.map((r) => r.product))];
-  const product = item.product?.trim()
-    ? (products.find((p) => stockName(p) === stockName(item.product!)) ?? (products.length === 1 ? products[0] : undefined))
-    : products.length === 1
-      ? products[0]
-      : undefined;
+  const n = stockName(name ?? "");
+  if (!n) return products.length === 1 ? products[0] : undefined;
+  return (
+    products.find((p) => stockName(p) === n) ??
+    (SET_NAME.test(n) ? products.find((p) => SET_NAME.test(stockName(p))) : undefined) ??
+    products.find((p) => stockName(p).includes(n) || n.includes(stockName(p))) ??
+    (products.length === 1 ? products[0] : undefined)
+  );
+}
+
+// Does this product come in sizes? The set (and an item with no product) does; another product only if its stock
+// has real sizes. A product that isn't the set and isn't kept in stock: one size.
+export function hasSizes(product: string | undefined, rows = listStock()): boolean {
+  const name = stockName(product ?? "");
+  if (!name || SET_NAME.test(name)) return true;
+  const kept = stockProductFor(product, rows);
+  if (!kept) return false;
+  if (SET_NAME.test(stockName(kept))) return true;
+  return rows.some((r) => r.product === kept && !ONE_SIZE.test(r.size.trim()));
+}
+
+// The stock row an ordered item counts against. Undefined: that item isn't kept in stock.
+export function stockRowFor(item: OrderItem, rows = listStock()): StockRow | undefined {
+  const product = stockProductFor(item.product, rows);
   if (!product) return undefined;
+  // A product in one size: the color's row, whatever the AI wrote as the size ("", "ستاندرد").
+  // And a product in one color too: its one row, whatever color was written.
+  if (!hasSizes(product, rows)) {
+    const own = rows.filter((r) => r.product === product);
+    return own.length === 1 ? own[0] : own.find((r) => stockName(r.color) === stockName(item.color));
+  }
   const size = stockName(item.size).replace(/\D/g, "") || stockName(item.size);
   return rows.find(
     (r) => r.product === product && stockName(r.color) === stockName(item.color) && (stockName(r.size).replace(/\D/g, "") || stockName(r.size)) === size,

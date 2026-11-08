@@ -5,7 +5,7 @@ import { catalogForPrompt, listCatalog, type CatalogItem } from "./catalog.js";
 import { fileAsDataUrl } from "./media.js";
 import { missingStock, stockForPrompt } from "./stock.js";
 import { intlPhone } from "./darb.js";
-import type { AiUsage, OrderItem, Payment } from "./store.js";
+import { hasSizes, ONE_SIZE, SET_NAME, type AiUsage, type OrderItem, type Payment } from "./store.js";
 
 // Created on first use, so the server can start (e.g. in listen-only mode) before OPENAI_API_KEY is set.
 let client: OpenAI | undefined;
@@ -78,7 +78,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - First answer every question in the customer's latest messages (e.g. "طريقة الدفع؟" → the payment options from the knowledge), then move on. Never skip a question to ask about color or size.
 - End almost every reply with ONE easy question that moves to the next step: the product's choices (color, size...) → name, phone and area → confirm. Never ask more than two things at once.
 - Assume the sale in a friendly way: "نحجزلك الفضي مقاس 58؟" is better than "هل تريد الطلب؟".
-- Size: if the customer doesn't know it, ask what the product's size guide needs (often weight and height). If there is no size guide, write their answers in the order notes, tell them naturally the team will confirm the right size, and keep going with the order.
+- Size: a product whose knowledge document (or stock list) says it comes in one size (standard) has none: never ask a size or the weight for it, and give size "ستاندرد" in submit_order. For a product with sizes, if the customer doesn't know it, ask what the product's size guide needs (often weight and height). If there is no size guide, write their answers in the order notes, tell them naturally the team will confirm the right size, and keep going with the order.
 - Weight: before the order summary we always know the customer's weight. If they picked their size themselves, ask once, lightly, with the next detail you need (e.g. "وكم وزنك تقريباً استاذ؟ باش نتأكدو المقاس يجي عليك 👌"). If the size guide gives another size for that weight, say kindly which one fits and let them choose; their choice wins. If the set is for someone else, ask that person's weight. Put the weight in submit_order's weight_kg and in the notes.
 - Price objection ("غالي", "في أرخص", "اعملي خصم"): stay warm and firm. Never offer, hint at or promise a discount, gift, free extra or "let me ask" about the price unless the knowledge says so, even if they push or haggle several times. Show the value in one or two short lines from the knowledge (what's included, quality, free delivery). If the price is fixed, say it kindly once (e.g. "السعر ثابت، وشامل التوصيل لباب بيتك") and move on to the next choice.
 - "نفكر" / "نشوف" / "بعدين": no pressure. One helpful line (photos, size help) and leave the door open ("على راحتك، اي وقت تبي تحجز احنا هنا 😊").
@@ -924,17 +924,25 @@ export function orderSummary(order: CollectedOrder): string {
   const items = order.items.length ? order.items : [{ product: "", color: "", size: "", quantity: 1 }];
   const one = items.length === 1;
   const count = items.reduce((n, i) => n + (Number(i.quantity) || 1), 0);
+  // Our set unless the items name another product; a one-size product has no size line.
+  const isSet = (i: OrderItem) => !i.product?.trim() || SET_NAME.test(i.product);
+  const products = [...new Set(items.map((i) => (isSet(i) ? "طقم عربي 3 قطع" : i.product!.trim())))];
+  const size = (i: OrderItem) => (ONE_SIZE.test(String(i.size ?? "").trim()) ? "" : String(i.size));
   return [
-    "المنتج: طقم عربي 3 قطع",
+    `المنتج: ${products.join(" + ")}`,
     ...(one
-      ? [items[0]!.color && `اللون: ${items[0]!.color}`, items[0]!.size && `المقاس: ${items[0]!.size}`]
-      : items.map((i) => `- ${[i.color, i.size && `مقاس ${i.size}`].filter(Boolean).join(" ")}${Number(i.quantity) > 1 ? ` × ${i.quantity}` : ""}`)),
+      ? [items[0]!.color && `اللون: ${items[0]!.color}`, size(items[0]!) && `المقاس: ${size(items[0]!)}`]
+      : items.map(
+          (i) =>
+            `- ${[products.length > 1 && (isSet(i) ? "طقم" : i.product), i.color, size(i) && `مقاس ${size(i)}`].filter(Boolean).join(" ")}${Number(i.quantity) > 1 ? ` × ${i.quantity}` : ""}`,
+        )),
     `العدد: ${count}`,
     order.name && `الاسم: ${order.name}`,
     order.phone && `الرقم: ${order.phone}`,
     (order.address || order.city) && `العنوان: ${order.address || order.city}`,
-    `الإجمالي: ${order.total || `${385 * count} دينار`} (شامل التوصيل)`,
-    order.payment === "transfer" ? "الدفع: تحويل مصرفي" : "الدفع: كاش عند الاستلام بعد ما تقيس",
+    // Without the total the model gave, only the set's price is known here.
+    (order.total || items.every(isSet)) && `الإجمالي: ${order.total || `${385 * count} دينار`} (شامل التوصيل)`,
+    order.payment === "transfer" ? "الدفع: تحويل مصرفي" : items.every(isSet) ? "الدفع: كاش عند الاستلام بعد ما تقيس" : "الدفع: كاش عند الاستلام",
     "نثبّتلك الطلب استاذ؟",
   ]
     .filter(Boolean)
@@ -946,7 +954,8 @@ function orderProblems(order: CollectedOrder): string[] {
   return [
     ...(libyanMobile(order.phone) ? [] : [`The phone "${order.phone}" is not a full Libyan mobile number (10 digits starting 091-095, or +218).`]),
     ...order.items.flatMap((i, n) => [
-      ...(String(i.size ?? "").trim() ? [] : [`Item ${n + 1} (${i.color || i.product}) has no size.`]),
+      // A product sold in one size has none to ask.
+      ...(String(i.size ?? "").trim() || !hasSizes(i.product) ? [] : [`Item ${n + 1} (${i.color || i.product}) has no size.`]),
       ...(/[،,]|\sو\s?\S/.test(i.color ?? "") ? [`Item ${n + 1} has more than one color ("${i.color}"): each color is its own item with its own size.`] : []),
     ]),
     ...twoSizesOneColor(order.items).map(
@@ -1012,6 +1021,7 @@ const thinksAloud = (text: string) => SELF_CORRECTION.test(text);
 // The price never goes alone: "free delivery, cash on delivery" with it, the reassurance our team chose
 // (not "try it before you pay", which brings orders that come back). A customer from the ad who didn't ask
 // the price gets the product and photos first: those buy more (7.8% against 4.4%, Oct 2026).
+// The set's price only: another product's delivery terms may differ, so its price is left as the knowledge says.
 const PRICE = /385|٣٨٥/;
 const PRICE_ASK = /(?<!\p{L})(?:ب?كم|ب?كام|ب?قداش|قديش|السعر|سعر\S*|بسعر|ثمن\S*|الثمن)(?!\p{L})|price|how much/iu;
 const CASH_ON_DELIVERY = /الاستلام|عند الوصول|تحويل/;
