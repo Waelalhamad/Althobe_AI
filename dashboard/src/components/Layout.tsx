@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import {
   Activity,
+  Ban,
   Banknote,
   BookOpen,
   Boxes,
@@ -42,6 +43,7 @@ const NAV: { title?: string; fold?: boolean; items: NavItem[] }[] = [
     items: [
       { href: "/stats", label: "أرقام البيع", icon: LayoutDashboard },
       { href: "/leads", label: "الزباين", icon: Users },
+      { href: "/blacklist", label: "القائمة السوداء", icon: Ban },
     ],
   },
   {

@@ -14,6 +14,7 @@ import { Knowledge } from "./pages/Knowledge";
 import { Catalog } from "./pages/Catalog";
 import { Orders } from "./pages/Orders";
 import { Money } from "./pages/Money";
+import { Blacklist } from "./pages/Blacklist";
 import { Leads } from "./pages/Leads";
 import { Stock } from "./pages/Stock";
 import { Supervisor } from "./pages/Supervisor";
@@ -50,6 +51,7 @@ function App() {
           <Route path="/inbox/:customer?" component={Inbox} />
           <Route path="/orders" component={Orders} />
           <Route path="/money" component={Money} />
+          <Route path="/blacklist" component={Blacklist} />
           <Route path="/leads" component={Leads} />
           <Route path="/stock" component={Stock} />
           <Route path="/supervisor" component={Supervisor} />

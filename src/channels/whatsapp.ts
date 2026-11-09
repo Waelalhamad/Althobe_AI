@@ -35,6 +35,7 @@ import {
 import { aiBlockedReason } from "../settings.js";
 import { log, scheduleReply } from "../scheduler.js";
 import { notifyHandoff, notifyOrder, orderOneLine } from "../orders.js";
+import { isBlacklisted, shouldAlert } from "../blacklist.js";
 import { customerLabel, dashboardLink, esc, notify, notifyError } from "../telegram.js";
 import { isMetaCustomer, metaSendImage, metaSendText, metaTyping } from "./meta.js";
 import { noteHandoff } from "../learning.js";
@@ -209,6 +210,12 @@ export function receiveCustomerMessage(message: IncomingMessage) {
   const blocked = aiBlockedReason(customer);
   if (blocked) {
     log(`wa:${customer}`, `customer wrote; ${blocked}, not replying`);
+    if (isBlacklisted(customer) && shouldAlert(customer)) {
+      void notify("handoff", `⛔ زبون في القائمة السوداء كتب: ${customerLabel(customer)}
+«${esc(text.slice(0, 200))}»
+المساعد ما رد، الفريق يقرر.
+${dashboardLink(`/inbox/${customer}`, "افتح المحادثة")}`);
+    }
     return;
   }
   if (isAiPaused(customer)) {

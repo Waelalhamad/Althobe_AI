@@ -19,6 +19,7 @@ import {
   validKnowledgeName,
   writeKnowledgeFile,
 } from "../knowledge.js";
+import { addToBlacklist, blacklistCandidates, blacklistMessage, listBlacklist, markNotified, removeFromBlacklist } from "../blacklist.js";
 import { log } from "../scheduler.js";
 import { missingStock } from "../stock.js";
 import { aiRepliesEnabled, channelRepliesEnabled, META_CHANNELS, setAiReplies, setChannelReplies, setTestNumbers, testNumbers } from "../settings.js";
@@ -494,6 +495,54 @@ dashboardApi.get("/darb/redirects", (_req, res) => darbRoute(res, () => redirect
 // Every shipment by status, as in Darb's app (the home page).
 dashboardApi.get("/darb/counts", (_req, res) => darbRoute(res, async () => queries.darbShipmentCounts()));
 // Customers who got the order summary and no order came of it (home page), and "not an order" on one of them.
+// The blacklist: the list, the suggested customers, adding, removing, and the message to the customer (only when the team presses send).
+dashboardApi.get("/blacklist", (_req, res) => {
+  res.json({ list: listBlacklist(), candidates: blacklistCandidates(), message: blacklistMessage("") });
+});
+
+dashboardApi.post("/blacklist", (req, res) => {
+  const customers: string[] = Array.isArray(req.body?.customers) ? req.body.customers.map(String) : req.body?.customer ? [String(req.body.customer)] : [];
+  if (customers.length === 0 || customers.length > 200) {
+    res.status(400).json({ error: "Send 1 to 200 customers" });
+    return;
+  }
+  for (const c of customers) addToBlacklist(c, String(req.body?.reason ?? ""));
+  log("dashboard", `blacklisted ${customers.length} customer(s)`);
+  res.json({ ok: true });
+});
+
+dashboardApi.delete("/blacklist/:customer", (req, res) => {
+  removeFromBlacklist(req.params.customer);
+  res.json({ ok: true });
+});
+
+// Sends the blacklist message to the chosen customers, one by one; reports the ones WhatsApp refused (e.g. outside its 24-hour window).
+dashboardApi.post("/blacklist/send", async (req, res) => {
+  const customers: string[] = Array.isArray(req.body?.customers) ? req.body.customers.map(String) : [];
+  if (customers.length === 0 || customers.length > 100 || !config.whatsapp.enabled) {
+    res.status(400).json({ error: "Choose 1 to 100 customers, and WhatsApp must be set up" });
+    return;
+  }
+  const listed = new Map(listBlacklist().map((b) => [b.customer, b]));
+  const sent: string[] = [];
+  const failed: { customer: string; error: string }[] = [];
+  for (const customer of customers) {
+    const row = listed.get(customer);
+    if (!row) {
+      failed.push({ customer, error: "not on the blacklist" });
+      continue;
+    }
+    try {
+      await sendTeamMessage(customer, blacklistMessage(row.name));
+      markNotified(customer);
+      sent.push(customer);
+    } catch (error) {
+      failed.push({ customer, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  res.json({ sent, failed });
+});
+
 dashboardApi.get("/almost-orders", (_req, res) => {
   res.json(almostOrders(7));
 });

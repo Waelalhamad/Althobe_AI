@@ -396,7 +396,15 @@ export type Decision =
 
 // --- Calls ------------------------------------------------------------------------------
 
+export type BlacklistRow = { customer: string; name: string; reason: string; addedAt: number; notifiedAt: number | null };
+export type BlacklistCandidate = { customer: string; name: string; phone: string; city: string; reason: string; orderId: number; amount: number; status: string };
+export type BlacklistView = { list: BlacklistRow[]; candidates: BlacklistCandidate[]; message: string };
+
 export const api = {
+  blacklist: () => request<BlacklistView>("/blacklist"),
+  addBlacklist: (customers: string[], reason: string) => post("/blacklist", { customers, reason }),
+  removeBlacklist: (customer: string) => request(`/blacklist/${encodeURIComponent(customer)}`, { method: "DELETE" }),
+  sendBlacklist: (customers: string[]) => post<{ sent: string[]; failed: { customer: string; error: string }[] }>("/blacklist/send", { customers }),
   login: (password: string) => post<{ ok: true }>("/login", { password }),
   logout: () => post<{ ok: true }>("/logout"),
   overview: (q: OverviewQuery) =>

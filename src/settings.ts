@@ -1,6 +1,7 @@
 // Settings the team can change from the dashboard without a redeploy.
 // A value saved in the dashboard wins over the environment variable.
 import { config } from "./config.js";
+import { isBlacklisted } from "./blacklist.js";
 import { channelOf, getSetting, setSetting, type Channel } from "./store.js";
 
 // AI_REPLIES: "on" = the AI answers customers, "off" = listen-only.
@@ -43,6 +44,7 @@ export function setTestNumbers(numbers: string[]) {
 
 // Should the AI answer this conversation right now? Explains why not, for the log.
 export function aiBlockedReason(customer?: string): string | undefined {
+  if (customer && isBlacklisted(customer)) return "blacklisted customer";
   if (!aiRepliesEnabled()) return "listen-only mode (AI replies are off)";
   if (customer && !channelRepliesEnabled(channelOf(customer))) return `listen-only on ${channelOf(customer)}`;
   const test = testNumbers();
