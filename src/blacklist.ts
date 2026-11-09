@@ -85,9 +85,9 @@ export function blacklistCandidates(): Candidate[] {
     if (seen.has(r.customer)) continue;
     let notes: string[] = [];
     try {
-      notes = (JSON.parse(r.timeline) as { type: string; remarks?: string }[])
-        .filter((t) => ["cancelled", "delayed"].includes(t.type) && t.remarks)
-        .map((t) => String(t.remarks).trim());
+      notes = (JSON.parse(r.timeline) as { type: string; note?: string; remarks?: string }[])
+        .filter((t) => ["cancelled", "delayed"].includes(t.type) && (t.note || t.remarks))
+        .map((t) => String(t.note || t.remarks).trim());
     } catch {
       /* a broken timeline is just no notes */
     }
