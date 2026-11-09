@@ -263,6 +263,7 @@ dashboardApi.get("/orders", (req, res) => {
     ...queries.orders({
       status,
       darb,
+      product: queries.PRODUCT_FILTERS.find((p) => p === req.query.product),
       contact: queries.CONTACT_FILTERS.find((c) => c === req.query.contact),
       payment: req.query.payment === "cash" || req.query.payment === "transfer" ? req.query.payment : undefined,
       source: req.query.source === "ai" || req.query.source === "team" ? req.query.source : undefined,

@@ -483,10 +483,20 @@ const CONTACT_WHERE: Record<ContactFilter, string> = {
   replied: `o.status = 'new' AND ${ASKED_AT} > 0 AND ${REPLIED_AT} IS NOT NULL`,
 };
 
+// Which product an order is for, from its items (an item with no product is the set): an order of both shows in both.
+export const PRODUCT_FILTERS = ["set", "fur"] as const;
+export type ProductFilter = (typeof PRODUCT_FILTERS)[number];
+const ITEM_PRODUCT = "COALESCE(json_extract(j.value, '$.product'), '')";
+const PRODUCT_WHERE: Record<ProductFilter, string> = {
+  fur: `EXISTS (SELECT 1 FROM json_each(o.items) j WHERE ${ITEM_PRODUCT} LIKE '%فرو%')`,
+  set: `(json_array_length(o.items) = 0 OR EXISTS (SELECT 1 FROM json_each(o.items) j WHERE ${ITEM_PRODUCT} NOT LIKE '%فرو%'))`,
+};
+
 export type OrdersQuery = {
   status?: string;
   contact?: ContactFilter;
   darb?: DarbFilter;
+  product?: ProductFilter;
   payment?: string; // "cash" | "transfer"
   source?: string; // "ai" | "team"
   q?: string; // name, phone, city, address, order #, Darb number
@@ -514,6 +524,7 @@ export function orders(opts: OrdersQuery) {
     params.push(opts.status);
   }
   if (opts.darb) where.push(DARB_WHERE[opts.darb]);
+  if (opts.product) where.push(PRODUCT_WHERE[opts.product]);
   if (opts.contact) where.push(CONTACT_WHERE[opts.contact]);
   if (opts.payment) {
     where.push("o.payment = ?");
@@ -537,6 +548,8 @@ export function orders(opts: OrdersQuery) {
   where.push(...dateWhere);
   params.push(...dateParams);
   const inDates = dateWhere.length ? dateWhere.join(" AND ") : "1";
+  // The counts on the chips follow the product too, so they match the list.
+  const inScope = opts.product ? `${inDates} AND ${PRODUCT_WHERE[opts.product]}` : inDates;
   const raw = opts.q?.trim() ?? "";
   const q = raw.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
   if (/^#\d+$/.test(q)) {
@@ -575,11 +588,11 @@ export function orders(opts: OrdersQuery) {
   const contactCounts = Object.fromEntries(
     CONTACT_FILTERS.map((c) => [
       c,
-      (db.prepare(`SELECT COUNT(*) AS n FROM orders o WHERE ${CONTACT_WHERE[c]} AND ${inDates}`).get(...dateParams) as { n: number }).n,
+      (db.prepare(`SELECT COUNT(*) AS n FROM orders o WHERE ${CONTACT_WHERE[c]} AND ${inScope}`).get(...dateParams) as { n: number }).n,
     ]),
   ) as Record<ContactFilter, number>;
   const counts = Object.fromEntries(
-    (db.prepare(`SELECT status, COUNT(*) AS n FROM orders o WHERE ${inDates} GROUP BY status`).all(...dateParams) as { status: string; n: number }[]).map(
+    (db.prepare(`SELECT status, COUNT(*) AS n FROM orders o WHERE ${inScope} GROUP BY status`).all(...dateParams) as { status: string; n: number }[]).map(
       (r) => [r.status, r.n],
     ),
   );
@@ -588,15 +601,19 @@ export function orders(opts: OrdersQuery) {
       f,
       (
         db
-          .prepare(`SELECT COUNT(*) AS n FROM orders o LEFT JOIN darb_shipments d ON d.id = o.darb_id WHERE ${DARB_WHERE[f]} AND ${inDates}`)
+          .prepare(`SELECT COUNT(*) AS n FROM orders o LEFT JOIN darb_shipments d ON d.id = o.darb_id WHERE ${DARB_WHERE[f]} AND ${inScope}`)
           .get(...dateParams) as { n: number }
       ).n,
     ]),
   ) as Record<DarbFilter, number>;
+  const productCounts = Object.fromEntries(
+    PRODUCT_FILTERS.map((p) => [p, (db.prepare(`SELECT COUNT(*) AS n FROM orders o WHERE ${PRODUCT_WHERE[p]} AND ${inDates}`).get(...dateParams) as { n: number }).n]),
+  ) as Record<ProductFilter, number>;
   return {
     counts,
     darbCounts,
     contactCounts,
+    productCounts,
     unsent: darbCounts.unsent,
     orders: rows.map((r) => ({ ...r, items: JSON.parse(r.items) as unknown })),
   };

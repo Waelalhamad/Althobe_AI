@@ -225,7 +225,7 @@ export type DarbFilter =
   | "unpaid"
   | "paid";
 // from / to: dashboard dates (YYYY-MM-DD, both included), when the order was made.
-export type OrderFilters = { status?: OrderStatus; darb?: DarbFilter; contact?: ContactFilter; payment?: Payment; source?: "ai" | "team"; q?: string; from?: string; to?: string };
+export type OrderFilters = { status?: OrderStatus; darb?: DarbFilter; product?: "set" | "fur"; contact?: ContactFilter; payment?: Payment; source?: "ai" | "team"; q?: string; from?: string; to?: string };
 
 export type DarbZone = { city: string; areas: string[] };
 export type DarbPreview = {
@@ -435,6 +435,7 @@ export const api = {
       counts: Partial<Record<OrderStatus, number>>;
       darbCounts: Record<DarbFilter, number>;
       contactCounts: Record<ContactFilter, number>;
+      productCounts: Record<"set" | "fur", number>;
       unsent: number;
       orders: Order[];
       darb: boolean;

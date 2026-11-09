@@ -114,6 +114,13 @@ const PLAIN_TABS: Tab[] = [
   ...STATUSES.map((s) => ({ id: s.id, label: s.label, hint: "", f: { status: s.id }, tone: s.tone, count: (d: OrdersData) => d.counts[s.id] ?? 0 })),
   { id: "all", label: "الكل", hint: "كل الطلبات.", f: {}, tone: "muted", count: () => 0 },
 ];
+// Which product the orders are for: the set and the fur apart.
+const PRODUCTS: { id?: "set" | "fur"; label: string }[] = [
+  { label: "كل المنتجات" },
+  { id: "set", label: "👔 الطقم" },
+  { id: "fur", label: "🧥 الفروة" },
+];
+
 const sameTab = (t: Tab, f: OrderFilters) => t.f.status === f.status && t.f.darb === f.darb;
 
 // The orders to confirm, by where the talk with the customer is (under the "بدها تأكيد" tab).
@@ -240,6 +247,14 @@ export function Orders() {
             </button>
           );
         })}
+      </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {PRODUCTS.map((p) => (
+          <button key={p.id ?? "all"} onClick={() => set({ product: p.id })} className={chip(f.product === p.id)}>
+            {p.label}
+            {p.id && <span className="num"> ({q.data?.productCounts?.[p.id] ?? 0})</span>}
+          </button>
+        ))}
       </div>
       {tab?.hint && <p className="mb-4 rounded-xl bg-card-2 px-4 py-2 text-sm text-muted">💡 {tab.hint}</p>}
       {f.status === "new" && !f.darb && (
