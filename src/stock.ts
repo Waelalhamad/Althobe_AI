@@ -7,6 +7,10 @@ whenStockRunsOut((row) => {
   notify("order", `📦 <b>خلص</b>: ${esc(row.product)} · ${esc(row.color)} · مقاس ${esc(row.size)} (الباقي ${row.quantity}). حدّث المخزون من اللوحة إذا وصل جديد.`);
 });
 
+// A color with this many pieces or fewer (all sizes) is almost gone: the AI stops showing it first. In Nov 2026 the
+// fur's silver had 3 pieces left and the AI kept sending its photo to every customer.
+const FEW_LEFT = 3;
+
 // The prompt section: per product, each color with the sizes still available. Empty when no stock is kept.
 export function stockForPrompt(): string {
   const rows = listStock();
@@ -24,9 +28,10 @@ export function stockForPrompt(): string {
     for (const [color, sizes] of colors) {
       const left = sizes.filter((s) => s.quantity > 0).map((s) => s.size);
       const out = sizes.filter((s) => s.quantity <= 0).map((s) => s.size);
+      const pieces = sizes.reduce((n, s) => n + Math.max(0, s.quantity), 0);
       lines.push(
         left.length
-          ? `- ${color}: available in ${left.join(", ")}${out.length ? ` (sold out: ${out.join(", ")})` : ""}`
+          ? `- ${color}: available in ${left.join(", ")}${out.length ? ` (sold out: ${out.join(", ")})` : ""}${pieces <= FEW_LEFT ? " — ONLY A FEW LEFT" : ""}`
           : `- ${color}: SOLD OUT in every size`,
       );
     }
@@ -37,6 +42,7 @@ export function stockForPrompt(): string {
 This list is the truth about what we have, above anything the knowledge documents say about availability. Never take an order for a color or size that isn't available here.
 - If the customer wants a color or size that is sold out, say kindly that exact color or size is finished right now (e.g. "البيج خلص حالياً استاذ", or for one size "مقاس 58 خلص بالأسود حالياً") and offer what we have in their size (other colors), or another size only if it would fit them. Never say how many pieces are left.
 - Don't send photos of a color that is sold out in every size, and don't offer it.
+- A color marked "ONLY A FEW LEFT" is almost gone: don't send its photo or name it when you show or list the colors yourself (show the others). If the customer asks for it, picks it from a photo or our ad names it, it is available: say so with "الكمية محدودة" in a few words (never the number) and carry on with their order.
 - Before calling submit_order, check every item against this list. If one is sold out (even when the summary was already sent and the customer confirmed), don't call submit_order: tell them kindly it just ran out and offer what we have in their size.
 - A color or size missing from this list isn't kept in stock here: answer from the knowledge documents.
 ${lines.join("\n")}`;

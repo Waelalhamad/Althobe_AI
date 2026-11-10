@@ -1,7 +1,8 @@
 // Customers who got the order summary but no order was saved after it: the customer answered something other than a
 // clear yes («تمم 56», «شكرا على حسن المعاملة», 👍 on «نثبتلك؟», "when my salary comes"), the assistant asked again and
 // the chat stopped. Nobody saw them: they aren't orders and the chat isn't with the team. The home page lists them,
-// and Telegram tells the team once about each one the customer answered.
+// and Telegram tells the team once about each one (answered, or quiet for 45 minutes), and about customers who sent
+// their phone number but never got to the summary.
 import { db } from "./store.js";
 import { customerLabel, dashboardLink, esc, notify } from "./telegram.js";
 import { log } from "./scheduler.js";
@@ -84,8 +85,13 @@ export function dismissAlmostOrder(customer: string, summaryAt: number) {
   ).run(customer, summaryAt, Date.now());
 }
 
-// Telegram, once per summary: the customer answered it (words or a reaction) at least 20 minutes ago, no order came
-// of it, and the team hasn't written since. Within a day of the summary: older ones are on the home page only.
+// Telegram, once per summary, for the sales team to call: no order came of it and the team hasn't written since.
+// - the customer answered it (words or a reaction) at least 20 minutes ago;
+// - or they went quiet on it for 45 minutes: two customers who had given name, phone and address never answered
+//   «نثبّتلك؟» and nobody called them (Nov 2026).
+// Within a day of the summary: older ones are on the home page only.
+const QUIET_MS = 45 * 60 * 1000;
+
 export function checkAlmostOrders() {
   const now = Date.now();
   const seen = db.prepare("SELECT 1 FROM almost_orders WHERE customer = ? AND summary_at = ? AND notified_at IS NOT NULL");
@@ -94,22 +100,76 @@ export function checkAlmostOrders() {
      ON CONFLICT (customer, summary_at) DO UPDATE SET notified_at = excluded.notified_at`,
   );
   for (const a of almostOrders(1)) {
-    if (!a.answered || a.teamWrote || !a.lastAt || now - a.lastAt < 20 * 60 * 1000 || seen.get(a.customer, a.summaryAt)) continue;
+    if (a.teamWrote || seen.get(a.customer, a.summaryAt)) continue;
+    const quiet = !a.answered;
+    if (quiet ? now - a.summaryAt < QUIET_MS : !a.lastAt || now - a.lastAt < 20 * 60 * 1000) continue;
     mark.run(a.customer, a.summaryAt, now);
-    log(`wa:${a.customer}`, "got the order summary, answered, and no order was saved: the team is told");
+    log(`wa:${a.customer}`, `got the order summary, ${quiet ? "went quiet" : "answered"}, and no order was saved: the team is told`);
     const link = a.customer.startsWith("cw:") ? "" : dashboardLink(`/inbox/${a.customer}`, "فتح المحادثة");
     void notify(
       "order",
       [
-        "🟠 <b>زبون وصل لملخص الطلب وما انحفظ طلب</b>",
+        quiet ? "📞 <b>زبون بعت كل معلوماته وسكت عند «نثبّتلك؟»</b>" : "🟠 <b>زبون وصل لملخص الطلب وما انحفظ طلب</b>",
         esc(customerLabel(a.customer)),
         esc([a.name, a.address, a.item, a.total].filter(Boolean).join(" · ")),
-        `آخر شي كتبو: «${esc(a.lastText.replace(/\s+/g, " ").slice(0, 160))}»`,
-        "شوفوا المحادثة: إذا موافق سجّلوا الطلب، وإذا لأ اضغطوا «مش طلب» بصفحة اليوم.",
+        quiet ? "ما رد على سؤال التثبيت. اتصلوا فيه وأكدوا، وإذا موافق سجّلوا الطلب." : `آخر شي كتبو: «${esc(a.lastText.replace(/\s+/g, " ").slice(0, 160))}»`,
+        quiet ? "" : "شوفوا المحادثة: إذا موافق سجّلوا الطلب، وإذا لأ اضغطوا «مش طلب» بصفحة اليوم.",
         link,
       ]
         .filter(Boolean)
         .join("\n"),
+    ).catch(() => {});
+  }
+  checkPhonesWithoutOrder(now, seen, mark);
+}
+
+// A Libyan mobile in what the customer wrote: 09[1-5] and 7 digits, or +218 9…, Arabic digits and spaces allowed.
+export function libyanMobileIn(text: string): string | undefined {
+  const plain = text
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/(?<=\d)[\s-](?=\d)/g, "");
+  const m = plain.match(/(?<!\d)(?:\+?218|00218|0)(9[1-5]\d{7})(?!\d)/);
+  return m ? `0${m[1]}` : undefined;
+}
+
+// The customer sent their phone number (often with their name and town) but never got to the summary: the assistant
+// asked something else again and they stopped. Once per chat a day, 45 minutes after, when no order or summary came.
+type Statement = ReturnType<typeof db.prepare>;
+function checkPhonesWithoutOrder(now: number, seen: Statement, mark: Statement) {
+  const rows = db
+    .prepare(
+      `SELECT m.customer, m.text, m.created_at AS at FROM messages m
+       WHERE m.role = 'customer' AND m.history = 0 AND m.created_at > ? AND m.created_at < ? AND m.customer NOT LIKE 'cw:%'
+         AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer = m.customer AND o.created_at > ?)
+         AND NOT EXISTS (SELECT 1 FROM messages s WHERE s.customer = m.customer AND s.history = 0 AND s.created_at > m.created_at - 600000
+                         AND (s.source = 'staff' OR (s.source = 'ai' AND s.text LIKE '%الإجمالي%' AND s.text LIKE '%الاسم%')))
+       ORDER BY m.id`,
+    )
+    .all(now - DAY, now - QUIET_MS, now - 14 * DAY) as { customer: string; text: string; at: number }[];
+  const told = new Set<string>();
+  for (const r of rows) {
+    if (told.has(r.customer)) continue;
+    const phone = libyanMobileIn(r.text);
+    if (!phone) continue;
+    told.add(r.customer);
+    const day = Math.floor(r.at / DAY) * DAY; // one alert per chat a day
+    if (seen.get(r.customer, -day)) continue;
+    // The customer may still be writing: wait until they've been quiet for a while.
+    const after = db
+      .prepare("SELECT MAX(created_at) AS at FROM messages WHERE customer = ? AND history = 0 AND role = 'customer'")
+      .get(r.customer) as { at: number };
+    if (now - after.at < QUIET_MS) continue;
+    mark.run(r.customer, -day, now);
+    log(`wa:${r.customer}`, "sent a phone number, no summary or order came of it: the team is told");
+    void notify(
+      "order",
+      [
+        "📞 <b>زبون بعت رقمه وما انسجّل طلب</b>",
+        esc(customerLabel(r.customer)),
+        `الرقم اللي بعتو: ${esc(phone)} · «${esc(r.text.replace(/\s+/g, " ").slice(0, 120))}»`,
+        "ما وصل لملخص الطلب. اتصلوا فيه وكمّلوا الطلب.",
+        dashboardLink(`/inbox/${r.customer}`, "فتح المحادثة"),
+      ].join("\n"),
     ).catch(() => {});
   }
 }

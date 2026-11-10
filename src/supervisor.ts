@@ -165,6 +165,29 @@ export function waitingCustomers(): Waiting[] {
       messages: first.n,
     });
   }
+  // Handed to the team by the AI: our last message is the AI's «حوّلتك للفريق», so the customer looks answered, but
+  // nobody of the team wrote since (they waited 3 to 10 hours, Nov 2026). They wait from the handoff.
+  const handedOff = db
+    .prepare(
+      `SELECT p.customer, (SELECT MAX(created_at) FROM ai_calls a WHERE a.customer = p.customer AND a.action = 'handoff') AS at
+       FROM pauses p WHERE p.reason LIKE 'AI handoff%' AND p.until > ?`,
+    )
+    .all(Date.now()) as { customer: string; at: number | null }[];
+  const lastFromCustomer = db.prepare(
+    "SELECT text FROM messages WHERE customer = ? AND role = 'customer' AND history = 0 ORDER BY id DESC LIMIT 1",
+  );
+  const teamSince = db.prepare("SELECT 1 FROM messages WHERE customer = ? AND source = 'staff' AND created_at > ? LIMIT 1");
+  for (const h of handedOff) {
+    if (!h.at || Date.now() - h.at > 48 * HOUR || waiting.some((w) => w.customer === h.customer) || teamSince.get(h.customer, h.at)) continue;
+    const last = lastFromCustomer.get(h.customer) as { text: string } | undefined;
+    waiting.push({
+      customer: h.customer,
+      since: h.at,
+      minutes: Math.round((Date.now() - h.at) / MINUTE),
+      lastText: `(محوّل للفريق) ${last?.text ?? ""}`.slice(0, 200),
+      messages: 1,
+    });
+  }
   return waiting.sort((a, b) => a.since - b.since);
 }
 

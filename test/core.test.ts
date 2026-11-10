@@ -116,3 +116,29 @@ test("a message that corrects itself is caught", async () => {
   assert.ok(!selfCorrects("لا استاذ، التوصيل مجاني لباب بيتك"));
   assert.ok(styleProblems("شن اللون اللي تريديه؟").some((p) => p.includes("تريديه")));
 });
+
+test("a phone number found inside what the customer wrote", async () => {
+  const { libyanMobileIn } = await import("../src/almostOrders.ts");
+  assert.equal(libyanMobileIn("عبدو الفرجاني0911398059"), "0911398059");
+  assert.equal(libyanMobileIn("رقمي ٠٩٢٣٢٦١١٤٩"), "0923261149");
+  assert.equal(libyanMobileIn("+218 94 456 9150 بنغازي"), "0944569150");
+  assert.equal(libyanMobileIn("الوزن 95 والطول 170"), undefined);
+  assert.equal(libyanMobileIn("09445691500"), undefined);
+});
+
+test("Dualhook's upstream failure is a passing send error", async () => {
+  const { isPassingSendError } = await import("../src/channels/whatsapp.ts");
+  assert.ok(isPassingSendError(404, '{"error":{"message":"Upstream request failed"}}'));
+  assert.ok(!isPassingSendError(400, '{"error":{"message":"Recipient phone number not in allowed list","code":131030}}'));
+});
+
+test("a color with only a few pieces left is marked for the AI", async () => {
+  const { stockForPrompt } = await import("../src/stock.ts");
+  const { db } = await import("../src/store.ts");
+  const put = db.prepare("INSERT OR REPLACE INTO stock (product, color, size, quantity, updated_at) VALUES (?, ?, ?, ?, 0)");
+  put.run("فروة تجربة", "فضي", "ستاندرد", 2);
+  put.run("فروة تجربة", "بني", "ستاندرد", 40);
+  const text = stockForPrompt();
+  assert.match(text, /- فضي: available in ستاندرد — ONLY A FEW LEFT/);
+  assert.doesNotMatch(text, /- بني: available in ستاندرد — ONLY A FEW LEFT/);
+});

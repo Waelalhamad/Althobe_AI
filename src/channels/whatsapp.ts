@@ -33,7 +33,7 @@ import {
   SET_NAME,
 } from "../store.js";
 import { aiBlockedReason } from "../settings.js";
-import { log, scheduleReply } from "../scheduler.js";
+import { log, replyPending, scheduleReply } from "../scheduler.js";
 import { notifyHandoff, notifyOrder, orderOneLine } from "../orders.js";
 import { isBlacklisted, shouldAlert } from "../blacklist.js";
 import { customerLabel, dashboardLink, esc, notify, notifyError } from "../telegram.js";
@@ -559,7 +559,9 @@ async function respond(customer: string) {
     }
     // The customer wrote again while the AI was thinking: this reply is already out of date (it would ask
     // for what they just gave). The new message scheduled another reply, which reads everything.
-    if (lastCustomerMessageId(customer) !== lastSeen) {
+    // Only when that new message has a reply of its own on the way: a reaction or a "تمام" schedules none, and
+    // dropping this reply left the customer with nothing (❤️ four seconds after «اي وريني», Nov 2026).
+    if (lastCustomerMessageId(customer) !== lastSeen && replyPending(key)) {
       log(key, "customer wrote again while the AI was thinking; reply superseded");
       return;
     }
@@ -883,10 +885,11 @@ function sendImage(to: string, link: string, caption = "") {
   return sendMessage(to, { type: "image", image: caption ? { link, caption } : { link } });
 }
 
-// Meta's passing failures: "(#131000) Something went wrong", "(#131016) Service unavailable", a 5xx or a 429.
+// Meta's passing failures: "(#131000) Something went wrong", "(#131016) Service unavailable", a 5xx or a 429,
+// and Dualhook's own "Upstream request failed" (a 404 when it couldn't reach Meta; the next message goes fine).
 // They usually pass in seconds, so the message is tried again before it counts as failed.
 export const isPassingSendError = (status: number, detail: string) =>
-  status >= 500 || status === 429 || /"code"\s*:\s*(131000|131016|130429|1|2)\b/.test(detail);
+  status >= 500 || status === 429 || /"code"\s*:\s*(131000|131016|130429|1|2)\b/.test(detail) || /Upstream request failed/i.test(detail);
 
 async function sendMessage(to: string, content: Record<string, unknown>): Promise<string | undefined> {
   const { url, headers } = sendEndpoint();
