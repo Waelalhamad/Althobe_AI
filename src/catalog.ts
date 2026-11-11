@@ -17,6 +17,14 @@ export type CatalogItem = {
 
 const INDEX = path.resolve(config.dataDir, "catalog", "catalog.json");
 
+// How a photo we sent is named in the chat ("[sent product photo: …]") and in its WhatsApp caption: with its model
+// when it isn't our set ("فروة أبو شهري مطرز شبك - بني"), so the AI knows which embroidery a customer means when they
+// point at a photo. The fur's 3 models share colors: "بني" alone didn't say which one (Nov 2026).
+export function photoLabel(item: CatalogItem, setName: RegExp): string {
+  const product = item.product?.trim();
+  return product && !setName.test(product) ? `${product} - ${item.name}` : item.name;
+}
+
 export function listCatalog(): CatalogItem[] {
   try {
     return JSON.parse(fs.readFileSync(INDEX, "utf8")) as CatalogItem[];

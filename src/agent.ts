@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { aiCostUsd, config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
-import { catalogForPrompt, listCatalog, type CatalogItem } from "./catalog.js";
+import { catalogForPrompt, listCatalog, photoLabel, type CatalogItem } from "./catalog.js";
 import { fileAsDataUrl } from "./media.js";
 import { missingStock, stockForPrompt } from "./stock.js";
 import { intlPhone } from "./darb.js";
@@ -69,6 +69,7 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 - A color is what the customer writes in words. A colored heart or emoji (🤎 in an ad's ready-made text) is not a color choice: never ask "تقصد البني؟" or assume a color from it.
 - Know which product each customer wants before you pitch, and keep to it for the whole chat: its own price, photos, questions and summary. Never mix two products' facts (one's price, sizes or colors for the other).
 - A customer message that starts with "[from the ad: ...]" came from that ad: read the ad's words (not our company name «شركة الثوب العربي», which is in every ad) and the customer wants the product they describe. Otherwise go by the photo they sent (its "[photo check: ...]" says which product), what they wrote (a product's name, or words only one product has, like a size number for a product with sizes), or what they chose earlier in the chat.
+- A customer message that starts with "[answering our message «…»]" was sent as a reply to that message of ours, and a reaction says which message it was on. When that message is "[sent product photo: <product> - <color>]", the customer is pointing at that photo («هذا», «بكم هذي», «نبي هذا»): they mean that product, model and color. Take it as their choice and don't ask again which model, embroidery or color.
 - Offers, prices, materials or delivery terms written in an ad are NOT ours unless the knowledge documents say them: old ads had offers that are over. If a customer asks for an ad's offer, say kindly it was an old offer and isn't on now, and give our price.
 - If we sell only one product, that's the one. If we sell several and it isn't clear which one they mean (a plain greeting, "بكم؟", the ad's ready-made question with no ad words): first ask in one short line which one they mean ("تسأل على الطقم العربي ولا الفروة المطرزة؟"), and nothing else: no price, no photos, no details of either product, even when they asked the price. Once they say which, give that product's price right away in the same reply as its opening. The same mid-chat: if both products came up and they ask the price, a color or a size without saying which, ask which one first; never guess (a guess gave a fur customer the set's price).
 - A color the customer's product doesn't come in is never a flat "not available": if that product has a close color, offer it by name and send that product's photo of it (see its document; a color the customer calls by another name, like رصاصي for the fur's فضي, is the same color: say it's available). Don't bring up another product that has the color: a customer who came for one product wants that product, and offering the other confuses them. Only if it's unclear which product they mean may you say which product has that color. Don't say "we'll tell you when it comes back" or promise stock.
@@ -434,7 +435,12 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
   const knownPhotos = new Set(listCatalog().map((p) => p.id));
   const photos: string[] = [];
   // Photos go once per chat: those sent before only again when the customer asks to see them (or names a color).
-  const sentBefore = new Set(listCatalog().filter((p) => context.sentPhotos?.includes(p.name)).map((p) => p.id));
+  // By the photo's label (with its model); chats from before Nov 2026 have the color name alone.
+  const sentBefore = new Set(
+    listCatalog()
+      .filter((p) => context.sentPhotos?.includes(photoLabel(p, SET_NAME)) || context.sentPhotos?.includes(p.name))
+      .map((p) => p.id),
+  );
   const againOk = asksForPhotos(history);
 
   // A reply the check rejects gets one rewrite with the reviewer's notes; then the better of the two is sent.

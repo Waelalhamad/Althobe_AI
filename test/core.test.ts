@@ -142,3 +142,12 @@ test("a color with only a few pieces left is marked for the AI", async () => {
   assert.match(text, /- فضي: available in ستاندرد — ONLY A FEW LEFT/);
   assert.doesNotMatch(text, /- بني: available in ستاندرد — ONLY A FEW LEFT/);
 });
+
+test("a photo we send is named with its model, except the set's", async () => {
+  const { photoLabel } = await import("../src/catalog.ts");
+  const { SET_NAME } = await import("../src/store.ts");
+  const item = { id: "p36", name: "بني", description: "", file: "", mime: "", createdAt: 0 };
+  assert.equal(photoLabel({ ...item, product: "فروة أبو شهري مطرز حلزون" }, SET_NAME), "فروة أبو شهري مطرز حلزون - بني");
+  assert.equal(photoLabel({ ...item, product: "الطقم العربي" }, SET_NAME), "بني");
+  assert.equal(photoLabel(item, SET_NAME), "بني");
+});

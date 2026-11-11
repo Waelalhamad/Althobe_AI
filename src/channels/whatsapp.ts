@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { config } from "../config.js";
 import { addressGaps, checkPhoto, decideReply, MAP_LINK, type ChatTurn, type CollectedOrder } from "../agent.js";
-import { listCatalog, publicPhotoUrl } from "../catalog.js";
+import { listCatalog, photoLabel, publicPhotoUrl } from "../catalog.js";
 import { downloadWhatsAppMedia, fileAsDataUrl, saveFile, transcribe } from "../media.js";
 import {
   attachMedia,
@@ -87,6 +87,8 @@ type WaMessage = {
   edit?: { original_message_id?: string; message?: Omit<WaMessage, "id"> };
   // An emoji on one of the messages in the chat (empty emoji = reaction removed).
   reaction?: { message_id?: string; emoji?: string };
+  // The customer swiped to answer one of the chat's messages (often a photo of ours: «هذا»): that message's id.
+  context?: { id?: string; from?: string };
   // Set when the customer tapped a click-to-WhatsApp ad: tells us which product they saw.
   referral?: { headline?: string; body?: string; source_url?: string; source_type?: string };
 };
@@ -158,6 +160,7 @@ function onCustomerMessage(message: WaMessage) {
     createdAt: toMs(message.timestamp),
     isText: message.type === "text",
     reaction: message.type === "reaction" ? { emoji: message.reaction?.emoji, messageId: message.reaction?.message_id } : undefined,
+    replyTo: message.context?.id,
     media: waMediaJob(message),
     mediaPrefix: adNote(message),
   });
@@ -172,6 +175,7 @@ export type IncomingMessage = {
   createdAt: number;
   isText?: boolean;
   reaction?: { emoji?: string; messageId?: string };
+  replyTo?: string; // the id of the chat message they answered
   media?: MediaJob;
   mediaPrefix?: string;
 };
@@ -192,6 +196,11 @@ export function receiveCustomerMessage(message: IncomingMessage) {
   } else if (message.isText && isAcknowledgement(text) && !weAskedSomething(customer)) {
     // "تمام" / "شكرا" to a message of ours that asked nothing: a seller doesn't answer it with another "تمام".
     needsReply = false;
+  }
+  // «هذا» / «بكم هذي» swiped on one of our photos: the AI must know which photo (model and color) they mean.
+  const repliedTo = !message.reaction && message.replyTo ? reactedMessage(customer, message.replyTo) : undefined;
+  if (repliedTo) {
+    text = `[answering ${repliedTo.role === "business" ? "our" : "their own"} message «${repliedTo.text.replace(/\s+/g, " ").slice(0, 200)}»] ${text}`;
   }
 
   const isNew = saveMessage({
@@ -861,14 +870,15 @@ async function sendPhotos(customer: string, ids: string[]) {
   for (const id of ids) {
     const item = catalog.find((i) => i.id === id);
     if (!item) continue;
-    // A product other than our set: the product (model) and the color on the photo, so the customer can say which.
-    const caption = item.product?.trim() && !SET_NAME.test(item.product) ? `${item.product.trim()} - ${item.name}` : "";
-    const wamid = await sendImage(customer, publicPhotoUrl(item), caption);
+    // A product other than our set: the product (model) and the color on the photo, so the customer can say which,
+    // and the chat keeps the model too, for the AI to know which one they point at later.
+    const label = photoLabel(item, SET_NAME);
+    const wamid = await sendImage(customer, publicPhotoUrl(item), label === item.name ? "" : label);
     saveMessage({
       customer,
       role: "business",
       source: "ai",
-      text: `[sent product photo: ${item.name}]`,
+      text: `[sent product photo: ${label}]`,
       wamid,
       media: { type: "image", file: item.file, mime: item.mime },
     });
