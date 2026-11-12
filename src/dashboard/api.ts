@@ -22,6 +22,7 @@ import {
 import { addToBlacklist, blacklistCandidates, blacklistMessage, listBlacklist, markNotified, removeFromBlacklist } from "../blacklist.js";
 import { log } from "../scheduler.js";
 import { missingStock } from "../stock.js";
+import { addCash, cashBalance, CASH_KINDS, listCash, listStaffStock, removeStaffStock, setStaffStock, staffStockLog } from "../staff.js";
 import { aiRepliesEnabled, channelRepliesEnabled, META_CHANNELS, setAiReplies, setChannelReplies, setTestNumbers, testNumbers } from "../settings.js";
 import {
   channelOf,
@@ -63,30 +64,42 @@ dashboardApi.use((req, res, next) =>
   (req.method === "POST" && (req.path === "/catalog" || req.path.startsWith("/playground") || req.path.endsWith("/send")) ? uploadJson : smallJson)(req, res, next),
 );
 
-// --- Login: a signed cookie that expires; changing DASHBOARD_PASSWORD logs everyone out. ---
+// --- Login: a signed cookie that expires; changing a password logs out whoever logged in with it. ---
+// Two passwords: DASHBOARD_PASSWORD opens everything; STAFF_PASSWORD (the Libya employee) opens only /staff and /me.
 
 const COOKIE = "dashboard_session";
 const SESSION_DAYS = 14;
+type Role = "admin" | "staff";
+const passwordOf = (role: Role) => (role === "admin" ? config.dashboard.password : config.dashboard.staffPassword);
 
 function signingKey(password: string) {
   return crypto.createHash("sha256").update(`dashboard-session:${password}`).digest();
 }
 
-function sign(expires: number, password: string) {
-  return crypto.createHmac("sha256", signingKey(password)).update(String(expires)).digest("base64url");
+// The team's cookie is "expires.signature" (as before there were two roles); the employee's is "staff.expires.signature".
+function sign(expires: number, password: string, role: Role) {
+  return crypto
+    .createHmac("sha256", signingKey(password))
+    .update(role === "admin" ? String(expires) : `staff:${expires}`)
+    .digest("base64url");
 }
 
-function validSession(req: express.Request, password: string): boolean {
+function sessionRole(req: express.Request): Role | undefined {
   const cookie = req.headers.cookie
     ?.split(";")
     .map((c) => c.trim())
     .find((c) => c.startsWith(`${COOKIE}=`))
     ?.slice(COOKIE.length + 1);
-  const [expires, signature] = cookie?.split(".") ?? [];
-  if (!expires || !signature || Number(expires) < Date.now()) return false;
-  const expected = sign(Number(expires), password);
-  return signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  const parts = cookie?.split(".") ?? [];
+  const role: Role = parts.length === 3 && parts[0] === "staff" ? "staff" : "admin";
+  const [expires, signature] = role === "staff" ? parts.slice(1) : parts;
+  const password = passwordOf(role);
+  if (!password || !expires || !signature || Number(expires) < Date.now()) return;
+  const expected = sign(Number(expires), password, role);
+  return signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected)) ? role : undefined;
 }
+
+export const roleOf = (res: express.Response): Role => (res.locals.role as Role | undefined) ?? "admin";
 
 function setSessionCookie(res: express.Response, value: string, maxAgeMs: number) {
   res.cookie(COOKIE, value, {
@@ -98,12 +111,18 @@ function setSessionCookie(res: express.Response, value: string, maxAgeMs: number
   });
 }
 
+const samePassword = (given: string, wanted: string | undefined) => {
+  if (!wanted) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(wanted);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+
 // Slow down password guessing: 10 wrong tries per IP, then wait 15 minutes.
 const failedLogins = new Map<string, { count: number; resetAt: number }>();
 
 dashboardApi.post("/login", (req, res) => {
-  const password = config.dashboard.password;
-  if (!password) {
+  if (!config.dashboard.password) {
     res.status(503).json({ error: "DASHBOARD_PASSWORD is not set on the server" });
     return;
   }
@@ -113,9 +132,13 @@ dashboardApi.post("/login", (req, res) => {
     res.status(429).json({ error: "Too many attempts, try again later" });
     return;
   }
-  const given = Buffer.from(String(req.body?.password ?? ""));
-  const wanted = Buffer.from(password);
-  if (given.length !== wanted.length || !crypto.timingSafeEqual(given, wanted)) {
+  const given = String(req.body?.password ?? "");
+  const role: Role | undefined = samePassword(given, config.dashboard.password)
+    ? "admin"
+    : samePassword(given, config.dashboard.staffPassword)
+      ? "staff"
+      : undefined;
+  if (!role) {
     const entry = failed && failed.resetAt > Date.now() ? failed : { count: 0, resetAt: Date.now() + 15 * 60 * 1000 };
     entry.count++;
     failedLogins.set(ip, entry);
@@ -125,8 +148,10 @@ dashboardApi.post("/login", (req, res) => {
   failedLogins.delete(ip);
   const maxAge = SESSION_DAYS * 24 * 60 * 60 * 1000;
   const expires = Date.now() + maxAge;
-  setSessionCookie(res, `${expires}.${sign(expires, password)}`, maxAge);
-  res.json({ ok: true });
+  const signature = sign(expires, passwordOf(role)!, role);
+  setSessionCookie(res, role === "staff" ? `staff.${expires}.${signature}` : `${expires}.${signature}`, maxAge);
+  if (role === "staff") log("dashboard", "the Libya employee logged in");
+  res.json({ ok: true, role });
 });
 
 dashboardApi.post("/logout", (_req, res) => {
@@ -135,16 +160,26 @@ dashboardApi.post("/logout", (_req, res) => {
 });
 
 dashboardApi.use((req, res, next) => {
-  const password = config.dashboard.password;
-  if (!password) {
+  if (!config.dashboard.password) {
     res.status(503).json({ error: "DASHBOARD_PASSWORD is not set on the server" });
     return;
   }
-  if (!validSession(req, password)) {
+  const role = sessionRole(req);
+  if (!role) {
     res.status(401).json({ error: "Not logged in" });
     return;
   }
+  // The employee reaches his own page only, whatever he types in the address bar.
+  if (role === "staff" && req.path !== "/me" && !req.path.startsWith("/staff/")) {
+    res.status(403).json({ error: "Not allowed" });
+    return;
+  }
+  res.locals.role = role;
   next();
+});
+
+dashboardApi.get("/me", (_req, res) => {
+  res.json({ role: roleOf(res) });
 });
 
 // --- Data ------------------------------------------------------------------------
@@ -1011,4 +1046,42 @@ dashboardApi.post("/playground/followup", async (req, res) => {
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
   }
+});
+
+// --- The Libya employee: his cash log and his own stock (he and the team both use these) ----------------------
+
+dashboardApi.get("/staff/cash", (req, res) => {
+  res.json({ balance: cashBalance(), kinds: CASH_KINDS, rows: listCash(intParam(req.query.limit, 100, 5000)) });
+});
+
+dashboardApi.post("/staff/cash", (req, res) => {
+  const saved = addCash(req.body ?? {}, roleOf(res));
+  if (typeof saved === "string") {
+    res.status(400).json({ error: saved });
+    return;
+  }
+  log("dashboard", `Libya cash ${saved.direction} ${saved.amount} (${saved.kind}) by ${saved.byRole}`);
+  res.json(saved);
+});
+
+dashboardApi.get("/staff/stock", (req, res) => {
+  res.json({ rows: listStaffStock(), log: staffStockLog(intParam(req.query.log, 50, 2000)) });
+});
+
+dashboardApi.put("/staff/stock", (req, res) => {
+  const error = setStaffStock(req.body ?? {}, roleOf(res));
+  if (error) {
+    res.status(400).json({ error });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+dashboardApi.post("/staff/stock/remove", (req, res) => {
+  const error = removeStaffStock(req.body ?? {}, roleOf(res));
+  if (error) {
+    res.status(400).json({ error });
+    return;
+  }
+  res.json({ ok: true });
 });

@@ -21,6 +21,8 @@ import { Supervisor } from "./pages/Supervisor";
 import { Playground } from "./pages/Playground";
 import { SettingsPage } from "./pages/Settings";
 import { Activity } from "./pages/Activity";
+import { Libya } from "./pages/Libya";
+import { StaffHome } from "./pages/Staff";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -32,16 +34,28 @@ const queryClient = new QueryClient({
   },
 });
 
+const loading = <div className="grid h-full place-items-center text-muted">جاري التحميل…</div>;
+
 function App() {
-  // The settings call doubles as the "am I logged in?" check.
+  // Who is logged in: the Libya employee gets his own page only (the server allows him nothing else).
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me, refetchInterval: 60_000 });
+  const err = me.error;
+  if (err instanceof ApiError && (err.status === 401 || err.status === 503)) {
+    return <Login notConfigured={err.status === 503} />;
+  }
+  if (me.isPending) return loading;
+  if (me.data?.role === "staff") return <StaffHome />;
+  return <TeamApp />;
+}
+
+function TeamApp() {
+  // The settings call doubles as the "am I still logged in?" check.
   const session = useQuery({ queryKey: ["settings"], queryFn: api.settings, refetchInterval: 15_000 });
   const err = session.error;
   if (err instanceof ApiError && (err.status === 401 || err.status === 503)) {
     return <Login notConfigured={err.status === 503} />;
   }
-  if (session.isPending) {
-    return <div className="grid h-full place-items-center text-muted">جاري التحميل…</div>;
-  }
+  if (session.isPending) return loading;
   return (
     <Router base="/dashboard">
       <Layout>
@@ -51,6 +65,7 @@ function App() {
           <Route path="/inbox/:customer?" component={Inbox} />
           <Route path="/orders" component={Orders} />
           <Route path="/money" component={Money} />
+          <Route path="/libya" component={Libya} />
           <Route path="/blacklist" component={Blacklist} />
           <Route path="/leads" component={Leads} />
           <Route path="/stock" component={Stock} />

@@ -27,6 +27,15 @@ const post = <T>(path: string, body?: unknown) => request<T>(path, { method: "PO
 
 // --- Types (match src/dashboard on the server) -------------------------------------
 
+// Who is logged in: the team (everything) or the Libya employee (his page only).
+export type Role = "admin" | "staff";
+
+// The Libya employee's cash log (Libyan dinars) and his own stock (src/staff.ts).
+export type CashRow = { id: number; direction: "in" | "out"; amount: number; kind: string; note: string; byRole: Role; at: number };
+export type StaffCash = { balance: number; kinds: { in: string[]; out: string[] }; rows: CashRow[] };
+export type StaffStockRow = { product: string; color: string; size: string; quantity: number; updatedAt: number };
+export type StaffStockLogRow = { id: number; product: string; color: string; size: string; before: number | null; after: number | null; byRole: Role; at: number };
+
 export type Totals = {
   conversations: number;
   newCustomers: number;
@@ -405,7 +414,14 @@ export const api = {
   addBlacklist: (customers: string[], reason: string) => post("/blacklist", { customers, reason }),
   removeBlacklist: (customer: string) => request(`/blacklist/${encodeURIComponent(customer)}`, { method: "DELETE" }),
   sendBlacklist: (customers: string[]) => post<{ sent: string[]; failed: { customer: string; error: string }[] }>("/blacklist/send", { customers }),
-  login: (password: string) => post<{ ok: true }>("/login", { password }),
+  login: (password: string) => post<{ ok: true; role: Role }>("/login", { password }),
+  me: () => request<{ role: Role }>("/me"),
+  staffCash: (limit = 100) => request<StaffCash>(`/staff/cash?limit=${limit}`),
+  addStaffCash: (line: { direction: "in" | "out"; amount: number; kind: string; note: string }) => post<CashRow>("/staff/cash", line),
+  staffStock: (log = 50) => request<{ rows: StaffStockRow[]; log: StaffStockLogRow[] }>(`/staff/stock?log=${log}`),
+  setStaffStock: (cell: { product: string; color: string; size: string; quantity: number }) =>
+    request<{ ok: true }>("/staff/stock", { method: "PUT", body: JSON.stringify(cell) }),
+  removeStaffStock: (what: { product: string; color?: string; size?: string }) => post<{ ok: true }>("/staff/stock/remove", what),
   logout: () => post<{ ok: true }>("/logout"),
   overview: (q: OverviewQuery) =>
     request<Overview>(

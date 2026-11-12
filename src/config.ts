@@ -126,6 +126,8 @@ export const config = {
   dashboard: {
     // Password for /dashboard. The dashboard stays locked while this is not set.
     password: process.env.DASHBOARD_PASSWORD?.trim() || undefined,
+    // Password of the Libya employee: it opens only his page (his cash and his stock), nothing else.
+    staffPassword: process.env.STAFF_PASSWORD?.trim() || undefined,
     // Clock used for "today", the daily charts and every hour set in the dashboard (working hours, reports):
     // the team's, in Syria (Damascus is UTC+3 all year). Libya is UTC+2.
     timezoneOffsetHours: Number(optional("DASHBOARD_TZ_OFFSET_HOURS", "3")),

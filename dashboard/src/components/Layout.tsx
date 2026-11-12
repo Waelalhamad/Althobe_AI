@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   ShoppingBag,
   Users,
+  Wallet,
   X,
 } from "lucide-react";
 import { api } from "../api";
@@ -36,6 +37,7 @@ const NAV: { title?: string; fold?: boolean; items: NavItem[] }[] = [
       { href: "/orders", label: "الطلبات", icon: ShoppingBag },
       { href: "/stock", label: "المخزون والراجع", icon: Boxes },
       { href: "/money", label: "الفلوس", icon: Banknote },
+      { href: "/libya", label: "موظف ليبيا", icon: Wallet },
     ],
   },
   {
