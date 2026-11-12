@@ -5,7 +5,7 @@ import clsx from "clsx";
 import { Boxes, LogOut, Wallet } from "lucide-react";
 import { api } from "../api";
 import { ErrorNote } from "../components/ui";
-import { CashButtons, CashList, lyd } from "../components/StaffCash";
+import { amount, CashButtons, CashList, lyd } from "../components/StaffCash";
 import { StaffStock } from "../components/StaffStock";
 
 export function useStaffCash(limit = 100) {
@@ -16,6 +16,12 @@ export function StaffHome() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"cash" | "stock">("cash");
   const cash = useStaffCash(50);
+  const dayStart = new Date().setHours(0, 0, 0, 0);
+  const todays = (cash.data?.rows ?? []).filter((r) => r.at >= dayStart && r.undoes === null && r.undoneBy === null);
+  const today = {
+    in: todays.filter((r) => r.direction === "in").reduce((n, r) => n + r.amount, 0),
+    out: todays.filter((r) => r.direction === "out").reduce((n, r) => n + r.amount, 0),
+  };
   const logout = async () => {
     await api.logout();
     queryClient.clear();
@@ -32,7 +38,7 @@ export function StaffHome() {
         </button>
       </header>
 
-      <main className="flex flex-1 flex-col gap-4 p-4 pb-24">
+      <main className="flex flex-1 flex-col gap-4 p-4 pb-28">
         {tab === "cash" ? (
           <>
             <ErrorNote error={cash.error} />
@@ -41,11 +47,16 @@ export function StaffHome() {
               <div className={clsx("num mt-1 text-4xl font-bold", (cash.data?.balance ?? 0) < 0 && "text-bad")}>
                 {cash.data ? lyd(cash.data.balance) : "…"}
               </div>
+              {(today.in > 0 || today.out > 0) && (
+                <div className="mt-2 text-sm text-muted">
+                  اليوم: <span className="num ltr text-ok">+{amount(today.in)}</span> · <span className="num ltr text-bad">−{amount(today.out)}</span>
+                </div>
+              )}
             </div>
             {cash.data && <CashButtons kinds={cash.data.kinds} />}
             <div className="glass rounded-2xl px-4">
               <h2 className="pt-4 font-semibold">آخر الحركات</h2>
-              <CashList rows={cash.data?.rows ?? []} />
+              <CashList rows={cash.data?.rows ?? []} mineOnly />
             </div>
           </>
         ) : (
@@ -53,7 +64,7 @@ export function StaffHome() {
         )}
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 border-t border-line bg-card">
+      <nav className="fixed inset-x-0 bottom-0 border-t border-line bg-card pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto grid max-w-md grid-cols-2">
           {(
             [

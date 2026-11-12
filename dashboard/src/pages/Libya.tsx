@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import { ArrowDownCircle, ArrowUpCircle, Boxes, HandCoins, Wallet } from "lucide-react";
-import { api } from "../api";
+import { api, type CashRow } from "../api";
 import { Badge, Card, ErrorNote, PageHeader, Stat } from "../components/ui";
 import { CashButtons, CashList, lyd } from "../components/StaffCash";
 import { StaffStock, useStaffStock } from "../components/StaffStock";
@@ -19,6 +19,7 @@ const PERIODS: { id: string; label: string; from: () => number }[] = [
   { id: "7", label: "آخر 7 أيام", from: () => Date.now() - 7 * DAY },
 ];
 const DARB = "درب السبيل";
+const counts = (r: CashRow) => r.undoes === null && r.undoneBy === null;
 
 export function Libya() {
   const [period, setPeriod] = useState("month");
@@ -30,7 +31,8 @@ export function Libya() {
   const c = cash.data;
 
   const inPeriod = useMemo(() => (c?.rows ?? []).filter((r) => r.at >= from), [c, from]);
-  const sum = (dir: "in" | "out", k?: string) => inPeriod.filter((r) => r.direction === dir && (!k || r.kind === k)).reduce((n, r) => n + r.amount, 0);
+  // Totals leave out a line that was undone and the correction that undid it (they cancel each other).
+  const sum = (dir: "in" | "out", k?: string) => inPeriod.filter((r) => counts(r) && r.direction === dir && (!k || r.kind === k)).reduce((n, r) => n + r.amount, 0);
   const shown = inPeriod.filter((r) => (!direction || r.direction === direction) && (!kind || r.kind === kind));
   const kinds = [...new Set(inPeriod.filter((r) => !direction || r.direction === direction).map((r) => r.kind))];
 
@@ -44,7 +46,7 @@ export function Libya() {
     retry: false,
   });
   const darbPaid = (money.data?.payouts ?? []).filter((p) => compareFrom !== undefined && p.at >= compareFrom).reduce((n, p) => n + p.amount, 0);
-  const darbLogged = (c?.rows ?? []).filter((r) => compareFrom !== undefined && r.at >= compareFrom && r.kind === DARB).reduce(
+  const darbLogged = (c?.rows ?? []).filter((r) => compareFrom !== undefined && r.at >= compareFrom && r.kind === DARB && counts(r)).reduce(
     (n, r) => n + (r.direction === "in" ? r.amount : -r.amount),
     0,
   );

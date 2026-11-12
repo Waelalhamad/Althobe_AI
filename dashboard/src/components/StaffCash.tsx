@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDownCircle, ArrowUpCircle, Wallet, X } from "lucide-react";
+import { ArrowDownCircle, ArrowUpCircle, Undo2, Wallet, X } from "lucide-react";
 import { api, type CashRow, type StaffCash } from "../api";
 import { Badge, Button, Empty, ErrorNote } from "./ui";
 import { time } from "../format";
@@ -39,7 +39,7 @@ export function CashButtons({ kinds }: { kinds: StaffCash["kinds"] }) {
           دفعت / سلّمت
         </button>
       </div>
-      {open && <CashForm direction={open} kinds={kinds[open]} onClose={() => setOpen(undefined)} />}
+      {open && <CashForm direction={open} kinds={kinds[open].filter((k) => k !== "تصحيح")} onClose={() => setOpen(undefined)} />}
     </>
   );
 }
@@ -59,14 +59,14 @@ function CashForm({ direction, kinds, onClose }: { direction: "in" | "out"; kind
   });
   const isIn = direction === "in";
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/60 sm:items-center" onClick={onClose}>
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
           if (value > 0 && kind) save.mutate();
         }}
-        className="flex w-full max-w-md flex-col gap-4 rounded-t-3xl bg-card p-5 pb-8 sm:rounded-3xl"
+        className="flex w-full max-w-md flex-col gap-4 rounded-t-3xl bg-card p-5 pb-[max(2rem,env(safe-area-inset-bottom))] sm:rounded-3xl"
       >
         <div className="flex items-center justify-between">
           <h2 className={clsx("text-xl font-bold", isIn ? "text-ok" : "text-bad")}>{isIn ? "استلمت مصاري" : "دفعت / سلّمت مصاري"}</h2>
@@ -106,42 +106,77 @@ function CashForm({ direction, kinds, onClose }: { direction: "in" | "out"; kind
         <input
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder={kind === "تصحيح" ? "شو الغلط يلي عم تصححو؟" : "ملاحظة (اختياري)"}
+          placeholder={isIn ? "ملاحظة: رقم التحويل، اسم الزبون… (اختياري)" : "ملاحظة: لمين، لشو… (اختياري)"}
           className="rounded-xl border border-line bg-card-2 px-4 py-3 outline-none focus:border-primary"
         />
         <ErrorNote error={save.error} />
         <Button disabled={!(value > 0) || !kind || save.isPending} className="py-4 text-lg">
           {save.isPending ? "جاري الحفظ…" : `احفظ ${value > 0 ? lyd(value) : ""}`}
         </Button>
-        <p className="text-center text-xs text-muted">الحركة ما بتنمسح. إذا غلطت، سجّل العكس ونوعها «تصحيح».</p>
+        <p className="text-center text-xs text-muted">الحركة ما بتنمسح. إذا غلطت، كبسة «اعكسها» جنبها بالسجل بتلغيها.</p>
       </form>
     </div>
   );
 }
 
-export function CashList({ rows, showWho }: { rows: CashRow[]; showWho?: boolean }) {
+// The log, newest first. «اعكسها» cancels a line with a correction (the line stays, crossed out).
+// mineOnly: the employee undoes only the lines he wrote (the team undoes any).
+export function CashList({ rows, showWho, mineOnly }: { rows: CashRow[]; showWho?: boolean; mineOnly?: boolean }) {
+  const queryClient = useQueryClient();
+  const undo = useMutation({
+    mutationFn: (id: number) => api.undoStaffCash(id),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ["staff-cash"] }),
+  });
   if (!rows.length) return <Empty icon={Wallet} text="لسا ما في حركات." />;
   return (
-    <ul className="flex flex-col divide-y divide-line">
-      {rows.map((r) => (
-        <li key={r.id} className="flex items-center gap-3 py-3">
-          <span className={clsx("grid size-9 shrink-0 place-items-center rounded-full", r.direction === "in" ? "bg-ok/15 text-ok" : "bg-bad/15 text-bad")}>
-            {r.direction === "in" ? <ArrowDownCircle size={18} /> : <ArrowUpCircle size={18} />}
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2 font-semibold">
-              {r.kind}
-              {showWho && r.byRole === "admin" && <Badge tone="info">الإدارة</Badge>}
-            </div>
-            {r.note && <div className="truncate text-sm text-muted">{r.note}</div>}
-            <div className="ltr text-end text-xs text-muted num">{time(r.at)}</div>
-          </div>
-          <span className={clsx("num shrink-0 text-lg font-bold", r.direction === "in" ? "text-ok" : "text-bad")}>
-            {r.direction === "in" ? "+" : "−"}
-            {amount(r.amount)}
-          </span>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ErrorNote error={undo.error} />
+      <ul className="flex flex-col divide-y divide-line">
+        {rows.map((r) => {
+          const undone = r.undoneBy !== null;
+          const correction = r.undoes !== null;
+          return (
+            <li key={r.id} className={clsx("flex items-center gap-3 py-3", undone && "opacity-50")}>
+              <span
+                className={clsx(
+                  "grid size-9 shrink-0 place-items-center rounded-full",
+                  correction ? "bg-card-2 text-muted" : r.direction === "in" ? "bg-ok/15 text-ok" : "bg-bad/15 text-bad",
+                )}
+              >
+                {correction ? <Undo2 size={18} /> : r.direction === "in" ? <ArrowDownCircle size={18} /> : <ArrowUpCircle size={18} />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2 font-semibold">
+                  <span className={clsx(undone && "line-through")}>{r.kind}</span>
+                  {undone && <Badge>انعكست</Badge>}
+                  {showWho && r.byRole === "admin" && <Badge tone="info">الإدارة</Badge>}
+                </div>
+                {r.note && <div className="break-words text-sm text-muted">{r.note}</div>}
+                <div className="num text-xs text-muted">
+                  <span className="ltr">{time(r.at)}</span>
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <span className={clsx("num ltr text-lg font-bold", r.direction === "in" ? "text-ok" : "text-bad", undone && "line-through")}>
+                  {r.direction === "in" ? "+" : "−"}
+                  {amount(r.amount)}
+                </span>
+                {!correction && !undone && (!mineOnly || r.byRole === "staff") && (
+                  <button
+                    onClick={() =>
+                      window.confirm(`نعكس «${r.kind}» ${lyd(r.amount)}؟ بتنسجل حركة تصحيح بعكسها والرصيد بيرجع متل قبلها.`) && undo.mutate(r.id)
+                    }
+                    disabled={undo.isPending}
+                    className="flex items-center gap-1 py-1 text-xs text-muted hover:text-bad"
+                  >
+                    <Undo2 size={12} /> اعكسها
+                  </button>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }

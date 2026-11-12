@@ -54,7 +54,7 @@ export function StaffStock() {
       ))}
       {!rows.length && !q.isLoading && <Empty icon={Boxes} text="لسا ما في بضاعة. ضيف أول صنف." />}
       {adding ? (
-        <AddForm products={products} defaultProduct={product} onDone={() => setAdding(false)} />
+        <AddForm rows={rows} defaultProduct={product} onDone={() => setAdding(false)} />
       ) : (
         <Button variant="ghost" onClick={() => setAdding(true)} className="py-3">
           <Plus size={18} /> ضيف صنف أو لون أو مقاس
@@ -158,7 +158,9 @@ function Cell({ row }: { row: StaffStockRow }) {
   );
 }
 
-function AddForm({ products, defaultProduct, onDone }: { products: string[]; defaultProduct?: string; onDone: () => void }) {
+// Adds new cells only: a color and size already there keep their count (change it with − / +).
+function AddForm({ rows, defaultProduct, onDone }: { rows: StaffStockRow[]; defaultProduct?: string; onDone: () => void }) {
+  const products = [...new Set(rows.map((r) => r.product))];
   const queryClient = useQueryClient();
   const [product, setProduct] = useState(defaultProduct ?? "");
   const [color, setColor] = useState("");
@@ -169,9 +171,14 @@ function AddForm({ products, defaultProduct, onDone }: { products: string[]; def
     .split(/[\s,،]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+  const sizesWanted = [...new Set(list.length ? list : ["ستاندرد"])];
+  const same = (a: string, b: string) => a.trim().replace(/\s+/g, " ") === b.trim().replace(/\s+/g, " ");
+  const existing = sizesWanted.filter((size) => rows.some((r) => same(r.product, product) && same(r.color, color) && same(r.size, size)));
+  const fresh = sizesWanted.filter((size) => !existing.includes(size));
+  const colorsOfProduct = [...new Set(rows.filter((r) => same(r.product, product)).map((r) => r.color))];
   const save = useMutation({
     mutationFn: async () => {
-      for (const size of list.length ? list : ["ستاندرد"]) {
+      for (const size of fresh) {
         await api.setStaffStock({ product: product.trim(), color: color.trim(), size, quantity: Number(quantity) || 0 });
       }
     },
@@ -184,7 +191,7 @@ function AddForm({ products, defaultProduct, onDone }: { products: string[]; def
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (product.trim() && color.trim()) save.mutate();
+        if (product.trim() && color.trim() && fresh.length) save.mutate();
       }}
       className="glass flex flex-col gap-3 rounded-2xl p-4"
     >
@@ -200,7 +207,12 @@ function AddForm({ products, defaultProduct, onDone }: { products: string[]; def
           <option key={p} value={p} />
         ))}
       </datalist>
-      <input value={color} onChange={(e) => setColor(e.target.value)} placeholder="اللون" className={inputClass} />
+      <input list="staff-colors" value={color} onChange={(e) => setColor(e.target.value)} placeholder="اللون" className={inputClass} />
+      <datalist id="staff-colors">
+        {colorsOfProduct.map((c) => (
+          <option key={c} value={c} />
+        ))}
+      </datalist>
       <input value={sizes} onChange={(e) => setSizes(e.target.value)} placeholder="المقاسات: 56 58 60 (فاضي = مقاس واحد)" className={inputClass} />
       <input
         inputMode="numeric"
@@ -209,8 +221,13 @@ function AddForm({ products, defaultProduct, onDone }: { products: string[]; def
         placeholder="العدد لكل مقاس (فيك تعدّلو بعدين)"
         className={clsx(inputClass, "num")}
       />
+      {existing.length > 0 && (
+        <p className="text-sm text-warn">
+          موجود قبل: <span className="num">{existing.join("، ")}</span>. عدّو بيضل متل ما هو (غيّرو بـ − و +).
+        </p>
+      )}
       <ErrorNote error={save.error} />
-      <Button disabled={!product.trim() || !color.trim() || save.isPending} className="py-3">
+      <Button disabled={!product.trim() || !color.trim() || !fresh.length || save.isPending} className="py-3">
         {save.isPending ? "جاري الحفظ…" : "ضيف"}
       </Button>
     </form>

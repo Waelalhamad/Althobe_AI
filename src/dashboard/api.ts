@@ -22,7 +22,7 @@ import {
 import { addToBlacklist, blacklistCandidates, blacklistMessage, listBlacklist, markNotified, removeFromBlacklist } from "../blacklist.js";
 import { log } from "../scheduler.js";
 import { missingStock } from "../stock.js";
-import { addCash, cashBalance, CASH_KINDS, listCash, listStaffStock, removeStaffStock, setStaffStock, staffStockLog } from "../staff.js";
+import { addCash, cashBalance, CASH_KINDS, listCash, listStaffStock, removeStaffStock, setStaffStock, staffStockLog, undoCash } from "../staff.js";
 import { aiRepliesEnabled, channelRepliesEnabled, META_CHANNELS, setAiReplies, setChannelReplies, setTestNumbers, testNumbers } from "../settings.js";
 import {
   channelOf,
@@ -1061,6 +1061,16 @@ dashboardApi.post("/staff/cash", (req, res) => {
     return;
   }
   log("dashboard", `Libya cash ${saved.direction} ${saved.amount} (${saved.kind}) by ${saved.byRole}`);
+  res.json(saved);
+});
+
+dashboardApi.post("/staff/cash/:id/undo", (req, res) => {
+  const saved = undoCash(Number(req.params.id), roleOf(res));
+  if (typeof saved === "string") {
+    res.status(400).json({ error: saved });
+    return;
+  }
+  log("dashboard", `Libya cash line ${req.params.id} undone by ${saved.byRole}`);
   res.json(saved);
 });
 

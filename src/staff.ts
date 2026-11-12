@@ -1,6 +1,7 @@
 // The Libya employee: his cash (a log of money in and out, the balance is their sum) and his own stock count.
 // His stock is his alone: the AI, the orders and the team's stock page never read or change it.
 import { db } from "./store.js";
+import { esc, notify } from "./telegram.js";
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS staff_cash (
@@ -31,6 +32,10 @@ db.exec(`
     at          INTEGER NOT NULL
   );
 `);
+// A correction made with «اعكسها» points at the line it undoes (each line can be undone once).
+if (!(db.prepare("PRAGMA table_info(staff_cash)").all() as { name: string }[]).some((c) => c.name === "undoes")) {
+  db.exec("ALTER TABLE staff_cash ADD COLUMN undoes INTEGER");
+}
 
 export type Role = "staff" | "admin";
 
@@ -40,17 +45,53 @@ export const CASH_KINDS = {
   out: ["تحويل للشركة", "مصروف", "راتب", "تصحيح", "غيره"],
 } as const;
 
-export type CashRow = { id: number; direction: "in" | "out"; amount: number; kind: string; note: string; byRole: Role; at: number };
+// undoes: the line this correction cancels; undoneBy: the correction that cancelled this line.
+export type CashRow = {
+  id: number;
+  direction: "in" | "out";
+  amount: number;
+  kind: string;
+  note: string;
+  byRole: Role;
+  at: number;
+  undoes: number | null;
+  undoneBy: number | null;
+};
 
 export function cashBalance(): number {
   const r = db.prepare("SELECT COALESCE(SUM(CASE direction WHEN 'in' THEN amount ELSE -amount END), 0) AS b FROM staff_cash").get() as { b: number };
   return r.b;
 }
 
+const SELECT_CASH = `SELECT c.id, c.direction, c.amount, c.kind, c.note, c.by_role AS byRole, c.at, c.undoes,
+  (SELECT u.id FROM staff_cash u WHERE u.undoes = c.id) AS undoneBy FROM staff_cash c`;
+
 export function listCash(limit: number): CashRow[] {
-  return db
-    .prepare("SELECT id, direction, amount, kind, note, by_role AS byRole, at FROM staff_cash ORDER BY at DESC, id DESC LIMIT ?")
-    .all(limit) as CashRow[];
+  return db.prepare(`${SELECT_CASH} ORDER BY c.at DESC, c.id DESC LIMIT ?`).all(limit) as CashRow[];
+}
+
+const DIRECTION = { in: "استلم", out: "دفع" } as const;
+
+// The team hears of every line the employee writes (lines the team writes itself aren't announced).
+function announce(row: CashRow) {
+  if (row.byRole !== "staff") return;
+  const sign = row.direction === "in" ? "➕" : "➖";
+  notify(
+    "staff",
+    `💵 <b>موظف ليبيا ${DIRECTION[row.direction]}</b> ${sign} ${row.amount} د.ل · ${esc(row.kind)}${row.note ? `
+${esc(row.note)}` : ""}
+معو هلق: <b>${Math.round(cashBalance() * 1000) / 1000} د.ل</b>`,
+  );
+}
+
+function insert(direction: "in" | "out", amount: number, kind: string, note: string, by: Role, undoes: number | null): CashRow {
+  const at = Date.now();
+  const r = db
+    .prepare("INSERT INTO staff_cash (direction, amount, kind, note, by_role, at, undoes) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(direction, amount, kind, note, by, at, undoes);
+  const row: CashRow = { id: Number(r.lastInsertRowid), direction, amount, kind, note, byRole: by, at, undoes, undoneBy: null };
+  announce(row);
+  return row;
 }
 
 // Checks the line and saves it; returns an error in Arabic for the screen, or the saved row.
@@ -62,11 +103,23 @@ export function addCash(input: { direction?: unknown; amount?: unknown; kind?: u
   const kind = String(input.kind ?? "");
   if (!(CASH_KINDS[direction] as readonly string[]).includes(kind)) return "اختار النوع";
   const note = String(input.note ?? "").trim().slice(0, 500);
-  const at = Date.now();
-  const r = db
-    .prepare("INSERT INTO staff_cash (direction, amount, kind, note, by_role, at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(direction, amount, kind, note, by, at);
-  return { id: Number(r.lastInsertRowid), direction, amount, kind, note, byRole: by, at };
+  // A double tap on a slow connection: the same line again within half a minute is saved once.
+  const twin = db
+    .prepare("SELECT id FROM staff_cash WHERE direction = ? AND amount = ? AND kind = ? AND note = ? AND by_role = ? AND at > ?")
+    .get(direction, amount, kind, note, by, Date.now() - 30_000);
+  if (twin) return "هالحركة انسجلت هلق، شوفها بالسجل";
+  return insert(direction, amount, kind, note, by, null);
+}
+
+// Cancels a line with the opposite one (kind «تصحيح»), never by deleting it.
+export function undoCash(id: number, by: Role): CashRow | string {
+  const row = db.prepare(`${SELECT_CASH} WHERE c.id = ?`).get(id) as CashRow | undefined;
+  if (!row) return "الحركة مو موجودة";
+  if (by === "staff" && row.byRole !== "staff") return "هاي الحركة سجّلتها الإدارة، بس هي بتعكسها";
+  if (row.undoes !== null) return "هاي حركة تصحيح، ما بتنعكس";
+  if (row.undoneBy !== null) return "هالحركة انعكست قبل";
+  const back = row.direction === "in" ? "out" : "in";
+  return insert(back, row.amount, "تصحيح", `عكس «${row.kind}» ${row.amount} د.ل${row.note ? `: ${row.note}` : ""}`.slice(0, 500), by, row.id);
 }
 
 // --- His stock ---------------------------------------------------------------------

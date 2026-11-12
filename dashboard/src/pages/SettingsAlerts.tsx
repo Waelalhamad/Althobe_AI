@@ -14,6 +14,7 @@ const NOTIFY_LABELS: Record<NotifyKind, string> = {
   supervisor: "تنبيهات المشرف (زبون ناطر، طلب ما تأكد، ملاحظات مهمة)",
   report: "التقرير اليومي",
   sheet: "شيت الطلبات اليومي (ملف Excel)",
+  staff: "صندوق موظف ليبيا (كل حركة بيسجّلها)",
 };
 
 export function TelegramCard() {

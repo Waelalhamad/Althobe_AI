@@ -31,7 +31,18 @@ const post = <T>(path: string, body?: unknown) => request<T>(path, { method: "PO
 export type Role = "admin" | "staff";
 
 // The Libya employee's cash log (Libyan dinars) and his own stock (src/staff.ts).
-export type CashRow = { id: number; direction: "in" | "out"; amount: number; kind: string; note: string; byRole: Role; at: number };
+// undoes: the line this correction cancels; undoneBy: the correction that cancelled this line.
+export type CashRow = {
+  id: number;
+  direction: "in" | "out";
+  amount: number;
+  kind: string;
+  note: string;
+  byRole: Role;
+  at: number;
+  undoes: number | null;
+  undoneBy: number | null;
+};
 export type StaffCash = { balance: number; kinds: { in: string[]; out: string[] }; rows: CashRow[] };
 export type StaffStockRow = { product: string; color: string; size: string; quantity: number; updatedAt: number };
 export type StaffStockLogRow = { id: number; product: string; color: string; size: string; before: number | null; after: number | null; byRole: Role; at: number };
@@ -417,6 +428,7 @@ export const api = {
   login: (password: string) => post<{ ok: true; role: Role }>("/login", { password }),
   me: () => request<{ role: Role }>("/me"),
   staffCash: (limit = 100) => request<StaffCash>(`/staff/cash?limit=${limit}`),
+  undoStaffCash: (id: number) => post<CashRow>(`/staff/cash/${id}/undo`),
   addStaffCash: (line: { direction: "in" | "out"; amount: number; kind: string; note: string }) => post<CashRow>("/staff/cash", line),
   staffStock: (log = 50) => request<{ rows: StaffStockRow[]; log: StaffStockLogRow[] }>(`/staff/stock?log=${log}`),
   setStaffStock: (cell: { product: string; color: string; size: string; quantity: number }) =>
@@ -539,7 +551,7 @@ export type FollowUpView = {
 
 // --- Telegram + supervisor -----------------------------------------------------------------
 
-export type NotifyKind = "order" | "handoff" | "lesson" | "error" | "supervisor" | "report" | "sheet";
+export type NotifyKind = "order" | "handoff" | "lesson" | "error" | "supervisor" | "report" | "sheet" | "staff";
 export type TelegramChat = { id: number; title?: string; type: string; username?: string };
 export type TelegramStatus = {
   tokenSet: boolean;
