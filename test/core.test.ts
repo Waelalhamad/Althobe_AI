@@ -151,3 +151,14 @@ test("a photo we send is named with its model, except the set's", async () => {
   assert.equal(photoLabel({ ...item, product: "الطقم العربي" }, SET_NAME), "بني");
   assert.equal(photoLabel(item, SET_NAME), "بني");
 });
+
+test("an order for the set in a chat about the fur only is caught", async () => {
+  const { wrongProduct } = await import("../src/agent.ts");
+  const set = [{ product: "طقم عربي ثلاث قطع", color: "أسود", size: "56", quantity: 1 }];
+  const fur = [{ product: "فروة أبو شهري مطرز حلزون", color: "أسود", size: "ستاندرد", quantity: 1 }];
+  assert.equal(wrongProduct(set, { fur: true, set: false }).length, 1);
+  assert.equal(wrongProduct(fur, { fur: true, set: false }).length, 0);
+  assert.equal(wrongProduct(set, { fur: true, set: true }).length, 0);
+  assert.equal(wrongProduct(fur, { fur: false, set: true }).length, 1);
+  assert.equal(wrongProduct(set, undefined).length, 0);
+});

@@ -412,6 +412,42 @@ async function waitForMedia(customer: string) {
 }
 
 // History for the AI, with the customer's recent photos attached.
+// What the customer came for, in words only one product has: from what they wrote and the ad they came from
+// (not our company name «الثوب العربي», which is in every ad). For checking an order against the chat.
+const FUR_WORDS = /فرو/;
+const SET_WORDS = /طقم|جلاب|جلبي|سديري|سروال|فرمل/;
+export function chatProducts(customer: string): { fur: boolean; set: boolean } {
+  const rows = db
+    .prepare("SELECT text FROM messages WHERE customer = ? AND role = 'customer' AND history = 0 AND created_at > ?")
+    .all(customer, Date.now() - 7 * 24 * 3_600_000) as { text: string }[];
+  const said = rows.map((r) => r.text.replace(/الثوب العربي/g, "")).join("\n");
+  return { fur: FUR_WORDS.test(said), set: SET_WORDS.test(said) };
+}
+
+// The AI sees the last messages only (HISTORY_LIMIT). A customer who comes back hours later may have said which
+// product they want before those: the ad they came from and the product named then go with the chat. In Nov 2026
+// a fur customer (حلزون, أسود) came back after 12 hours and the AI, no longer seeing the fur, booked the set.
+export function earlierInChat(customer: string): string {
+  const rows = db
+    .prepare("SELECT role, text FROM messages WHERE customer = ? AND history = 0 AND created_at > ? ORDER BY id")
+    .all(customer, Date.now() - 7 * 24 * 3_600_000) as { role: string; text: string }[];
+  const cut = rows.slice(0, Math.max(0, rows.length - config.historyLimit));
+  if (!cut.length) return "";
+  const ad = cut.find((r) => r.role === "customer" && r.text.startsWith("[from the ad"))?.text;
+  const said = cut.map((r) => r.text.replace(/الثوب العربي/g, "")).join("\n");
+  const model = said.match(/(?:مطرز[ةه]?|موديل(?: ال)?|تطريز[ةه]?(?: ال)?)\s*(سلسل[ةه]|حلزون|شبك)/)?.[1];
+  const products = [FUR_WORDS.test(said) && `the fur${model ? ` (model ${model})` : ""}`, SET_WORDS.test(said) && "the set"].filter(Boolean);
+  if (!ad && !products.length) return "";
+  return [
+    "Earlier in this chat, before the messages you see:",
+    ad && `- The customer came from this ad: ${ad.replace(/\s+/g, " ").slice(0, 300)}`,
+    products.length && `- The product talked about then: ${products.join(" and ")}.`,
+    "Keep to the product the customer came for (and its model and color if they chose them): never switch to another product unless they clearly ask for it.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export function historyForAi(customer: string): ChatTurn[] {
   return getHistory(customer).map(({ imageFile, ...turn }) => {
     const image = imageFile ? fileAsDataUrl(imageFile) : undefined;
@@ -551,8 +587,10 @@ async function respond(customer: string) {
       customerName: contactName(customer),
       location: lastLocation(customer),
       sentPhotos: sentPhotoNames(customer),
+      chatProducts: chatProducts(customer),
       background: [
         customerBackground(customer),
+        earlierInChat(customer),
         trackingNote(customer),
         await locationNote(customer),
         isUserId(customer) && "Writes from a WhatsApp username: we don't have their number, so ask for a phone number when taking the order (not before).",

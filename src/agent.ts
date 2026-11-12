@@ -276,7 +276,16 @@ const NO_REPLY_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
 // location: the last map link the customer sent in this chat, even one older than the messages the AI sees.
 // sentPhotos: names of the catalog photos already sent in this chat (the AI sees only its last messages).
 // customerName: the name on their WhatsApp profile, so "استاذ" or "استاذة" is right from the first message.
-type CustomerContext = { customerPhone?: string; customerName?: string; background?: string; location?: string; sentPhotos?: string[] };
+// chatProducts: which products the customer (or the ad they came from) named in this chat, to catch an order for
+// the other one.
+type CustomerContext = {
+  customerPhone?: string;
+  customerName?: string;
+  background?: string;
+  location?: string;
+  sentPhotos?: string[];
+  chatProducts?: { fur: boolean; set: boolean };
+};
 
 // So customers don't all get the same template: each one gets one of 3 wordings, the same for the whole chat
 // (from their number; random in the playground).
@@ -534,7 +543,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       const order = withoutPlaceholders(withLocation(decision.order, history, context.location));
       const gone = missingStock(order.items);
       const problems = [
-        ...orderProblems(order),
+        ...orderProblems(order, context.chatProducts),
         // A color or size we don't have isn't a case for the team: the AI offers what's left.
         ...(gone.length ? [`Out of stock: ${gone.join(", ")}. Tell the customer kindly and offer the colors or sizes we have.`] : []),
       ];
@@ -972,8 +981,9 @@ export function orderSummary(order: CollectedOrder): string {
 }
 
 // An order the model wants to save but can't be: told back to it, so it asks the customer (see decideReply).
-function orderProblems(order: CollectedOrder): string[] {
+function orderProblems(order: CollectedOrder, said?: { fur: boolean; set: boolean }): string[] {
   return [
+    ...wrongProduct(order.items, said),
     ...(libyanMobile(order.phone) ? [] : [`The phone "${order.phone}" is not a full Libyan mobile number (10 digits starting 091-095, or +218).`]),
     ...order.items.flatMap((i, n) => [
       // A product sold in one size has none to ask.
@@ -986,6 +996,21 @@ function orderProblems(order: CollectedOrder): string[] {
         `The same color (${color}) in two sizes: we never send two sizes so the customer tries both and returns one. Ask their weight, pick ONE size from the size table and book that size only (they try it in front of the courier and pay nothing if it doesn't fit). If the second set is really for another person, hand off to the team.`,
     ),
   ];
+}
+
+// The order is for a product the customer never named while they named the other one (the fur's ad, «فروة»):
+// the AI lost track of what they came for. A fur customer was booked the set after coming back hours later.
+export function wrongProduct(items: OrderItem[], said?: { fur: boolean; set: boolean }): string[] {
+  if (!said || said.fur === said.set) return [];
+  const isSet = (i: OrderItem) => !i.product?.trim() || SET_NAME.test(i.product);
+  const isFur = (i: OrderItem) => /فرو/.test(i.product ?? "");
+  if (said.fur && items.some(isSet))
+    return [
+      "This customer came for the FUR (فروة أبو شهري): the ad they came from or their own words name the fur, never the set. The order has the set: it's a mistake. Look at the chat for the fur model and color they chose and send a new summary for the fur (335 دينار, no size line), telling them kindly the previous summary had a mistake.",
+    ];
+  if (said.set && items.some(isFur))
+    return ["This customer came for the SET, not the fur: the order has the fur. Check the chat and send a new summary for what they chose."];
+  return [];
 }
 
 // Colors ordered in more than one size (one customer trying sizes and sending one back).
