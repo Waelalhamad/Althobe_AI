@@ -735,10 +735,11 @@ async function respond(customer: string) {
     // Never leave the customer stuck with the bot: stop the AI so the team answers in the app.
     // Meta failing to deliver (tried three times) is usually over within the hour: the AI takes the chat back then and
     // answers if the customer still waits, instead of leaving them half a day.
-    pauseAi(customer, "AI error", error instanceof SendError && error.passing ? 1 : undefined);
+    // A network failure (Dualhook unreachable for a moment, Nov 2026) passes too.
+    const passing = (error instanceof SendError && error.passing) || isNetworkError(error);
+    pauseAi(customer, "AI error", passing ? 1 : undefined);
     recordAiCall({ customer, channel: channelOf(customer), action: "error", reason: errorText(error) });
     log(key, `error, AI paused for this customer: ${errorText(error)}`);
-    const passing = error instanceof SendError && error.passing;
     notifyError(
       passing
         ? `واتساب (ميتا) ما قبل يوصّل رد المساعد لـ ${customerLabel(customer)} بعد 3 محاولات. غالباً عطل مؤقت عندهم: ردو انتو، أو المساعد بيرجع يرد بعد ساعة إذا الزبون لسا ناطر`
@@ -997,7 +998,11 @@ async function sendMessage(to: string, content: Record<string, unknown>): Promis
   const body = JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", ...(isUserId(to) ? { recipient: to } : { to }), ...content });
   for (const wait of [0, 3000, 10000]) {
     if (wait) await new Promise((r) => setTimeout(r, wait));
-    const res = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body });
+    // Dualhook unreachable for a moment ("fetch failed"): tried again like a 5xx.
+    const res = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body }).catch((err: unknown) => {
+      if (!isNetworkError(err)) throw err;
+      return new Response(`network: ${errorText(err)}`, { status: 599 });
+    });
     if (res.ok) {
       const data = (await res.json()) as { messages?: { id?: string }[] };
       return data.messages?.[0]?.id;
@@ -1128,8 +1133,17 @@ function describeMedia(type: string, media: { caption?: string }): string {
   return caption ? `${label} ${caption}` : label;
 }
 
+// With the network cause of a failed fetch ("fetch failed (ECONNRESET)"), which alone says nothing.
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (!(error instanceof Error)) return String(error);
+  const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+  const detail = cause?.code || cause?.message;
+  return detail && !error.message.includes(detail) ? `${error.message} (${detail})` : error.message;
+}
+
+// fetch() couldn't reach the server at all (connection reset, timeout, DNS): passes like a 5xx.
+function isNetworkError(error: unknown): boolean {
+  return error instanceof TypeError && /fetch failed/i.test(error.message);
 }
 
 function toMs(timestamp?: string): number {
