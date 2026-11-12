@@ -32,7 +32,8 @@ export function extensionFor(mime: string): string {
 }
 
 // Downloads a WhatsApp media file by its media id (from the webhook) through Dualhook or 360dialog.
-export async function downloadWhatsAppMedia(mediaId: string): Promise<{ data: Buffer; mime: string }> {
+// apiKey: the key of the extra number the media came on (Dualhook only); the main key otherwise.
+export async function downloadWhatsAppMedia(mediaId: string, apiKey?: string): Promise<{ data: Buffer; mime: string }> {
   const wa = config.whatsapp;
   let res: Response;
   if (wa.provider === "360dialog") {
@@ -47,7 +48,7 @@ export async function downloadWhatsAppMedia(mediaId: string): Promise<{ data: Bu
     res = await fetch(proxied, { headers });
   } else {
     res = await fetch(`${wa.dualhook.baseUrl}/${mediaId}/content`, {
-      headers: { Authorization: `Bearer ${wa.dualhook.apiKey}` },
+      headers: { Authorization: `Bearer ${apiKey ?? wa.dualhook.apiKey}` },
     });
   }
   if (!res.ok) throw new Error(`media download failed: ${res.status}`);

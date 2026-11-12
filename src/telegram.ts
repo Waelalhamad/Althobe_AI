@@ -261,8 +261,19 @@ export function customerLabel(customer: string): string {
     return `${customer.startsWith("fb:") ? "ماسنجر" : "إنستغرام"}${name ? ` · ${name}` : ""}`;
   }
   // WhatsApp username without a shared number ("LY.1234…").
-  if (/^[A-Z]{2}\./.test(customer)) return `بدون رقم (${customer.slice(0, 10)}…)`;
-  return `+${customer}`;
+  if (/^[A-Z]{2}\./.test(customer)) return `بدون رقم (${customer.slice(0, 10)}…)${onExtraLine(customer)}`;
+  return `+${customer}${onExtraLine(customer)}`;
+}
+
+// A customer who writes to one of our extra WhatsApp numbers (WA_EXTRA_LINES): the team knows which phone to call from.
+function onExtraLine(customer: string): string {
+  if (!config.whatsapp.extraLines.length) return "";
+  try {
+    const row = db.prepare("SELECT phone_number_id AS id FROM customer_lines WHERE customer = ?").get(customer) as { id: string } | undefined;
+    return row ? " (على الرقم التاني)" : "";
+  } catch {
+    return ""; // the table is made by the WhatsApp channel
+  }
 }
 
 // --- Dashboard: status, finding the group, test message ----------------------------------

@@ -126,9 +126,9 @@ export function handleWhatsAppWebhook(payload: WebhookPayload) {
     for (const change of entry.changes ?? []) {
       const value = change.value ?? {};
 
-      // Webhook signatures can't be verified with Dualhook, so also ignore anything not for our number.
+      // Webhook signatures can't be verified with Dualhook, so also ignore anything not for our numbers.
       const phoneNumberId = value.metadata?.phone_number_id;
-      if (config.whatsapp.phoneNumberId && phoneNumberId && phoneNumberId !== config.whatsapp.phoneNumberId) {
+      if (config.whatsapp.phoneNumberId && phoneNumberId && !isOurLine(phoneNumberId)) {
         continue;
       }
 
@@ -137,11 +137,21 @@ export function handleWhatsAppWebhook(payload: WebhookPayload) {
           const customer = contact.wa_id ?? contact.user_id;
           if (customer) saveContact(customer, contact.profile?.name, contact.username);
         }
-        for (const message of value.messages ?? []) onCustomerMessage(message);
+        for (const message of value.messages ?? []) {
+          const customer = message.from ?? message.from_user_id;
+          if (customer && phoneNumberId) setCustomerLine(customer, phoneNumberId);
+          onCustomerMessage(message);
+        }
       } else if (change.field === "smb_message_echoes") {
         // A team member replied from the WhatsApp Business app on the phone.
-        for (const echo of value.message_echoes ?? []) onStaffMessage(echo);
+        for (const echo of value.message_echoes ?? []) {
+          const customer = echo.to ?? echo.to_user_id ?? echo.recipient_user_id;
+          if (customer && phoneNumberId) setCustomerLine(customer, phoneNumberId);
+          onStaffMessage(echo);
+        }
       } else if (change.field === "history") {
+        // The history sync of an extra number would mix its old chats into ours: only the main number's.
+        if (phoneNumberId && phoneNumberId !== config.whatsapp.phoneNumberId) continue;
         for (const chunk of value.history ?? []) onHistoryChunk(chunk);
       }
       // Other fields (statuses, smb_app_state_sync, ...) are ignored.
@@ -347,11 +357,18 @@ const pendingMedia = new Map<string, Set<Promise<void>>>();
 // A photo, voice note, ... to fetch from the customer's channel.
 export type MediaJob = { type: (typeof MEDIA_TYPES)[number]; mime?: string; caption?: string; download: () => Promise<{ data: Buffer; mime: string }> };
 
+// The key of the number this message came on (an echo: the number the team wrote from): its media is only
+// downloadable with that number's key. Undefined = the main key.
+function lineKeyFor(message: WaMessage): string | undefined {
+  const customer = message.from ?? message.from_user_id ?? message.to ?? message.to_user_id ?? message.recipient_user_id;
+  return customer ? customerLine(customer)?.apiKey : undefined;
+}
+
 function waMediaJob(message: WaMessage): MediaJob | undefined {
   const type = MEDIA_TYPES.find((t) => t === message.type);
   const media = type && message[type];
   if (!type || !media?.id || !config.whatsapp.enabled) return undefined;
-  return { type, mime: media.mime_type, caption: media.caption, download: () => downloadWhatsAppMedia(media.id!) };
+  return { type, mime: media.mime_type, caption: media.caption, download: () => downloadWhatsAppMedia(media.id!, lineKeyFor(message)) };
 }
 
 // fromCustomer: a product photo the customer sent is checked against our current products (old ads, other stores).
@@ -853,11 +870,46 @@ export async function sendTeamMessage(customer: string, text: string, image?: { 
 
 // --- Sending (Dualhook or 360dialog; both take Meta's Cloud API message body) ---
 
-function sendEndpoint(): { url: string; headers: Record<string, string> } {
+// Which of our numbers each customer writes to (WA_EXTRA_LINES): replies go out from that one. A customer not in
+// the table is on the main number.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS customer_lines (
+    customer        TEXT PRIMARY KEY,
+    phone_number_id TEXT    NOT NULL,
+    updated_at      INTEGER NOT NULL
+  );
+`);
+
+function isOurLine(phoneNumberId: string): boolean {
+  return phoneNumberId === config.whatsapp.phoneNumberId || config.whatsapp.extraLines.some((l) => l.phoneNumberId === phoneNumberId);
+}
+
+function setCustomerLine(customer: string, phoneNumberId: string) {
+  if (phoneNumberId === config.whatsapp.phoneNumberId) {
+    db.prepare("DELETE FROM customer_lines WHERE customer = ?").run(customer);
+    return;
+  }
+  db.prepare(
+    `INSERT INTO customer_lines (customer, phone_number_id, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT (customer) DO UPDATE SET phone_number_id = excluded.phone_number_id, updated_at = excluded.updated_at`,
+  ).run(customer, phoneNumberId, Date.now());
+}
+
+// The extra number this customer writes to, or undefined for the main one.
+export function customerLine(customer: string): { phoneNumberId: string; apiKey: string } | undefined {
+  const lines = config.whatsapp.extraLines;
+  if (!lines.length) return undefined;
+  const row = db.prepare("SELECT phone_number_id AS id FROM customer_lines WHERE customer = ?").get(customer) as { id: string } | undefined;
+  return row ? lines.find((l) => l.phoneNumberId === row.id) : undefined;
+}
+
+function sendEndpoint(customer: string): { url: string; headers: Record<string, string> } {
   const wa = config.whatsapp;
   if (wa.provider === "360dialog") {
     return { url: `${wa.d360.baseUrl}/messages`, headers: { "D360-API-KEY": wa.d360.apiKey } };
   }
+  const line = customerLine(customer);
+  if (line) return { url: `${wa.dualhook.baseUrl}/${line.phoneNumberId}/messages`, headers: { Authorization: `Bearer ${line.apiKey}` } };
   if (!wa.phoneNumberId) throw new Error("WA_PHONE_NUMBER_ID is required for Dualhook");
   return {
     url: `${wa.dualhook.baseUrl}/${wa.phoneNumberId}/messages`,
@@ -902,7 +954,7 @@ export const isPassingSendError = (status: number, detail: string) =>
   status >= 500 || status === 429 || /"code"\s*:\s*(131000|131016|130429|1|2)\b/.test(detail) || /Upstream request failed/i.test(detail);
 
 async function sendMessage(to: string, content: Record<string, unknown>): Promise<string | undefined> {
-  const { url, headers } = sendEndpoint();
+  const { url, headers } = sendEndpoint(to);
   // A customer known only by their user id (WhatsApp usernames) is addressed with `recipient`, not `to`.
   const body = JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", ...(isUserId(to) ? { recipient: to } : { to }), ...content });
   for (const wait of [0, 3000, 10000]) {
@@ -938,7 +990,7 @@ async function showTyping(customer: string) {
   if (isMetaCustomer(customer)) return metaTyping(customer);
   const messageId = lastCustomerWamid(customer);
   if (!messageId || typingUnsupported) return;
-  const { url, headers } = sendEndpoint();
+  const { url, headers } = sendEndpoint(customer);
   try {
     const res = await fetch(url, {
       method: "POST",

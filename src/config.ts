@@ -50,6 +50,12 @@ export const config = {
     // Our number's Phone Number ID (from the provider dashboard). Required for Dualhook;
     // also used to ignore webhooks that aren't for our number.
     phoneNumberId: process.env.WA_PHONE_NUMBER_ID?.trim() || undefined,
+    // More numbers on Dualhook, each with its own key: "<phone number id>:<api key>,…". A customer who writes to one
+    // of them gets the AI's replies from it. Same webhook URL and verify token as the main number.
+    extraLines: (process.env.WA_EXTRA_LINES ?? "")
+      .split(",")
+      .map((pair) => pair.split(":").map((s) => s.trim()))
+      .flatMap(([id, key]) => (id && key ? [{ phoneNumberId: id, apiKey: key }] : [])),
     // Meta's webhook verification (GET hub.challenge) checks this value. Set the same value in Dualhook.
     verifyToken: process.env.WA_VERIFY_TOKEN?.trim() || undefined,
     // When the team replies from the WhatsApp Business app, or the AI hands off,
