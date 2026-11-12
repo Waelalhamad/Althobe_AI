@@ -37,6 +37,7 @@ export type CashRow = {
   direction: "in" | "out";
   amount: number;
   kind: string;
+  statement: string; // البيان: what the money was for (empty on lines from before it existed)
   note: string;
   byRole: Role;
   at: number;
@@ -429,7 +430,7 @@ export const api = {
   me: () => request<{ role: Role }>("/me"),
   staffCash: (limit = 100) => request<StaffCash>(`/staff/cash?limit=${limit}`),
   undoStaffCash: (id: number) => post<CashRow>(`/staff/cash/${id}/undo`),
-  addStaffCash: (line: { direction: "in" | "out"; amount: number; kind: string; note: string }) => post<CashRow>("/staff/cash", line),
+  addStaffCash: (line: { direction: "in" | "out"; amount: number; kind: string; statement: string; note: string }) => post<CashRow>("/staff/cash", line),
   staffStock: (log = 50) => request<{ rows: StaffStockRow[]; log: StaffStockLogRow[] }>(`/staff/stock?log=${log}`),
   setStaffStock: (cell: { product: string; color: string; size: string; quantity: number }) =>
     request<{ ok: true }>("/staff/stock", { method: "PUT", body: JSON.stringify(cell) }),

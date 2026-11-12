@@ -36,6 +36,10 @@ db.exec(`
 if (!(db.prepare("PRAGMA table_info(staff_cash)").all() as { name: string }[]).some((c) => c.name === "undoes")) {
   db.exec("ALTER TABLE staff_cash ADD COLUMN undoes INTEGER");
 }
+// البيان: what the money was for, in his words (required; the note under it stays optional).
+if (!(db.prepare("PRAGMA table_info(staff_cash)").all() as { name: string }[]).some((c) => c.name === "statement")) {
+  db.exec("ALTER TABLE staff_cash ADD COLUMN statement TEXT NOT NULL DEFAULT ''");
+}
 
 export type Role = "staff" | "admin";
 
@@ -51,6 +55,7 @@ export type CashRow = {
   direction: "in" | "out";
   amount: number;
   kind: string;
+  statement: string;
   note: string;
   byRole: Role;
   at: number;
@@ -63,7 +68,7 @@ export function cashBalance(): number {
   return r.b;
 }
 
-const SELECT_CASH = `SELECT c.id, c.direction, c.amount, c.kind, c.note, c.by_role AS byRole, c.at, c.undoes,
+const SELECT_CASH = `SELECT c.id, c.direction, c.amount, c.kind, c.statement, c.note, c.by_role AS byRole, c.at, c.undoes,
   (SELECT u.id FROM staff_cash u WHERE u.undoes = c.id) AS undoneBy FROM staff_cash c`;
 
 export function listCash(limit: number): CashRow[] {
@@ -78,37 +83,40 @@ function announce(row: CashRow) {
   const sign = row.direction === "in" ? "➕" : "➖";
   notify(
     "staff",
-    `💵 <b>موظف ليبيا ${DIRECTION[row.direction]}</b> ${sign} ${row.amount} د.ل · ${esc(row.kind)}${row.note ? `
+    `💵 <b>موظف ليبيا ${DIRECTION[row.direction]}</b> ${sign} ${row.amount} د.ل · ${esc(row.kind)}${row.statement ? `
+📝 ${esc(row.statement)}` : ""}${row.note ? `
 ${esc(row.note)}` : ""}
 معو هلق: <b>${Math.round(cashBalance() * 1000) / 1000} د.ل</b>`,
   );
 }
 
-function insert(direction: "in" | "out", amount: number, kind: string, note: string, by: Role, undoes: number | null): CashRow {
+function insert(direction: "in" | "out", amount: number, kind: string, statement: string, note: string, by: Role, undoes: number | null): CashRow {
   const at = Date.now();
   const r = db
-    .prepare("INSERT INTO staff_cash (direction, amount, kind, note, by_role, at, undoes) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(direction, amount, kind, note, by, at, undoes);
-  const row: CashRow = { id: Number(r.lastInsertRowid), direction, amount, kind, note, byRole: by, at, undoes, undoneBy: null };
+    .prepare("INSERT INTO staff_cash (direction, amount, kind, statement, note, by_role, at, undoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(direction, amount, kind, statement, note, by, at, undoes);
+  const row: CashRow = { id: Number(r.lastInsertRowid), direction, amount, kind, statement, note, byRole: by, at, undoes, undoneBy: null };
   announce(row);
   return row;
 }
 
 // Checks the line and saves it; returns an error in Arabic for the screen, or the saved row.
-export function addCash(input: { direction?: unknown; amount?: unknown; kind?: unknown; note?: unknown }, by: Role): CashRow | string {
+export function addCash(input: { direction?: unknown; amount?: unknown; kind?: unknown; statement?: unknown; note?: unknown }, by: Role): CashRow | string {
   const direction = input.direction === "in" || input.direction === "out" ? input.direction : undefined;
   if (!direction) return "اختار استلمت أو دفعت";
   const amount = Math.round(Number(input.amount) * 1000) / 1000;
   if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) return "اكتب المبلغ صح";
   const kind = String(input.kind ?? "");
   if (!(CASH_KINDS[direction] as readonly string[]).includes(kind)) return "اختار النوع";
+  const statement = String(input.statement ?? "").trim().replace(/\s+/g, " ").slice(0, 200);
+  if (statement.length < 2) return direction === "in" ? "اكتب البيان: من مين وعن شو" : "اكتب البيان: وين انصرفت";
   const note = String(input.note ?? "").trim().slice(0, 500);
   // A double tap on a slow connection: the same line again within half a minute is saved once.
   const twin = db
-    .prepare("SELECT id FROM staff_cash WHERE direction = ? AND amount = ? AND kind = ? AND note = ? AND by_role = ? AND at > ?")
-    .get(direction, amount, kind, note, by, Date.now() - 30_000);
+    .prepare("SELECT id FROM staff_cash WHERE direction = ? AND amount = ? AND kind = ? AND statement = ? AND note = ? AND by_role = ? AND at > ?")
+    .get(direction, amount, kind, statement, note, by, Date.now() - 30_000);
   if (twin) return "هالحركة انسجلت هلق، شوفها بالسجل";
-  return insert(direction, amount, kind, note, by, null);
+  return insert(direction, amount, kind, statement, note, by, null);
 }
 
 // Cancels a line with the opposite one (kind «تصحيح»), never by deleting it.
@@ -119,7 +127,8 @@ export function undoCash(id: number, by: Role): CashRow | string {
   if (row.undoes !== null) return "هاي حركة تصحيح، ما بتنعكس";
   if (row.undoneBy !== null) return "هالحركة انعكست قبل";
   const back = row.direction === "in" ? "out" : "in";
-  return insert(back, row.amount, "تصحيح", `عكس «${row.kind}» ${row.amount} د.ل${row.note ? `: ${row.note}` : ""}`.slice(0, 500), by, row.id);
+  const what = row.statement || row.note;
+  return insert(back, row.amount, "تصحيح", `عكس «${row.kind}» ${row.amount} د.ل${what ? `: ${what}` : ""}`.slice(0, 200), "", by, row.id);
 }
 
 // --- His stock ---------------------------------------------------------------------

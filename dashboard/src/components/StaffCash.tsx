@@ -48,23 +48,25 @@ function CashForm({ direction, kinds, onClose }: { direction: "in" | "out"; kind
   const queryClient = useQueryClient();
   const [typed, setTyped] = useState("");
   const [kind, setKind] = useState("");
+  const [statement, setStatement] = useState("");
   const [note, setNote] = useState("");
   const value = Number(typed);
   const save = useMutation({
-    mutationFn: () => api.addStaffCash({ direction, amount: value, kind, note }),
+    mutationFn: () => api.addStaffCash({ direction, amount: value, kind, statement, note }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["staff-cash"] });
       onClose();
     },
   });
   const isIn = direction === "in";
+  const ready = value > 0 && !!kind && statement.trim().length >= 2;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/60 sm:items-center" onClick={onClose}>
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
-          if (value > 0 && kind) save.mutate();
+          if (ready) save.mutate();
         }}
         className="flex w-full max-w-md flex-col gap-4 rounded-t-3xl bg-card p-5 pb-[max(2rem,env(safe-area-inset-bottom))] sm:rounded-3xl"
       >
@@ -103,14 +105,26 @@ function CashForm({ direction, kinds, onClose }: { direction: "in" | "out"; kind
             ))}
           </div>
         </div>
+        <label className="flex flex-col gap-1">
+          <span className="text-sm text-muted">
+            البيان <span className="text-bad">*</span>
+          </span>
+          <input
+            value={statement}
+            onChange={(e) => setStatement(e.target.value)}
+            maxLength={200}
+            placeholder={isIn ? "من مين وعن شو؟ (مثلاً: تحويل درب أسبوع 10/11)" : "وين انصرفت؟ (مثلاً: أجرة توصيل لطرابلس)"}
+            className="rounded-xl border border-line bg-card-2 px-4 py-3 text-base outline-none focus:border-primary"
+          />
+        </label>
         <input
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder={isIn ? "ملاحظة: رقم التحويل، اسم الزبون… (اختياري)" : "ملاحظة: لمين، لشو… (اختياري)"}
+          placeholder={isIn ? "ملاحظة (اختياري): رقم التحويل، اسم الزبون…" : "ملاحظة (اختياري)"}
           className="rounded-xl border border-line bg-card-2 px-4 py-3 outline-none focus:border-primary"
         />
         <ErrorNote error={save.error} />
-        <Button disabled={!(value > 0) || !kind || save.isPending} className="py-4 text-lg">
+        <Button disabled={!ready || save.isPending} className="py-4 text-lg">
           {save.isPending ? "جاري الحفظ…" : `احفظ ${value > 0 ? lyd(value) : ""}`}
         </Button>
         <p className="text-center text-xs text-muted">الحركة ما بتنمسح. إذا غلطت، كبسة «اعكسها» جنبها بالسجل بتلغيها.</p>
@@ -151,7 +165,8 @@ export function CashList({ rows, showWho, mineOnly }: { rows: CashRow[]; showWho
                   {undone && <Badge>انعكست</Badge>}
                   {showWho && r.byRole === "admin" && <Badge tone="info">الإدارة</Badge>}
                 </div>
-                {r.note && <div className="break-words text-sm text-muted">{r.note}</div>}
+                {r.statement && <div className={clsx("break-words text-sm", undone && "line-through")}>{r.statement}</div>}
+                {r.note && <div className="break-words text-xs text-muted">{r.note}</div>}
                 <div className="num text-xs text-muted">
                   <span className="ltr">{time(r.at)}</span>
                 </div>
