@@ -203,6 +203,7 @@ export type StockProduct = {
   sizes: string[];
   cells: { color: string; size: string; quantity: number; held: number }[];
   details: string; // what the team wrote about it for the assistant (fabric, material…)
+  clearance: { price: number; cells: { color: string; size: string }[] } | null; // pieces on a special price
   updatedAt: number;
 };
 
@@ -479,8 +480,12 @@ export const api = {
     request(`/knowledge/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ body }) }),
   deleteKnowledge: (name: string) => request(`/knowledge/${encodeURIComponent(name)}`, { method: "DELETE" }),
   stock: () => request<{ products: StockProduct[]; suggestions: { product: string; colors: string[] }[] }>("/stock"),
-  saveStock: (product: string, cells: { color: string; size: string; quantity: number }[]) =>
-    request(`/stock/${encodeURIComponent(product)}`, { method: "PUT", body: JSON.stringify({ cells }) }),
+  saveStock: (
+    product: string,
+    cells: { color: string; size: string; quantity: number }[],
+    clearance?: { price: number; cells: { color: string; size: string }[] },
+  ) =>
+    request(`/stock/${encodeURIComponent(product)}`, { method: "PUT", body: JSON.stringify({ cells, clearance }) }),
   checkStock: (items: OrderItem[]) => post<{ missing: string[] }>("/stock/check", { items }),
   deleteStock: (product: string) => request(`/stock/${encodeURIComponent(product)}`, { method: "DELETE" }),
   saveProductDetails: (product: string, details: string) =>

@@ -494,6 +494,36 @@ export function listProductDetails(): { product: string; details: string; update
   }[];
 }
 
+// Clearance («النمر المكسرة»): pieces the team marks on the stock page (a color in a size, often what's left of a
+// color whose other sizes ran out), sold at the product's clearance price. Apart from the stock table, like details.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS stock_clearance (
+    product    TEXT    PRIMARY KEY,
+    price      INTEGER NOT NULL,           -- دينار, delivery still free
+    cells      TEXT    NOT NULL,           -- JSON [{ color, size }]
+    updated_at INTEGER NOT NULL
+  );
+`);
+
+export type Clearance = { product: string; price: number; cells: { color: string; size: string }[] };
+
+export function listClearance(): Clearance[] {
+  const rows = db.prepare("SELECT product, price, cells FROM stock_clearance ORDER BY product").all() as { product: string; price: number; cells: string }[];
+  return rows.map((r) => ({ product: r.product, price: r.price, cells: JSON.parse(r.cells) as Clearance["cells"] }));
+}
+
+// No price or no pieces removes it.
+export function setClearance(product: string, price: number, cells: { color: string; size: string }[]) {
+  if (!(price > 0) || !cells.length) {
+    db.prepare("DELETE FROM stock_clearance WHERE product = ?").run(product);
+    return;
+  }
+  db.prepare(
+    `INSERT INTO stock_clearance (product, price, cells, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT (product) DO UPDATE SET price = excluded.price, cells = excluded.cells, updated_at = excluded.updated_at`,
+  ).run(product, Math.round(price), JSON.stringify(cells), Date.now());
+}
+
 // Empty text removes them.
 export function setProductDetails(product: string, details: string) {
   const text = details.trim().slice(0, DETAILS_MAX);
@@ -507,7 +537,9 @@ export function setProductDetails(product: string, details: string) {
 
 export function deleteProductStock(product: string) {
   db.prepare("DELETE FROM stock WHERE product = ?").run(product);
-  db.prepare("DELETE FROM product_details WHERE product = ?").run(product); // its card is gone from the stock page
+  // Its card is gone from the stock page: its details and clearance with it.
+  db.prepare("DELETE FROM product_details WHERE product = ?").run(product);
+  db.prepare("DELETE FROM stock_clearance WHERE product = ?").run(product);
 }
 
 // "الأسود" / "أسود" / "اللون: اسود" → "اسود"; Arabic digits → 0-9.

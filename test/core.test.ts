@@ -190,3 +190,27 @@ test("the team's product details go to the assistant, above the knowledge", asyn
   setProductDetails("فروة تفاصيل", "  ");
   assert.doesNotMatch(stockForPrompt(), /أبو شهري ناعم وتقيل/);
 });
+
+test("pieces on the team's special price are offered to the right size only", async () => {
+  const { stockForPrompt } = await import("../src/stock.ts");
+  const { setProductStock, setClearance, deleteProductStock } = await import("../src/store.ts");
+  setProductStock("طقم تجربة العرض", [
+    { color: "بني", size: "56", quantity: 1 },
+    { color: "بني", size: "58", quantity: 1 },
+    { color: "بني", size: "62", quantity: 0 },
+    { color: "أسود", size: "58", quantity: 9 },
+  ]);
+  // 62 is sold out: marked, but not offered.
+  setClearance("طقم تجربة العرض", 300, [
+    { color: "بني", size: "56" },
+    { color: "بني", size: "58" },
+    { color: "بني", size: "62" },
+  ]);
+  const text = stockForPrompt();
+  assert.match(text, /- بني: available in 56, 58 \(sold out: 62\) — CLEARANCE OFFER in size 56, 58: 300 دينار/);
+  assert.doesNotMatch(text, /- بني:[^\n]*ONLY A FEW LEFT/); // on offer: not hidden as almost gone
+  assert.doesNotMatch(text, /- أسود:[^\n]*CLEARANCE/);
+  assert.match(text, /never change their size to fit an offer/i);
+  deleteProductStock("طقم تجربة العرض");
+  assert.doesNotMatch(stockForPrompt(), /طقم تجربة العرض/);
+});

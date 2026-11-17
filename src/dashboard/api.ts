@@ -42,8 +42,10 @@ import {
   channelOf,
   db,
   deleteProductStock,
+  listClearance,
   listProductDetails,
   listStock,
+  setClearance,
   setProductDetails,
   setProductStock,
   stockName,
@@ -736,11 +738,13 @@ dashboardApi.get("/stock", (_req, res) => {
     }
   }
   const details = new Map(listProductDetails().map((d) => [d.product, d.details]));
+  const clearance = new Map(listClearance().map((c) => [c.product, { price: c.price, cells: c.cells }]));
   const products = [...new Set(rows.map((r) => r.product))].map((product) => {
     const mine = rows.filter((r) => r.product === product);
     return {
       product,
       details: details.get(product) ?? "",
+      clearance: clearance.get(product) ?? null,
       colors: [...new Set(mine.map((r) => r.color))],
       sizes: [...new Set(mine.map((r) => r.size))],
       cells: mine.map((r) => ({ color: r.color, size: r.size, quantity: r.quantity, held: held.get(`${product}|${r.color}|${r.size}`) ?? 0 })),
@@ -773,8 +777,26 @@ dashboardApi.put("/stock/:product", (req, res) => {
     res.status(400).json({ error: "اكتب اسم المنتج، ولون ومقاس واحد على الأقل" });
     return;
   }
+  // The clearance offer ({ price, cells: [{ color, size }] }) goes with the table; only pieces of the table count.
+  const offer = req.body?.clearance as { price?: unknown; cells?: unknown } | undefined;
+  const offerCells =
+    offer && Array.isArray(offer.cells)
+      ? (offer.cells as Record<string, unknown>[])
+          .map((c) => ({ color: String(c?.color ?? "").trim(), size: String(c?.size ?? "").trim() }))
+          .filter((c) => rows.some((r) => stockName(r.color) === stockName(c.color) && stockName(r.size) === stockName(c.size)))
+      : [];
+  const offerPrice = Math.round(Number(offer?.price) || 0);
+  if (offer && offerCells.length && !(offerPrice > 0 && offerPrice < 100_000)) {
+    res.status(400).json({ error: "اكتب سعر العرض للقطع اللي علّمتها" });
+    return;
+  }
   setProductStock(product, rows);
-  log("dashboard", `stock saved for ${product}: ${rows.reduce((n, r) => n + Math.max(0, r.quantity), 0)} pieces in ${rows.length} color/size`);
+  if (offer) setClearance(product, offerPrice, offerCells);
+  log(
+    "dashboard",
+    `stock saved for ${product}: ${rows.reduce((n, r) => n + Math.max(0, r.quantity), 0)} pieces in ${rows.length} color/size` +
+      (offerCells.length ? `; clearance ${offerPrice} on ${offerCells.length}` : ""),
+  );
   res.json({ ok: true });
 });
 

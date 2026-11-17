@@ -10,13 +10,21 @@ import { IncomingReturns } from "../components/IncomingReturns";
 
 const inputClass = "rounded-xl border border-line bg-card-2 px-3 py-2 text-sm outline-none focus:border-primary";
 
-// A product's table while the team edits it: quantities as typed, by "color|size".
-type Draft = { product: string; colors: string[]; sizes: string[]; q: Record<string, string> };
+// A product's table while the team edits it: quantities as typed, by "color|size"; offer: the pieces marked for the
+// special price (النمر المكسرة), by the same key, and that price as typed.
+type Draft = { product: string; colors: string[]; sizes: string[]; q: Record<string, string>; offer?: string[]; offerPrice?: string };
 
 const key = (color: string, size: string) => `${color}|${size}`;
 
 function toDraft(p: StockProduct): Draft {
-  return { product: p.product, colors: p.colors, sizes: p.sizes, q: Object.fromEntries(p.cells.map((c) => [key(c.color, c.size), String(c.quantity)])) };
+  return {
+    product: p.product,
+    colors: p.colors,
+    sizes: p.sizes,
+    q: Object.fromEntries(p.cells.map((c) => [key(c.color, c.size), String(c.quantity)])),
+    offer: p.clearance?.cells.map((c) => key(c.color, c.size)) ?? [],
+    offerPrice: p.clearance ? String(p.clearance.price) : "",
+  };
 }
 
 export function Stock() {
@@ -193,12 +201,24 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
   };
   const held = (color: string, size: string) => saved?.cells.find((c) => c.color === color && c.size === size)?.held ?? 0;
   const value = (color: string, size: string) => Number(d.q[key(color, size)] || 0);
+  // Marked pieces still in the table (a removed color or size drops its marks).
+  const offered = (d.offer ?? []).filter((k) => d.colors.some((c) => d.sizes.some((s) => key(c, s) === k)));
+  const isOffered = (color: string, size: string) => offered.includes(key(color, size));
+  const toggleOffer = (color: string, size: string) =>
+    change({ offer: isOffered(color, size) ? offered.filter((k) => k !== key(color, size)) : [...offered, key(color, size)] });
 
   const save = useMutation({
     mutationFn: () =>
       api.saveStock(
         d.product.trim(),
         d.colors.flatMap((color) => d.sizes.map((size) => ({ color, size, quantity: value(color, size) }))),
+        {
+          price: Number(d.offerPrice) || 0,
+          cells: offered.map((k) => {
+            const [color = "", size = ""] = k.split("|");
+            return { color, size };
+          }),
+        },
       ),
     onSuccess: () => {
       setDirty(false);
@@ -307,6 +327,16 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
                           aria-label={`${color} مقاس ${size}`}
                         />
                         {h > 0 && <div className="mt-0.5 text-[11px] text-muted">+{h} بطلبات</div>}
+                        <button
+                          onClick={() => toggleOffer(color, size)}
+                          className={clsx(
+                            "mt-0.5 block w-full rounded-md px-1 text-[11px]",
+                            isOffered(color, size) ? "bg-warn/15 font-semibold text-warn" : "text-muted opacity-60 hover:opacity-100",
+                          )}
+                          title={isOffered(color, size) ? "شيلها من العرض" : "حطها بالعرض الخاص (نمرة مكسرة)"}
+                        >
+                          {isOffered(color, size) ? "🏷 عرض" : "+ عرض"}
+                        </button>
                       </td>
                     );
                   })}
@@ -346,6 +376,24 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
           </Button>
         )}
       </div>
+      {offered.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-warn/40 bg-warn/5 p-3 text-sm">
+          <span className="font-semibold">🏷 عرض خاص على {num(offered.length)} نمرة</span>
+          <input
+            type="number"
+            value={d.offerPrice ?? ""}
+            onChange={(e) => change({ offerPrice: e.target.value })}
+            placeholder="السعر"
+            className={clsx(inputClass, "num w-24 text-center", !(Number(d.offerPrice) > 0) && "border-bad/50")}
+            aria-label="سعر العرض الخاص"
+          />
+          <span>دينار، والتوصيل مجاني متل العادة.</span>
+          <span className="w-full text-xs text-muted">
+            المساعد بيعرضها بس على الزبون اللي مقاسه نفس مقاس القطعة، وما بيغيّر مقاس حدا مشان العرض. بيقول «عرض خاص»، مو «تصفية» ولا «مكسرة». واضغط «احفظ» فوق.
+          </span>
+        </div>
+      )}
+
       {saved && <ProductDetails product={saved.product} saved={saved.details ?? ""} />}
 
       <p className="text-xs text-muted">
