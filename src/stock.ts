@@ -18,7 +18,7 @@ function detailsForPrompt(): string {
   return `
 
 # Product details from the team
-What our team wrote about each product (its fabric, material, feel, season, care…). It is true, and above any line of the knowledge documents that says we don't know something about that product (like «لا نعرف عنه أكثر من اسمه»): when the customer asks, answer from it in a few words, proudly and in their dialect, then carry on selling. Bring a detail up yourself only where it helps (a price objection, «شن الخامة؟», «يدفّي؟»), one at a time, never the whole list. Never add anything that isn't written here or in the knowledge: if it isn't there, say «نتأكدلك استاذ».
+What our team wrote about each product (its fabric, material, feel, season, care…). It is true, and above the knowledge documents wherever they differ or say we don't know something about that product (like «لا نعرف عنه أكثر من اسمه»): when the customer asks, answer from it in a few words, proudly and in their dialect, then carry on selling. Bring a detail up yourself only where it helps (a price objection, «شن الخامة؟», «يدفّي؟»), one at a time, never the whole list. Never add anything that isn't written here or in the knowledge: if it isn't there, say «نتأكدلك استاذ».
 ${all.map((d) => `## ${d.product}\n${d.details}`).join("\n\n")}`;
 }
 
@@ -73,7 +73,7 @@ function stockTable(): string {
   - Then, once in the chat, tell them in a few words and as good news, with the color's photo if they haven't seen it: «وعندنا عرض خاص على البني مقاس 58: 300 دينار بدل 385 👌 الكمية محدودة». A color they already chose that is on offer in their size: tell them it's on offer at that price. If they want another color, fine: its usual price.
   - For a one-size product, the offer colors can be named first when you show the colors.
   - Say «عرض خاص» or «سعر خاص», never «تصفية», «مكسرة» or «باقي قطع قليلة». Never the number of pieces.
-  - In the summary and in submit_order, an offer piece's price is the offer price (total = the sum of each piece's price).`
+  - In the summary and in submit_order, an offer piece's price is the offer price (total = the sum of each piece's price). The total holds that one number only («الإجمالي: 300 دينار»), never the usual price next to it: the courier collects the number written there.`
     : "";
   return `
 
@@ -85,6 +85,32 @@ This list is the truth about what we have, above anything the knowledge document
 - Before calling submit_order, check every item against this list. If one is sold out (even when the summary was already sent and the customer confirmed), don't call submit_order: tell them kindly it just ran out and offer what we have in their size.
 - A color or size missing from this list isn't kept in stock here: answer from the knowledge documents.${clearanceRules}
 ${lines.join("\n")}`;
+}
+
+// An order at a product's offer price where not every piece is on offer: the model gave the special price to the
+// wrong color or size. Only the model ties the price to the piece, so this is checked before saving.
+export function offerPriceProblems(items: OrderItem[], total: string): string[] {
+  const amount = Number(total.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660)).replace(/[,٬]/g, "").match(/\d+/)?.[0]);
+  if (!amount) return [];
+  const rows = listStock();
+  const count = items.reduce((n, i) => n + (Number(i.quantity) || 1), 0);
+  for (const offer of listClearance()) {
+    if (amount !== offer.price * count) continue;
+    const notOnOffer = items.filter((i) => {
+      const row = stockRowFor(i, rows);
+      return !(
+        row &&
+        stockName(row.product) === stockName(offer.product) &&
+        row.quantity > 0 &&
+        offer.cells.some((c) => stockName(c.color) === stockName(row.color) && stockName(c.size) === stockName(row.size))
+      );
+    });
+    if (notOnOffer.length)
+      return [
+        `The total ${amount} is the special offer price, but ${notOnOffer.map((i) => `${i.color} ${i.size}`.trim()).join(", ")} isn't on offer: only the pieces marked "CLEARANCE OFFER" in the stock list have that price. Put that piece's usual price in the total and send the summary again.`,
+      ];
+  }
+  return [];
 }
 
 // Items of an order that we don't have enough of (only colors/sizes kept in stock are checked).

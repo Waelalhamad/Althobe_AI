@@ -3,7 +3,7 @@ import { aiCostUsd, config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
 import { catalogForPrompt, listCatalog, photoLabel, type CatalogItem } from "./catalog.js";
 import { fileAsDataUrl } from "./media.js";
-import { missingStock, stockForPrompt } from "./stock.js";
+import { missingStock, offerPriceProblems, stockForPrompt } from "./stock.js";
 import { intlPhone } from "./darb.js";
 import { hasSizes, ONE_SIZE, SET_NAME, type AiUsage, type OrderItem, type Payment } from "./store.js";
 
@@ -544,6 +544,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       const gone = missingStock(order.items);
       const problems = [
         ...orderProblems(order, context.chatProducts),
+        ...offerPriceProblems(order.items, order.total),
         // A color or size we don't have isn't a case for the team: the AI offers what's left.
         ...(gone.length ? [`Out of stock: ${gone.join(", ")}. Tell the customer kindly and offer the colors or sizes we have.`] : []),
       ];

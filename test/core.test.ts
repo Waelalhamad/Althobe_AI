@@ -211,6 +211,12 @@ test("pieces on the team's special price are offered to the right size only", as
   assert.doesNotMatch(text, /- بني:[^\n]*ONLY A FEW LEFT/); // on offer: not hidden as almost gone
   assert.doesNotMatch(text, /- أسود:[^\n]*CLEARANCE/);
   assert.match(text, /never change their size to fit an offer/i);
+  const { offerPriceProblems } = await import("../src/stock.ts");
+  const item = (color, size) => ({ product: "طقم تجربة العرض", color, size, quantity: 1 });
+  assert.equal(offerPriceProblems([item("بني", "58")], "300 دينار").length, 0);
+  assert.equal(offerPriceProblems([item("أسود", "58")], "300 دينار").length, 1);
+  assert.equal(offerPriceProblems([item("أسود", "58")], "385 دينار").length, 0);
+  assert.equal(offerPriceProblems([item("بني", "62")], "300 دينار").length, 1); // sold out: not on offer
   deleteProductStock("طقم تجربة العرض");
   assert.doesNotMatch(stockForPrompt(), /طقم تجربة العرض/);
 });
