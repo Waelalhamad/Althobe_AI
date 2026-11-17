@@ -220,3 +220,19 @@ test("pieces on the team's special price are offered to the right size only", as
   deleteProductStock("طقم تجربة العرض");
   assert.doesNotMatch(stockForPrompt(), /طقم تجربة العرض/);
 });
+
+test("pieces marked with no price are pushed first at their usual price", async () => {
+  const { stockForPrompt, offerPriceProblems } = await import("../src/stock.ts");
+  const { setProductStock, setClearance, deleteProductStock } = await import("../src/store.ts");
+  setProductStock("فروة تجربة التصريف", [
+    { color: "عسلي", size: "ستاندرد", quantity: 3 },
+    { color: "بني", size: "ستاندرد", quantity: 40 },
+  ]);
+  setClearance("فروة تجربة التصريف", 0, [{ color: "عسلي", size: "ستاندرد" }]);
+  const text = stockForPrompt();
+  assert.match(text, /- عسلي: available in ستاندرد — PUSH FIRST\n/);
+  assert.doesNotMatch(text, /- عسلي:[^\n]*(ONLY A FEW LEFT|CLEARANCE)/);
+  assert.match(text, /"PUSH FIRST" is one our team wants sold first/);
+  assert.equal(offerPriceProblems([{ product: "فروة تجربة التصريف", color: "بني", size: "ستاندرد", quantity: 1 }], "0").length, 0);
+  deleteProductStock("فروة تجربة التصريف");
+});

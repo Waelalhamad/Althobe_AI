@@ -785,9 +785,10 @@ dashboardApi.put("/stock/:product", (req, res) => {
           .map((c) => ({ color: String(c?.color ?? "").trim(), size: String(c?.size ?? "").trim() }))
           .filter((c) => rows.some((r) => stockName(r.color) === stockName(c.color) && stockName(r.size) === stockName(c.size)))
       : [];
+  // No price (0): the marked pieces are pushed first at their usual price.
   const offerPrice = Math.round(Number(offer?.price) || 0);
-  if (offer && offerCells.length && !(offerPrice > 0 && offerPrice < 100_000)) {
-    res.status(400).json({ error: "اكتب سعر العرض للقطع اللي علّمتها" });
+  if (offer && offerCells.length && !(offerPrice >= 0 && offerPrice < 100_000)) {
+    res.status(400).json({ error: "سعر العرض مو مظبوط" });
     return;
   }
   setProductStock(product, rows);
@@ -795,7 +796,7 @@ dashboardApi.put("/stock/:product", (req, res) => {
   log(
     "dashboard",
     `stock saved for ${product}: ${rows.reduce((n, r) => n + Math.max(0, r.quantity), 0)} pieces in ${rows.length} color/size` +
-      (offerCells.length ? `; clearance ${offerPrice} on ${offerCells.length}` : ""),
+      (offerCells.length ? (offerPrice ? `; clearance ${offerPrice} on ${offerCells.length}` : `; ${offerCells.length} pushed first`) : ""),
   );
   res.json({ ok: true });
 });

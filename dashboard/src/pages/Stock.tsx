@@ -333,9 +333,9 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
                             "mt-0.5 block w-full rounded-md px-1 text-[11px]",
                             isOffered(color, size) ? "bg-warn/15 font-semibold text-warn" : "text-muted opacity-60 hover:opacity-100",
                           )}
-                          title={isOffered(color, size) ? "شيلها من العرض" : "حطها بالعرض الخاص (نمرة مكسرة)"}
+                          title={isOffered(color, size) ? "شيلها من التصريف" : "صرّفها: المساعد بيعرضها بالأول (وبسعر العرض إذا كتبتو سعر)"}
                         >
-                          {isOffered(color, size) ? "🏷 عرض" : "+ عرض"}
+                          {isOffered(color, size) ? "🏷 تصريف" : "+ تصريف"}
                         </button>
                       </td>
                     );
@@ -378,18 +378,18 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
       </div>
       {offered.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-warn/40 bg-warn/5 p-3 text-sm">
-          <span className="font-semibold">🏷 عرض خاص على {num(offered.length)} نمرة</span>
+          <span className="font-semibold">🏷 تصريف {num(offered.length)} خانة</span>
           <input
             type="number"
             value={d.offerPrice ?? ""}
             onChange={(e) => change({ offerPrice: e.target.value })}
-            placeholder="السعر"
-            className={clsx(inputClass, "num w-24 text-center", !(Number(d.offerPrice) > 0) && "border-bad/50")}
+            placeholder="بلا"
+            className={clsx(inputClass, "num w-24 text-center")}
             aria-label="سعر العرض الخاص"
           />
-          <span>دينار، والتوصيل مجاني متل العادة.</span>
+          <span>دينار سعر عرض (اختياري)، والتوصيل مجاني متل العادة.</span>
           <span className="w-full text-xs text-muted">
-            المساعد بيعرضها بس على الزبون اللي مقاسه نفس مقاس القطعة، وما بيغيّر مقاس حدا مشان العرض. بيقول «عرض خاص»، مو «تصفية» ولا «مكسرة». واضغط «احفظ» فوق.
+            بلا سعر: المساعد بيعرض هالألوان بالأول وبينصح فيها، بسعرها العادي. مع سعر: بيعرضها كـ«عرض خاص» بهالسعر. بالحالتين بس على الزبون اللي مقاسه نفس مقاس القطعة، وما بيغيّر مقاس حدا، وما بيقول «تصفية» ولا «مكسرة» ولا كم قطعة باقي. واضغط «احفظ» فوق.
           </span>
         </div>
       )}

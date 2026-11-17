@@ -39,6 +39,7 @@ function stockTable(): string {
   }
   const clearance = listClearance();
   let anyClearance = false;
+  let anyPush = false; // marked pieces with no special price: shown first at their usual price
   const lines: string[] = [];
   for (const [product, colors] of products) {
     const oneSize = !hasSizes(product, rows);
@@ -52,16 +53,20 @@ function stockTable(): string {
       const onOffer = offer
         ? left.filter((size) => offer.cells.some((c) => stockName(c.color) === stockName(color) && stockName(c.size) === stockName(size)))
         : [];
-      if (onOffer.length) anyClearance = true;
+      const priced = onOffer.length > 0 && offer!.price > 0;
+      if (priced) anyClearance = true;
+      if (onOffer.length && !priced) anyPush = true;
       lines.push(
         left.length
           ? `- ${color}: available in ${left.join(", ")}${out.length ? ` (sold out: ${out.join(", ")})` : ""}` +
               // A color on offer is shown even when few are left: the offer is how they go.
-              (onOffer.length
+              (priced
                 ? ` — CLEARANCE OFFER${oneSize ? "" : ` in size ${onOffer.join(", ")}`}: ${offer!.price} دينار instead of the usual price`
-                : pieces <= FEW_LEFT
-                  ? " — ONLY A FEW LEFT"
-                  : "")
+                : onOffer.length
+                  ? ` — PUSH FIRST${oneSize ? "" : ` in size ${onOffer.join(", ")}`}`
+                  : pieces <= FEW_LEFT
+                    ? " — ONLY A FEW LEFT"
+                    : "")
           : `- ${color}: SOLD OUT in every size`,
       );
     }
@@ -75,6 +80,14 @@ function stockTable(): string {
   - Say «عرض خاص» or «سعر خاص», never «تصفية», «مكسرة» or «باقي قطع قليلة». Never the number of pieces.
   - In the summary and in submit_order, an offer piece's price is the offer price (total = the sum of each piece's price). The total holds that one number only («الإجمالي: 300 دينار»), never the usual price next to it: the courier collects the number written there.`
     : "";
+  // In Nov 2026 the fur's last honey حلزون and beige سلسلة pieces were to go first, at the usual price.
+  const pushRules = anyPush
+    ? `
+- A color marked "PUSH FIRST" is one our team wants sold first (the last pieces of that color), at its usual price:
+  - When you show or list the colors (of the product, or of the model they chose), send its photo first and name it first, and recommend it in a few words as a beautiful choice («العسلي لونه فخم ومميز 👌»). You may add «الكمية محدودة» once in the chat. For a product with sizes, only when the customer's size is one marked.
+  - Never say it's the last pieces, leftovers or a clearance, never the number of pieces, and never press: if they prefer another color, sell that one gladly.
+  - It doesn't change a product's first message in its knowledge document (which photos go first there); it applies when the colors are shown.`
+    : "";
   return `
 
 # Stock right now
@@ -83,7 +96,7 @@ This list is the truth about what we have, above anything the knowledge document
 - Don't send photos of a color that is sold out in every size, and don't offer it.
 - A color marked "ONLY A FEW LEFT" is almost gone: don't send its photo or name it when you show or list the colors yourself (show the others). If the customer asks for it, picks it from a photo or our ad names it, it is available: say so with "الكمية محدودة" in a few words (never the number) and carry on with their order.
 - Before calling submit_order, check every item against this list. If one is sold out (even when the summary was already sent and the customer confirmed), don't call submit_order: tell them kindly it just ran out and offer what we have in their size.
-- A color or size missing from this list isn't kept in stock here: answer from the knowledge documents.${clearanceRules}
+- A color or size missing from this list isn't kept in stock here: answer from the knowledge documents.${clearanceRules}${pushRules}
 ${lines.join("\n")}`;
 }
 
@@ -95,7 +108,7 @@ export function offerPriceProblems(items: OrderItem[], total: string): string[] 
   const rows = listStock();
   const count = items.reduce((n, i) => n + (Number(i.quantity) || 1), 0);
   for (const offer of listClearance()) {
-    if (amount !== offer.price * count) continue;
+    if (!(offer.price > 0) || amount !== offer.price * count) continue;
     const notOnOffer = items.filter((i) => {
       const row = stockRowFor(i, rows);
       return !(

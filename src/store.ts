@@ -499,7 +499,7 @@ export function listProductDetails(): { product: string; details: string; update
 db.exec(`
   CREATE TABLE IF NOT EXISTS stock_clearance (
     product    TEXT    PRIMARY KEY,
-    price      INTEGER NOT NULL,           -- دينار, delivery still free
+    price      INTEGER NOT NULL,           -- دينار, delivery still free; 0 = usual price, pushed first
     cells      TEXT    NOT NULL,           -- JSON [{ color, size }]
     updated_at INTEGER NOT NULL
   );
@@ -512,16 +512,16 @@ export function listClearance(): Clearance[] {
   return rows.map((r) => ({ product: r.product, price: r.price, cells: JSON.parse(r.cells) as Clearance["cells"] }));
 }
 
-// No price or no pieces removes it.
+// No pieces removes it. Price 0: the pieces are pushed first at their usual price (no special price).
 export function setClearance(product: string, price: number, cells: { color: string; size: string }[]) {
-  if (!(price > 0) || !cells.length) {
+  if (!cells.length) {
     db.prepare("DELETE FROM stock_clearance WHERE product = ?").run(product);
     return;
   }
   db.prepare(
     `INSERT INTO stock_clearance (product, price, cells, updated_at) VALUES (?, ?, ?, ?)
      ON CONFLICT (product) DO UPDATE SET price = excluded.price, cells = excluded.cells, updated_at = excluded.updated_at`,
-  ).run(product, Math.round(price), JSON.stringify(cells), Date.now());
+  ).run(product, Math.max(0, Math.round(price) || 0), JSON.stringify(cells), Date.now());
 }
 
 // Empty text removes them.
