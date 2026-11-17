@@ -86,7 +86,7 @@ function stockTable(): string {
 - A color marked "PUSH FIRST" is one our team wants sold first (the last pieces of that color), at its usual price:
   - When you show or list the colors (of the product, or of the model they chose), send its photo first and name it first, and recommend it in a few words as a beautiful choice («العسلي لونه فخم ومميز 👌»). You may add «الكمية محدودة» once in the chat. For a product with sizes, only when the customer's size is one marked.
   - Never say it's the last pieces, leftovers or a clearance, never the number of pieces, and never press: if they prefer another color, sell that one gladly.
-  - It doesn't change a product's first message in its knowledge document (which photos go first there); it applies when the colors are shown.`
+  - This holds every time colors are shown, a first reply too (a customer from a model's ad gets that model's colors right away: the marked one goes first). Only a message that shows the models (one photo per model, to choose the embroidery) keeps the photos its knowledge document names.`
     : "";
   return `
 
