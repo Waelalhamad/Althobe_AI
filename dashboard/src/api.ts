@@ -46,7 +46,21 @@ export type CashRow = {
 };
 export type StaffCash = { balance: number; kinds: { in: string[]; out: string[] }; rows: CashRow[] };
 export type StaffStockRow = { product: string; color: string; size: string; quantity: number; updatedAt: number };
-export type StaffStockLogRow = { id: number; product: string; color: string; size: string; before: number | null; after: number | null; byRole: Role; at: number };
+export type StaffStockLogRow = {
+  id: number;
+  product: string;
+  color: string;
+  size: string;
+  before: number | null;
+  after: number | null;
+  byRole: Role;
+  at: number;
+  reason: string; // "opening": the opening count
+};
+// The opening count (جرد افتتاحي): the cash line of kind OPENING still in force, and the stock as counted.
+export const OPENING = "رصيد افتتاحي";
+export type OpeningItem = { product: string; color: string; size: string; quantity: number };
+export type StaffOpening = { cash: CashRow | null; stock: { at: number; byRole: Role; items: OpeningItem[] } | null };
 
 export type Totals = {
   conversations: number;
@@ -431,6 +445,9 @@ export const api = {
   staffCash: (limit = 100) => request<StaffCash>(`/staff/cash?limit=${limit}`),
   undoStaffCash: (id: number) => post<CashRow>(`/staff/cash/${id}/undo`),
   addStaffCash: (line: { direction: "in" | "out"; amount: number; kind: string; statement: string; note: string }) => post<CashRow>("/staff/cash", line),
+  staffOpening: () => request<StaffOpening>("/staff/opening"),
+  setOpeningCash: (amount: number) => post<CashRow>("/staff/opening/cash", { amount }),
+  setOpeningStock: (items: OpeningItem[]) => post<StaffOpening["stock"]>("/staff/opening/stock", { items }),
   staffStock: (log = 50) => request<{ rows: StaffStockRow[]; log: StaffStockLogRow[] }>(`/staff/stock?log=${log}`),
   setStaffStock: (cell: { product: string; color: string; size: string; quantity: number }) =>
     request<{ ok: true }>("/staff/stock", { method: "PUT", body: JSON.stringify(cell) }),

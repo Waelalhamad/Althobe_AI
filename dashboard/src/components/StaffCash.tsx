@@ -13,7 +13,7 @@ export const amount = (n: number) => nf.format(n);
 export const lyd = (n: number) => `${amount(n)} د.ل`;
 
 // Phones often type Arabic digits and the Arabic decimal mark.
-const latin = (t: string) =>
+export const latin = (t: string) =>
   t
     .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
     .replace(/[٫,]/g, ".")

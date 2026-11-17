@@ -4,10 +4,11 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import { ArrowDownCircle, ArrowUpCircle, Boxes, HandCoins, Wallet } from "lucide-react";
-import { api, type CashRow } from "../api";
+import { api, OPENING, type CashRow } from "../api";
 import { Badge, Card, ErrorNote, PageHeader, Stat } from "../components/ui";
 import { CashButtons, CashList, lyd } from "../components/StaffCash";
 import { StaffStock, useStaffStock } from "../components/StaffStock";
+import { OpeningCash, OpeningCashSummary, OpeningStock, OpeningStockSummary, useOpening } from "../components/Opening";
 import { useStaffCash } from "./Staff";
 import { num, time } from "../format";
 
@@ -19,7 +20,7 @@ const PERIODS: { id: string; label: string; from: () => number }[] = [
   { id: "7", label: "آخر 7 أيام", from: () => Date.now() - 7 * DAY },
 ];
 const DARB = "درب السبيل";
-const counts = (r: CashRow) => r.undoes === null && r.undoneBy === null;
+const counts = (r: CashRow) => r.undoes === null && r.undoneBy === null && r.kind !== OPENING;
 
 export function Libya() {
   const [period, setPeriod] = useState("month");
@@ -27,11 +28,12 @@ export function Libya() {
   const [kind, setKind] = useState<string>();
   const [tab, setTab] = useState<"cash" | "stock">("cash");
   const cash = useStaffCash(5000);
+  const opening = useOpening();
   const from = PERIODS.find((p) => p.id === period)!.from();
   const c = cash.data;
 
   const inPeriod = useMemo(() => (c?.rows ?? []).filter((r) => r.at >= from), [c, from]);
-  // Totals leave out a line that was undone and the correction that undid it (they cancel each other).
+  // Totals leave out the opening count (money he already had, not money that came in), a line that was undone and the correction that undid it (they cancel each other).
   const sum = (dir: "in" | "out", k?: string) => inPeriod.filter((r) => counts(r) && r.direction === dir && (!k || r.kind === k)).reduce((n, r) => n + r.amount, 0);
   const shown = inPeriod.filter((r) => (!direction || r.direction === direction) && (!kind || r.kind === kind));
   const kinds = [...new Set(inPeriod.filter((r) => !direction || r.direction === direction).map((r) => r.kind))];
@@ -93,6 +95,11 @@ export function Libya() {
               </button>
             ))}
           </div>
+          {opening.data && !opening.data.cash && (
+            <div className="mb-4 max-w-md">
+              <OpeningCash />
+            </div>
+          )}
           {c && (
             <>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -118,6 +125,9 @@ export function Libya() {
                 />
               </div>
 
+              <div className="mt-2">
+                <OpeningCashSummary />
+              </div>
               <Card className="mt-4 flex flex-col gap-3">
                 <h3 className="font-semibold">سجّل حركة عنو</h3>
                 <div className="max-w-md">
@@ -171,15 +181,19 @@ export function Libya() {
 
 function StockTab() {
   const q = useStaffStock(300);
+  const opening = useOpening();
   const log = q.data?.log ?? [];
+  const counting = opening.data && !opening.data.stock;
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div>
         <p className="mb-3 text-sm text-muted">
           مخزونو هو، منفصل عن «المخزون والراجع»: المساعد والطلبات ما بيقروه وما بيغيّروه. أي تعديل هون بينسجل باسم الإدارة.
         </p>
-        <StaffStock />
+        {counting ? q.data && <OpeningStock current={q.data.rows} /> : <StaffStock />}
       </div>
+      <div className="flex flex-col gap-6">
+      <OpeningStockSummary />
       <Card>
         <h3 className="mb-2 flex items-center gap-2 font-semibold">
           <Boxes size={18} /> سجل التعديلات
@@ -199,12 +213,14 @@ function StockTab() {
                   <span className="num ltr">{l.after > l.before ? `+${l.after - l.before}` : l.after - l.before}</span>
                 </Badge>
               )}
+              {l.reason === "opening" && <Badge tone="primary">جرد افتتاحي</Badge>}
               {l.byRole === "admin" && <Badge tone="info">الإدارة</Badge>}
               <span className="ltr num ms-auto text-xs text-muted">{time(l.at)}</span>
             </li>
           ))}
         </ul>
       </Card>
+      </div>
     </div>
   );
 }

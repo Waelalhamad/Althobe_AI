@@ -40,10 +40,19 @@ if (!(db.prepare("PRAGMA table_info(staff_cash)").all() as { name: string }[]).s
 if (!(db.prepare("PRAGMA table_info(staff_cash)").all() as { name: string }[]).some((c) => c.name === "statement")) {
   db.exec("ALTER TABLE staff_cash ADD COLUMN statement TEXT NOT NULL DEFAULT ''");
 }
+// Why a stock cell changed: '' a normal edit, 'opening' the opening count.
+if (!(db.prepare("PRAGMA table_info(staff_stock_log)").all() as { name: string }[]).some((c) => c.name === "reason")) {
+  db.exec("ALTER TABLE staff_stock_log ADD COLUMN reason TEXT NOT NULL DEFAULT ''");
+}
+// The opening count of his stock was made (once): when and by whom. Its cells are the log lines with reason 'opening'.
+db.exec("CREATE TABLE IF NOT EXISTS staff_opening (part TEXT PRIMARY KEY, at INTEGER NOT NULL, by_role TEXT NOT NULL)");
 
 export type Role = "staff" | "admin";
 
 // What a line is for. A mistake is never deleted: the opposite line with «تصحيح» undoes it.
+// The opening count of his cash is a line of its own kind, made only through setOpeningCash (never a chip on the form).
+export const OPENING = "رصيد افتتاحي";
+
 export const CASH_KINDS = {
   in: ["درب السبيل", "زبون", "تصحيح", "غيره"],
   out: ["تحويل للشركة", "مصروف", "راتب", "تصحيح", "غيره"],
@@ -80,6 +89,11 @@ const DIRECTION = { in: "استلم", out: "دفع" } as const;
 // The team hears of every line the employee writes (lines the team writes itself aren't announced).
 function announce(row: CashRow) {
   if (row.byRole !== "staff") return;
+  if (row.kind === OPENING) {
+    notify("staff", `📋 <b>موظف ليبيا: الجرد الافتتاحي للمصاري</b>
+معو: <b>${row.amount} د.ل</b>`);
+    return;
+  }
   const sign = row.direction === "in" ? "➕" : "➖";
   notify(
     "staff",
@@ -119,6 +133,23 @@ export function addCash(input: { direction?: unknown; amount?: unknown; kind?: u
   return insert(direction, amount, kind, statement, note, by, null);
 }
 
+// The opening cash line still in force (undoing it with «اعكسها» lets the count be made again).
+export function openingCash(): CashRow | undefined {
+  return db.prepare(`${SELECT_CASH} WHERE c.kind = ? AND c.undoes IS NULL AND NOT EXISTS (SELECT 1 FROM staff_cash u WHERE u.undoes = c.id)`).get(OPENING) as
+    | CashRow
+    | undefined;
+}
+
+// The money he holds when the log starts (0 is fine: he may hold none).
+export function setOpeningCash(input: { amount?: unknown }, by: Role): CashRow | string {
+  if (openingCash()) return "الجرد الافتتاحي للمصاري انسجل قبل. إذا فيه غلط، اعكسو من السجل وسجّلو من جديد";
+  const amount = Math.round(Number(input.amount) * 1000) / 1000;
+  if (input.amount === "" || input.amount === null || input.amount === undefined || !Number.isFinite(amount) || amount < 0 || amount > 10_000_000) {
+    return "اكتب المبلغ صح";
+  }
+  return insert("in", amount, OPENING, "الجرد الافتتاحي: المصاري يلي كانت معو", "", by, null);
+}
+
 // Cancels a line with the opposite one (kind «تصحيح»), never by deleting it.
 export function undoCash(id: number, by: Role): CashRow | string {
   const row = db.prepare(`${SELECT_CASH} WHERE c.id = ?`).get(id) as CashRow | undefined;
@@ -134,7 +165,17 @@ export function undoCash(id: number, by: Role): CashRow | string {
 // --- His stock ---------------------------------------------------------------------
 
 export type StaffStockRow = { product: string; color: string; size: string; quantity: number; updatedAt: number };
-export type StaffStockLogRow = { id: number; product: string; color: string; size: string; before: number | null; after: number | null; byRole: Role; at: number };
+export type StaffStockLogRow = {
+  id: number;
+  product: string;
+  color: string;
+  size: string;
+  before: number | null;
+  after: number | null;
+  byRole: Role;
+  at: number;
+  reason: string;
+};
 
 export function listStaffStock(): StaffStockRow[] {
   return db
@@ -144,14 +185,14 @@ export function listStaffStock(): StaffStockRow[] {
 
 export function staffStockLog(limit: number): StaffStockLogRow[] {
   return db
-    .prepare(`SELECT id, product, color, size, qty_before AS "before", qty_after AS "after", by_role AS byRole, at FROM staff_stock_log ORDER BY at DESC, id DESC LIMIT ?`)
+    .prepare(`SELECT id, product, color, size, qty_before AS "before", qty_after AS "after", by_role AS byRole, at, reason FROM staff_stock_log ORDER BY at DESC, id DESC LIMIT ?`)
     .all(limit) as StaffStockLogRow[];
 }
 
 const clean = (v: unknown) => String(v ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
 
-function logChange(product: string, color: string, size: string, before: number | null, after: number | null, by: Role, at: number) {
-  db.prepare("INSERT INTO staff_stock_log (product, color, size, qty_before, qty_after, by_role, at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+function logChange(product: string, color: string, size: string, before: number | null, after: number | null, by: Role, at: number, reason = "") {
+  db.prepare("INSERT INTO staff_stock_log (product, color, size, qty_before, qty_after, by_role, at, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
     product,
     color,
     size,
@@ -159,6 +200,7 @@ function logChange(product: string, color: string, size: string, before: number 
     after,
     by,
     at,
+    reason,
   );
 }
 
@@ -198,4 +240,59 @@ export function removeStaffStock(input: { product?: unknown; color?: unknown; si
     db.prepare("DELETE FROM staff_stock WHERE product = ? AND color = ? AND size = ?").run(r.product, r.color, r.size);
     logChange(r.product, r.color, r.size, r.quantity, null, by, at);
   }
+}
+
+// --- The opening count of his stock ------------------------------------------------------
+
+export type OpeningItem = { product: string; color: string; size: string; quantity: number };
+export type OpeningStock = { at: number; byRole: Role; items: OpeningItem[] };
+
+// What he had when the log started, as counted (later − / + don't change it).
+export function openingStock(): OpeningStock | undefined {
+  const head = db.prepare("SELECT at, by_role AS byRole FROM staff_opening WHERE part = 'stock'").get() as { at: number; byRole: Role } | undefined;
+  if (!head) return;
+  const items = db
+    .prepare("SELECT product, color, size, qty_after AS quantity FROM staff_stock_log WHERE reason = 'opening' ORDER BY id")
+    .all() as OpeningItem[];
+  return { at: head.at, byRole: head.byRole, items };
+}
+
+// Saves the whole count at once (all or nothing), once. A cell already there takes the counted number.
+export function setOpeningStock(input: { items?: unknown }, by: Role): OpeningStock | string {
+  if (openingStock()) return "الجرد الافتتاحي للمخزون انسجل قبل. غيّر الأعداد بـ − و + من المخزون";
+  const raw = Array.isArray(input.items) ? (input.items as Record<string, unknown>[]) : [];
+  const cells = new Map<string, OpeningItem>();
+  for (const item of raw) {
+    const product = clean(item?.product);
+    const color = clean(item?.color);
+    const size = clean(item?.size) || "ستاندرد";
+    const quantity = Number(item?.quantity);
+    if (!product || !color) return "كل سطر بدو منتج ولون";
+    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 100_000) return `العدد لازم يكون رقم صحيح (${product} ${color} ${size})`;
+    cells.set(`${product}|${color}|${size}`, { product, color, size, quantity });
+  }
+  // No items is a count too: he holds no stock yet.
+  if (cells.size > 2000) return "كتير أسطر";
+  const at = Date.now();
+  db.exec("BEGIN");
+  try {
+    for (const c of cells.values()) {
+      const before = current(c.product, c.color, c.size);
+      db.prepare(
+        "INSERT INTO staff_stock (product, color, size, quantity, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (product, color, size) DO UPDATE SET quantity = excluded.quantity, updated_at = excluded.updated_at",
+      ).run(c.product, c.color, c.size, c.quantity, at);
+      logChange(c.product, c.color, c.size, before, c.quantity, by, at, "opening");
+    }
+    db.prepare("INSERT INTO staff_opening (part, at, by_role) VALUES ('stock', ?, ?)").run(at, by);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  const pieces = [...cells.values()].reduce((n, c) => n + c.quantity, 0);
+  if (by === "staff") {
+    notify("staff", `📋 <b>موظف ليبيا: الجرد الافتتاحي للمخزون</b>
+${cells.size} سطر · <b>${pieces} قطعة</b>`);
+  }
+  return openingStock()!;
 }

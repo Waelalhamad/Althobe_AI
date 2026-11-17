@@ -22,7 +22,21 @@ import {
 import { addToBlacklist, blacklistCandidates, blacklistMessage, listBlacklist, markNotified, removeFromBlacklist } from "../blacklist.js";
 import { log } from "../scheduler.js";
 import { missingStock } from "../stock.js";
-import { addCash, cashBalance, CASH_KINDS, listCash, listStaffStock, removeStaffStock, setStaffStock, staffStockLog, undoCash } from "../staff.js";
+import {
+  addCash,
+  cashBalance,
+  CASH_KINDS,
+  listCash,
+  listStaffStock,
+  openingCash,
+  openingStock,
+  removeStaffStock,
+  setOpeningCash,
+  setOpeningStock,
+  setStaffStock,
+  staffStockLog,
+  undoCash,
+} from "../staff.js";
 import { aiRepliesEnabled, channelRepliesEnabled, META_CHANNELS, setAiReplies, setChannelReplies, setTestNumbers, testNumbers } from "../settings.js";
 import {
   channelOf,
@@ -1071,6 +1085,31 @@ dashboardApi.post("/staff/cash/:id/undo", (req, res) => {
     return;
   }
   log("dashboard", `Libya cash line ${req.params.id} undone by ${saved.byRole}`);
+  res.json(saved);
+});
+
+// The opening count (جرد افتتاحي): his cash and his stock when the log starts, each made once.
+dashboardApi.get("/staff/opening", (_req, res) => {
+  res.json({ cash: openingCash() ?? null, stock: openingStock() ?? null });
+});
+
+dashboardApi.post("/staff/opening/cash", (req, res) => {
+  const saved = setOpeningCash(req.body ?? {}, roleOf(res));
+  if (typeof saved === "string") {
+    res.status(400).json({ error: saved });
+    return;
+  }
+  log("dashboard", `Libya opening cash ${saved.amount} by ${saved.byRole}`);
+  res.json(saved);
+});
+
+dashboardApi.post("/staff/opening/stock", (req, res) => {
+  const saved = setOpeningStock(req.body ?? {}, roleOf(res));
+  if (typeof saved === "string") {
+    res.status(400).json({ error: saved });
+    return;
+  }
+  log("dashboard", `Libya opening stock: ${saved.items.length} cells by ${saved.byRole}`);
   res.json(saved);
 });
 

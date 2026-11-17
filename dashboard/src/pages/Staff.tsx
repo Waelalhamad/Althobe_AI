@@ -3,10 +3,11 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { Boxes, LogOut, Wallet } from "lucide-react";
-import { api } from "../api";
+import { api, OPENING } from "../api";
 import { ErrorNote } from "../components/ui";
 import { amount, CashButtons, CashList, lyd } from "../components/StaffCash";
-import { StaffStock } from "../components/StaffStock";
+import { StaffStock, useStaffStock } from "../components/StaffStock";
+import { OpeningCash, OpeningStock, useOpening } from "../components/Opening";
 
 export function useStaffCash(limit = 100) {
   return useQuery({ queryKey: ["staff-cash", limit], queryFn: () => api.staffCash(limit), refetchInterval: 30_000 });
@@ -16,8 +17,10 @@ export function StaffHome() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"cash" | "stock">("cash");
   const cash = useStaffCash(50);
+  const opening = useOpening();
+  const stock = useStaffStock();
   const dayStart = new Date().setHours(0, 0, 0, 0);
-  const todays = (cash.data?.rows ?? []).filter((r) => r.at >= dayStart && r.undoes === null && r.undoneBy === null);
+  const todays = (cash.data?.rows ?? []).filter((r) => r.at >= dayStart && r.undoes === null && r.undoneBy === null && r.kind !== OPENING);
   const today = {
     in: todays.filter((r) => r.direction === "in").reduce((n, r) => n + r.amount, 0),
     out: todays.filter((r) => r.direction === "out").reduce((n, r) => n + r.amount, 0),
@@ -42,6 +45,7 @@ export function StaffHome() {
         {tab === "cash" ? (
           <>
             <ErrorNote error={cash.error} />
+            {opening.data && !opening.data.cash && <OpeningCash />}
             <div className="glass rounded-3xl p-6 text-center">
               <div className="text-sm text-muted">المصاري يلي معك هلق</div>
               <div className={clsx("num mt-1 text-4xl font-bold", (cash.data?.balance ?? 0) < 0 && "text-bad")}>
@@ -59,6 +63,8 @@ export function StaffHome() {
               <CashList rows={cash.data?.rows ?? []} mineOnly />
             </div>
           </>
+        ) : opening.data && !opening.data.stock ? (
+          stock.data && <OpeningStock current={stock.data.rows} />
         ) : (
           <StaffStock />
         )}
