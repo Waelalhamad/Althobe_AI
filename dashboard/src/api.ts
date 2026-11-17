@@ -202,6 +202,7 @@ export type StockProduct = {
   colors: string[];
   sizes: string[];
   cells: { color: string; size: string; quantity: number; held: number }[];
+  details: string; // what the team wrote about it for the assistant (fabric, material…)
   updatedAt: number;
 };
 
@@ -482,6 +483,8 @@ export const api = {
     request(`/stock/${encodeURIComponent(product)}`, { method: "PUT", body: JSON.stringify({ cells }) }),
   checkStock: (items: OrderItem[]) => post<{ missing: string[] }>("/stock/check", { items }),
   deleteStock: (product: string) => request(`/stock/${encodeURIComponent(product)}`, { method: "DELETE" }),
+  saveProductDetails: (product: string, details: string) =>
+    request(`/stock/${encodeURIComponent(product)}/details`, { method: "PUT", body: JSON.stringify({ details }) }),
   playground: (messages: ChatTurn[], customerType: "new" | "returning" | "order" = "new") =>
     post<Decision>("/playground", { messages, customerType }),
   orders: (f: OrderFilters = {}) =>

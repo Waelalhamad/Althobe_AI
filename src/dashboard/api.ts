@@ -42,7 +42,9 @@ import {
   channelOf,
   db,
   deleteProductStock,
+  listProductDetails,
   listStock,
+  setProductDetails,
   setProductStock,
   stockName,
   stockRowFor,
@@ -733,10 +735,12 @@ dashboardApi.get("/stock", (_req, res) => {
       if (row) held.set(`${row.product}|${row.color}|${row.size}`, (held.get(`${row.product}|${row.color}|${row.size}`) ?? 0) + item.quantity);
     }
   }
+  const details = new Map(listProductDetails().map((d) => [d.product, d.details]));
   const products = [...new Set(rows.map((r) => r.product))].map((product) => {
     const mine = rows.filter((r) => r.product === product);
     return {
       product,
+      details: details.get(product) ?? "",
       colors: [...new Set(mine.map((r) => r.color))],
       sizes: [...new Set(mine.map((r) => r.size))],
       cells: mine.map((r) => ({ color: r.color, size: r.size, quantity: r.quantity, held: held.get(`${product}|${r.color}|${r.size}`) ?? 0 })),
@@ -771,6 +775,19 @@ dashboardApi.put("/stock/:product", (req, res) => {
   }
   setProductStock(product, rows);
   log("dashboard", `stock saved for ${product}: ${rows.reduce((n, r) => n + Math.max(0, r.quantity), 0)} pieces in ${rows.length} color/size`);
+  res.json({ ok: true });
+});
+
+// The product's details for the assistant (fabric, material…): { details }. Empty removes them.
+dashboardApi.put("/stock/:product/details", (req, res) => {
+  const product = String(req.params.product).trim().slice(0, 100);
+  if (!product) {
+    res.status(400).json({ error: "اسم المنتج ناقص" });
+    return;
+  }
+  const details = String(req.body?.details ?? "");
+  setProductDetails(product, details);
+  log("dashboard", `product details ${details.trim() ? "saved" : "removed"} for ${product}`);
   res.json({ ok: true });
 });
 

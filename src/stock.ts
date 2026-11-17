@@ -1,5 +1,5 @@
 // Stock for the AI and the team: what is left per color and size, so nobody sells what we don't have.
-import { hasSizes, listStock, stockRowFor, whenStockRunsOut, type OrderItem, type StockRow } from "./store.js";
+import { hasSizes, listProductDetails, listStock, stockRowFor, whenStockRunsOut, type OrderItem, type StockRow } from "./store.js";
 import { esc, notify } from "./telegram.js";
 
 // Telegram: a color/size just ran out.
@@ -11,8 +11,24 @@ whenStockRunsOut((row) => {
 // fur's silver had 3 pieces left and the AI kept sending its photo to every customer.
 const FEW_LEFT = 3;
 
-// The prompt section: per product, each color with the sizes still available. Empty when no stock is kept.
+// What the team wrote about each product on the stock page (fabric, material…), above the knowledge documents.
+function detailsForPrompt(): string {
+  const all = listProductDetails();
+  if (!all.length) return "";
+  return `
+
+# Product details from the team
+What our team wrote about each product (its fabric, material, feel, season, care…). It is true, and above any line of the knowledge documents that says we don't know something about that product (like «لا نعرف عنه أكثر من اسمه»): when the customer asks, answer from it in a few words, proudly and in their dialect, then carry on selling. Bring a detail up yourself only where it helps (a price objection, «شن الخامة؟», «يدفّي؟»), one at a time, never the whole list. Never add anything that isn't written here or in the knowledge: if it isn't there, say «نتأكدلك استاذ».
+${all.map((d) => `## ${d.product}\n${d.details}`).join("\n\n")}`;
+}
+
+// The prompt section: per product, each color with the sizes still available, after the team's product details.
+// Empty when neither is kept.
 export function stockForPrompt(): string {
+  return detailsForPrompt() + stockTable();
+}
+
+function stockTable(): string {
   const rows = listStock();
   if (!rows.length) return "";
   const products = new Map<string, Map<string, StockRow[]>>();

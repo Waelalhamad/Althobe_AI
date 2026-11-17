@@ -474,8 +474,40 @@ export function setProductStock(product: string, rows: { color: string; size: st
   }
 }
 
+// What the team writes about a product on the stock page (fabric, material, feel, season, care…), for the AI to
+// talk about it. Kept apart from the stock table: saving quantities replaces that product's rows.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS product_details (
+    product    TEXT PRIMARY KEY,
+    details    TEXT    NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+`);
+
+export const DETAILS_MAX = 1500;
+
+export function listProductDetails(): { product: string; details: string; updatedAt: number }[] {
+  return db.prepare("SELECT product, details, updated_at AS updatedAt FROM product_details ORDER BY product").all() as {
+    product: string;
+    details: string;
+    updatedAt: number;
+  }[];
+}
+
+// Empty text removes them.
+export function setProductDetails(product: string, details: string) {
+  const text = details.trim().slice(0, DETAILS_MAX);
+  if (!text) db.prepare("DELETE FROM product_details WHERE product = ?").run(product);
+  else
+    db.prepare(
+      `INSERT INTO product_details (product, details, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (product) DO UPDATE SET details = excluded.details, updated_at = excluded.updated_at`,
+    ).run(product, text, Date.now());
+}
+
 export function deleteProductStock(product: string) {
   db.prepare("DELETE FROM stock WHERE product = ?").run(product);
+  db.prepare("DELETE FROM product_details WHERE product = ?").run(product); // its card is gone from the stock page
 }
 
 // "الأسود" / "أسود" / "اللون: اسود" → "اسود"; Arabic digits → 0-9.

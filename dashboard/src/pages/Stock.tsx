@@ -136,6 +136,47 @@ function ColorPhotos({ product, color }: { product: string; color: string }) {
   );
 }
 
+const DETAILS_MAX = 1500;
+
+// What the assistant says about the product when a customer asks (fabric, material…): only what's written here.
+function ProductDetails({ product, saved }: { product: string; saved: string }) {
+  const queryClient = useQueryClient();
+  const [text, setText] = useState(saved);
+  useEffect(() => setText(saved), [saved]);
+  const save = useMutation({
+    mutationFn: () => api.saveProductDetails(product, text),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["stock"] }),
+  });
+  const dirty = text.trim() !== saved.trim();
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-line p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-semibold">تفاصيل المنتج للمساعد</h3>
+        {!saved.trim() && <Badge tone="warn">فاضي</Badge>}
+        <span className="text-xs text-muted">المساعد بيحكي عن المنتج من هون لما يسأل الزبون، وما بيزيد شي مو مكتوب.</span>
+      </div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value.slice(0, DETAILS_MAX))}
+        rows={5}
+        placeholder={
+          "مثلاً:\n- القماش والخامة: …\n- الملمس: خفيف ولا تقيل، ناعم، دافي…\n- لأي موسم: شتوي، صيفي، كل المواسم\n- الغسيل والكوي: …\n- شي بيميّزه أو بيسأل عنه الزباين: التطريز، التبطين، الطول، بلد الصنع…"
+        }
+        className={clsx(inputClass, "w-full leading-relaxed")}
+      />
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted num">
+          {num(text.length)} / {num(DETAILS_MAX)}
+        </span>
+        <ErrorNote error={save.error} />
+        <Button className="ms-auto" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+          {save.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} احفظ التفاصيل
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; saved?: StockProduct; onCancel?: () => void; onSaved?: () => void }) {
   const queryClient = useQueryClient();
   const [d, setD] = useState(initial);
@@ -198,7 +239,7 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
           {saved && (
             <Button
               variant="ghost"
-              onClick={() => window.confirm(`نوقف عدّ مخزون ${d.product}؟ المساعد رح يرجع يبيع كل الألوان والمقاسات.`) && remove.mutate()}
+              onClick={() => window.confirm(`نوقف عدّ مخزون ${d.product}؟ المساعد رح يرجع يبيع كل الألوان والمقاسات، وتفاصيل المنتج بتنمحى.`) && remove.mutate()}
               disabled={remove.isPending}
               title="وقف عدّ المخزون لهالمنتج"
             >
@@ -305,6 +346,8 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
           </Button>
         )}
       </div>
+      {saved && <ProductDetails product={saved.product} saved={saved.details ?? ""} />}
+
       <p className="text-xs text-muted">
         الرقم هو الباقي للبيع: الطلبات يلي انسجلت انقصت منو. "+N بطلبات" يعني في N قطعة بطلبات لسا ما انبعتت (موجودة عندكن بس محجوزة)، فلما تعدّو
         البضاعة اطرحوها. فاضي أو 0 يعني خلص.

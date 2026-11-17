@@ -175,3 +175,18 @@ test("only a real courier's number goes to the customer", async () => {
   assert.equal(delivererPhone("مصطفى عبدالرحمن", "+218981234567"), undefined);
   assert.equal(delivererPhone("مندوب", null), undefined);
 });
+
+test("the team's product details go to the assistant, above the knowledge", async () => {
+  const { stockForPrompt } = await import("../src/stock.ts");
+  const { setProductDetails, setProductStock, listStock } = await import("../src/store.ts");
+  setProductDetails("فروة تفاصيل", "القماش: أبو شهري ناعم وتقيل");
+  const text = stockForPrompt();
+  assert.match(text, /# Product details from the team/);
+  assert.match(text, /## فروة تفاصيل\nالقماش: أبو شهري ناعم وتقيل/);
+  // Saving the quantities doesn't touch the details.
+  setProductStock("فروة تفاصيل", [{ color: "بني", size: "ستاندرد", quantity: 5 }]);
+  assert.ok(listStock().some((r) => r.product === "فروة تفاصيل"));
+  assert.match(stockForPrompt(), /أبو شهري ناعم وتقيل/);
+  setProductDetails("فروة تفاصيل", "  ");
+  assert.doesNotMatch(stockForPrompt(), /أبو شهري ناعم وتقيل/);
+});
