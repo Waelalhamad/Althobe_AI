@@ -162,3 +162,16 @@ test("an order for the set in a chat about the fur only is caught", async () => 
   assert.equal(wrongProduct(fur, { fur: false, set: true }).length, 1);
   assert.equal(wrongProduct(set, undefined).length, 0);
 });
+
+test("only a real courier's number goes to the customer", async () => {
+  const { delivererPhone } = await import("../src/darbTrack.ts");
+  assert.equal(delivererPhone("حمزة ابوساسية", "+218919667744"), "0919667744");
+  assert.equal(delivererPhone("احميد مندوب سبها", "+218920430877"), "0920430877");
+  assert.equal(delivererPhone("في طريق الي المنطقة الشرقية", "+21899999999956"), undefined);
+  assert.equal(delivererPhone("في الطريق المنطقة الوسطى", "+218978987456132"), undefined);
+  assert.equal(delivererPhone("في الطريق غرب طرابلس", "+218945660101"), undefined);
+  assert.equal(delivererPhone("علي بن عبدالله موظف رواجع HB", "+218931328062"), undefined);
+  assert.equal(delivererPhone("صالح هميله منسق رحلات", "+218912345678"), undefined);
+  assert.equal(delivererPhone("مصطفى عبدالرحمن", "+218981234567"), undefined);
+  assert.equal(delivererPhone("مندوب", null), undefined);
+});

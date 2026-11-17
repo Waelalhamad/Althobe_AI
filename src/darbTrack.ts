@@ -375,7 +375,7 @@ export function trackingNote(customer: string): string {
       d.created_at && `sent ${hoursAgo(d.created_at)}`,
       d.last_event_at && `last update ${hoursAgo(d.last_event_at)}`,
       // The courier who delivers it (once he took it): the customer may call him.
-      d.accepted_at && d.courier_phone && !FINAL.includes(d.status ?? "") && `The Darb courier delivering it: ${d.courier_name ?? ""}, phone ${d.courier_phone.replace(/^\+218/, "0")} (give it if they ask how to reach him or where it is)`,
+      d.accepted_at && delivererPhone(d.courier_name, d.courier_phone) && !FINAL.includes(d.status ?? "") && `The Darb courier delivering it: ${d.courier_name ?? ""}, phone ${delivererPhone(d.courier_name, d.courier_phone)} (give it if they ask how to reach him or where it is)`,
       d.status === "delayed" && d.note && `The courier's note on the delay: "${d.note}"`,
       d.status === "delayed" && d.delayed_until && d.delayed_until > Date.now() && `delayed until ${libyaTime(d.delayed_until)} (Libya time)`,
     ]
@@ -392,6 +392,20 @@ export function trackingNote(customer: string): string {
     ...loose.map((d) => `A shipment for them (sent before our records): ${describe(d)}.`),
   ];
   return lines.length ? `Order tracking (from Darb Assabil, updated every 15 minutes):\n${lines.join("\n")}` : "";
+}
+
+// Darb's "handler" isn't always the courier who delivers: a transit line («في الطريق غرب طرابلس», «في طريق الي
+// المنطقة الشرقية») with a made-up number (09999999956, 0978987456132), a returns clerk («موظف رواجع HB»), a trip
+// coordinator («منسق رحلات») or a collection courier («مندوب تجميع»). Their number went to customers as "the courier
+// who delivers your order" (Nov 2026). Only a real person or office, with a real Libyan number, is given out.
+const NOT_DELIVERER = /في\s*(?:ال)?طريق|رواجع|منسق|تجميع/;
+const LIBYAN_PHONE = /^(?:\+?218|0)?(9[1-5]\d{7}|2\d{7,8})$/;
+
+// The local number (0…) of whoever delivers, or undefined when the name or number isn't a real deliverer's.
+export function delivererPhone(name: string | null | undefined, phone: string | null | undefined): string | undefined {
+  if (!phone || NOT_DELIVERER.test(name ?? "")) return undefined;
+  const m = phone.replace(/[\s-]/g, "").match(LIBYAN_PHONE);
+  return m ? `0${m[1]}` : undefined;
 }
 
 type CourierInfo = {

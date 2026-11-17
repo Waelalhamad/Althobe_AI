@@ -3,7 +3,7 @@
 // Free-form WhatsApp messages are only allowed within 24 hours of the customer's last message, so an update waits
 // (pending) until the customer is inside that window, the AI may write to them and it's working hours; it's dropped
 // once a later stage comes or after 3 days. Delays and returns go to the team instead (darbTrack.ts, tell()).
-import { onDarbSynced } from "./darbTrack.js";
+import { delivererPhone, onDarbSynced } from "./darbTrack.js";
 import { db, getSetting, isAiPaused, setSetting } from "./store.js";
 import { aiBlockedReason } from "./settings.js";
 import { inWorkingHours } from "./supervisor.js";
@@ -35,25 +35,31 @@ const ORDER: Stage[] = ["sent", "in_city", "delivered"];
 // The furthest stage a shipment is at; none for cancelled or returned shipments.
 // in_city: at Darb's office in the customer's city, or the courier (or office) who delivers it took it ("accepted"):
 // most shipments go from "processing" straight to the courier, never "on-branch".
-function stageOf(s: Pick<Candidate, "status" | "accepted_at" | "courier_phone" | "office_phone">): Stage | undefined {
+// A transit line, a returns clerk or a coordinator holding it (delivererPhone) isn't the courier: still "sent", so
+// the courier's notice goes when the real one takes it.
+function stageOf(s: Pick<Candidate, "status" | "accepted_at" | "courier_name" | "courier_phone" | "office_name" | "office_phone">): Stage | undefined {
   const status = s.status;
   if (status === "completed") return "delivered";
   // "released": the goods of a cancelled order were handed back to us.
   if (["cancelled", "returning", "returned", "released"].includes(status)) return undefined;
   if (status === "on-branch") return "in_city";
-  if (s.accepted_at && (s.courier_phone || s.office_phone)) return "in_city";
+  if (s.accepted_at && courierOf(s).phone) return "in_city";
   return "sent";
 }
 
 type NoticeInfo = { number: string; city: string; courier?: string; phone?: string; office?: boolean };
 
-// The courier or office who has it now, for the customer: name and a local number (0…).
-function courierOf(s: Candidate): Pick<NoticeInfo, "courier" | "phone" | "office"> {
-  const phone = s.courier_phone ?? s.office_phone;
-  if (!s.accepted_at || !phone) return {};
-  const name = (phone === s.courier_phone ? s.courier_name : s.office_name)?.trim() ?? "";
-  const office = phone === s.office_phone || name.startsWith("مكتب");
-  return { courier: name, phone: phone.replace(/^\+?218/, "0"), office };
+// The courier or office who has it now, for the customer: name and a local number (0…), only a real deliverer's.
+function courierOf(s: Pick<Candidate, "accepted_at" | "courier_name" | "courier_phone" | "office_name" | "office_phone">): Pick<NoticeInfo, "courier" | "phone" | "office"> {
+  if (!s.accepted_at) return {};
+  const courier = delivererPhone(s.courier_name, s.courier_phone);
+  if (courier) {
+    const name = s.courier_name?.trim() ?? "";
+    return { courier: name, phone: courier, office: name.startsWith("مكتب") };
+  }
+  // Without a courier, the office that has it, unless he was a non-deliverer (a transit line's office is the hub).
+  const office = !s.courier_phone ? delivererPhone(s.office_name, s.office_phone) : undefined;
+  return office ? { courier: s.office_name?.trim() ?? "", phone: office, office: true } : {};
 }
 
 // When we know who delivers it: who, his number and the shipment's number now (Darb's branch gives it a new one).
