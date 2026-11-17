@@ -39,7 +39,7 @@ import { isBlacklisted, shouldAlert } from "../blacklist.js";
 import { customerLabel, dashboardLink, esc, notify, notifyError } from "../telegram.js";
 import { isMetaCustomer, metaSendImage, metaSendText, metaTyping } from "./meta.js";
 import { noteHandoff } from "../learning.js";
-import { missingStock } from "../stock.js";
+import { markedFirst, missingStock } from "../stock.js";
 import { trackingNote } from "../darbTrack.js";
 import { setShipmentLocation } from "../darb.js";
 import { autoConfirmGaps } from "../autoConfirm.js";
@@ -958,9 +958,8 @@ function sendEndpoint(customer: string): { url: string; headers: Record<string, 
 
 async function sendPhotos(customer: string, ids: string[]) {
   const catalog = listCatalog();
-  for (const id of ids) {
-    const item = catalog.find((i) => i.id === id);
-    if (!item) continue;
+  const items = markedFirst(ids.map((id) => catalog.find((i) => i.id === id)).filter((i) => i !== undefined));
+  for (const item of items) {
     // A product other than our set: the product (model) and the color on the photo, so the customer can say which,
     // and the chat keeps the model too, for the AI to know which one they point at later.
     const label = photoLabel(item, SET_NAME);

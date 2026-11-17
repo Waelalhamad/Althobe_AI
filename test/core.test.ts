@@ -236,3 +236,20 @@ test("pieces marked with no price are pushed first at their usual price", async 
   assert.equal(offerPriceProblems([{ product: "فروة تجربة التصريف", color: "بني", size: "ستاندرد", quantity: 1 }], "0").length, 0);
   deleteProductStock("فروة تجربة التصريف");
 });
+
+test("the marked color's photo goes first", async () => {
+  const { markedFirst } = await import("../src/stock.ts");
+  const { setProductStock, setClearance, deleteProductStock } = await import("../src/store.ts");
+  setProductStock("فروة تجربة الصور", [
+    { color: "عسلي", size: "ستاندرد", quantity: 4 },
+    { color: "بني", size: "ستاندرد", quantity: 49 },
+  ]);
+  setClearance("فروة تجربة الصور", 0, [{ color: "عسلي", size: "ستاندرد" }]);
+  const photos = [
+    { id: "a", product: "فروة تجربة الصور", name: "بني" },
+    { id: "b", product: "فروة تجربة الصور", name: "عسلي" },
+  ];
+  assert.deepEqual(markedFirst(photos).map((p) => p.id), ["b", "a"]);
+  deleteProductStock("فروة تجربة الصور");
+  assert.deepEqual(markedFirst(photos).map((p) => p.id), ["a", "b"]);
+});

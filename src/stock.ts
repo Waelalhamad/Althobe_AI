@@ -100,6 +100,24 @@ This list is the truth about what we have, above anything the knowledge document
 ${lines.join("\n")}`;
 }
 
+// Photos with the colors the team marked (to sell first, or on offer) first, the rest in the AI's order: the AI
+// named the marked color first but still sent its photo second (Nov 2026).
+export function markedFirst<T extends { product?: string; name: string }>(photos: T[]): T[] {
+  const marked = listClearance();
+  const rows = listStock();
+  const isMarked = (p: T) =>
+    marked.some(
+      (m) =>
+        stockName(m.product) === stockName(p.product ?? "") &&
+        m.cells.some(
+          (c) =>
+            stockName(c.color) === stockName(p.name) &&
+            rows.some((r) => r.product === m.product && stockName(r.color) === stockName(c.color) && stockName(r.size) === stockName(c.size) && r.quantity > 0),
+        ),
+    );
+  return [...photos.filter(isMarked), ...photos.filter((p) => !isMarked(p))];
+}
+
 // An order at a product's offer price where not every piece is on offer: the model gave the special price to the
 // wrong color or size. Only the model ties the price to the piece, so this is checked before saving.
 export function offerPriceProblems(items: OrderItem[], total: string): string[] {
