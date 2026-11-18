@@ -8,6 +8,7 @@ import { api, OPENING, type CashRow } from "../api";
 import { Badge, Card, ErrorNote, PageHeader, Stat } from "../components/ui";
 import { CashButtons, CashList, lyd } from "../components/StaffCash";
 import { StaffStock, useStaffStock } from "../components/StaffStock";
+import { CountReports } from "../components/CountReports";
 import { OpeningCash, OpeningCashSummary, OpeningStock, OpeningStockSummary, useOpening } from "../components/Opening";
 import { useStaffCash } from "./Staff";
 import { num, time } from "../format";
@@ -26,7 +27,7 @@ export function Libya() {
   const [period, setPeriod] = useState("month");
   const [direction, setDirection] = useState<"in" | "out">();
   const [kind, setKind] = useState<string>();
-  const [tab, setTab] = useState<"cash" | "stock">("cash");
+  const [tab, setTab] = useState<"cash" | "stock" | "count">("cash");
   const cash = useStaffCash(5000);
   const opening = useOpening();
   const from = PERIODS.find((p) => p.id === period)!.from();
@@ -58,13 +59,14 @@ export function Libya() {
     <div className="mx-auto max-w-5xl">
       <PageHeader
         title="موظف ليبيا"
-        subtitle="صندوقو (شو استلم وشو دفع، بالدينار) ومخزونو الخاص. هو بيسجّل من تلفونو بكلمة سر STAFF_PASSWORD، وما بيشوف غير هالشي."
+        subtitle="صندوقو (شو استلم وشو دفع، بالدينار) وجرد المستودع: بيعدّ مخزوننا بدون ما يشوف أعدادو، وأنتو بتعتمدو الجرد أو بترفضوه. هو بيفوت من تلفونو بكلمة سر STAFF_PASSWORD، وما بيشوف غير هالشي."
         actions={
           <div className="flex gap-1 rounded-xl bg-card-2 p-1">
             {(
               [
                 ["cash", "الصندوق"],
-                ["stock", "المخزون"],
+                ["count", "الجرد"],
+                ["stock", "مخزونو القديم"],
               ] as const
             ).map(([id, label]) => (
               <button
@@ -79,7 +81,9 @@ export function Libya() {
         }
       />
 
-      {tab === "stock" ? (
+      {tab === "count" ? (
+        <CountReports />
+      ) : tab === "stock" ? (
         <StockTab />
       ) : (
         <>

@@ -1,13 +1,13 @@
-// The Libya employee's phone page: his cash and his stock, nothing else (the server allows him nothing else).
+// The Libya employee's phone page: his cash and the warehouse count, nothing else (the server allows him nothing else).
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Boxes, LogOut, Wallet } from "lucide-react";
+import { ClipboardCheck, LogOut, Wallet } from "lucide-react";
 import { api, OPENING } from "../api";
 import { ErrorNote } from "../components/ui";
 import { amount, CashButtons, CashList, lyd } from "../components/StaffCash";
-import { StaffStock, useStaffStock } from "../components/StaffStock";
-import { OpeningCash, OpeningStock, useOpening } from "../components/Opening";
+import { OpeningCash, useOpening } from "../components/Opening";
+import { StockCount } from "../components/StockCount";
 
 export function useStaffCash(limit = 100) {
   return useQuery({ queryKey: ["staff-cash", limit], queryFn: () => api.staffCash(limit), refetchInterval: 30_000 });
@@ -15,10 +15,9 @@ export function useStaffCash(limit = 100) {
 
 export function StaffHome() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"cash" | "stock">("cash");
+  const [tab, setTab] = useState<"cash" | "count">("cash");
   const cash = useStaffCash(50);
   const opening = useOpening();
-  const stock = useStaffStock();
   const dayStart = new Date().setHours(0, 0, 0, 0);
   const todays = (cash.data?.rows ?? []).filter((r) => r.at >= dayStart && r.undoes === null && r.undoneBy === null && r.kind !== OPENING);
   const today = {
@@ -63,10 +62,8 @@ export function StaffHome() {
               <CashList rows={cash.data?.rows ?? []} mineOnly />
             </div>
           </>
-        ) : opening.data && !opening.data.stock ? (
-          stock.data && <OpeningStock current={stock.data.rows} />
         ) : (
-          <StaffStock />
+          <StockCount />
         )}
       </main>
 
@@ -75,7 +72,7 @@ export function StaffHome() {
           {(
             [
               ["cash", "الصندوق", Wallet],
-              ["stock", "المخزون", Boxes],
+              ["count", "الجرد", ClipboardCheck],
             ] as const
           ).map(([id, label, Icon]) => (
             <button

@@ -60,6 +60,24 @@ export type StaffStockLogRow = {
 // The opening count (جرد افتتاحي): the cash line of kind OPENING still in force, and the stock as counted.
 export const OPENING = "رصيد افتتاحي";
 export type OpeningItem = { product: string; color: string; size: string; quantity: number };
+// The Libya warehouse count (src/stockCount.ts). His sheet has no numbers; the team's report has them.
+export type CountSheetColor = { color: string; photos: string[]; sizes: string[] };
+export type CountSheetProduct = { product: string; about: string; colors: CountSheetColor[] };
+export type CountStatus = { id: number; at: number; status: "pending" | "approved" | "rejected"; decidedAt: number | null; reason: string } | null;
+export type CountEntry = { product: string; color: string; size: string; counted: number | null };
+export type CountExtra = { product: string; color: string; size: string; quantity: number | null };
+export type StockCountReport = {
+  id: number;
+  at: number;
+  byRole: Role;
+  status: "pending" | "approved" | "rejected";
+  cells: { product: string; color: string; size: string; system: number; counted: number | null; now: number | null }[];
+  extras: CountExtra[];
+  note: string;
+  photos: string[];
+  decidedAt: number | null;
+  reason: string;
+};
 export type StaffOpening = { cash: CashRow | null; stock: { at: number; byRole: Role; items: OpeningItem[] } | null };
 
 export type Totals = {
@@ -490,6 +508,11 @@ export const api = {
   staffCash: (limit = 100) => request<StaffCash>(`/staff/cash?limit=${limit}`),
   undoStaffCash: (id: number) => post<CashRow>(`/staff/cash/${id}/undo`),
   addStaffCash: (line: { direction: "in" | "out"; amount: number; kind: string; statement: string; note: string }) => post<CashRow>("/staff/cash", line),
+  countSheet: () => request<{ sheet: CountSheetProduct[]; last: CountStatus }>("/staff/count"),
+  sendCount: (body: { counts: CountEntry[]; extras: CountExtra[]; note: string; photos: string[] }) => post<{ ok: true; id: number }>("/staff/count", body),
+  stockCounts: () => request<StockCountReport[]>("/stock-counts"),
+  approveCount: (id: number) => post<{ changed: number }>(`/stock-counts/${id}/approve`),
+  rejectCount: (id: number, reason: string) => post<{ ok: true }>(`/stock-counts/${id}/reject`, { reason }),
   staffOpening: () => request<StaffOpening>("/staff/opening"),
   setOpeningCash: (amount: number) => post<CashRow>("/staff/opening/cash", { amount }),
   setOpeningStock: (items: OpeningItem[]) => post<StaffOpening["stock"]>("/staff/opening/stock", { items }),

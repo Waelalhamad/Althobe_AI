@@ -38,6 +38,7 @@ import {
   staffStockLog,
   undoCash,
 } from "../staff.js";
+import { approveCount, countSheet, countStatus, listCounts, rejectCount, submitCount } from "../stockCount.js";
 import { aiRepliesEnabled, channelRepliesEnabled, META_CHANNELS, setAiReplies, setChannelReplies, setTestNumbers, testNumbers } from "../settings.js";
 import {
   channelOf,
@@ -80,7 +81,7 @@ export const dashboardApi = express.Router();
 const smallJson = express.json({ limit: "1mb" });
 const uploadJson = express.json({ limit: "12mb" });
 dashboardApi.use((req, res, next) =>
-  (req.method === "POST" && (req.path === "/catalog" || req.path.startsWith("/playground") || req.path.endsWith("/send")) ? uploadJson : smallJson)(req, res, next),
+  (req.method === "POST" && (req.path === "/catalog" || req.path === "/staff/count" || req.path.startsWith("/playground") || req.path.endsWith("/send")) ? uploadJson : smallJson)(req, res, next),
 );
 
 // --- Login: a signed cookie that expires; changing a password logs out whoever logged in with it. ---
@@ -1218,6 +1219,7 @@ dashboardApi.post("/staff/opening/cash", (req, res) => {
 });
 
 dashboardApi.post("/staff/opening/stock", (req, res) => {
+  if (teamOnly(res)) return;
   const saved = setOpeningStock(req.body ?? {}, roleOf(res));
   if (typeof saved === "string") {
     res.status(400).json({ error: saved });
@@ -1231,7 +1233,15 @@ dashboardApi.get("/staff/stock", (req, res) => {
   res.json({ rows: listStaffStock(), log: staffStockLog(intParam(req.query.log, 50, 2000)) });
 });
 
+// The employee counts our stock now (the warehouse count below): his own stock list is the team's to change.
+const teamOnly = (res: express.Response) => {
+  if (roleOf(res) !== "staff") return false;
+  res.status(403).json({ error: "هالشي للإدارة بس" });
+  return true;
+};
+
 dashboardApi.put("/staff/stock", (req, res) => {
+  if (teamOnly(res)) return;
   const error = setStaffStock(req.body ?? {}, roleOf(res));
   if (error) {
     res.status(400).json({ error });
@@ -1241,10 +1251,58 @@ dashboardApi.put("/staff/stock", (req, res) => {
 });
 
 dashboardApi.post("/staff/stock/remove", (req, res) => {
+  if (teamOnly(res)) return;
   const error = removeStaffStock(req.body ?? {}, roleOf(res));
   if (error) {
     res.status(400).json({ error });
     return;
   }
+  res.json({ ok: true });
+});
+
+// --- The Libya warehouse count (src/stockCount.ts) ------------------------------------------------------------
+// His side (under /staff): the list to count, with no numbers, and sending it.
+dashboardApi.get("/staff/count", (_req, res) => {
+  res.json({ sheet: countSheet(), last: countStatus() });
+});
+
+dashboardApi.post("/staff/count", (req, res) => {
+  const saved = submitCount(req.body ?? {}, roleOf(res));
+  if (typeof saved === "string") {
+    res.status(400).json({ error: saved });
+    return;
+  }
+  log("dashboard", `Libya warehouse count ${saved.id} sent by ${roleOf(res)}`);
+  res.json({ ok: true, id: saved.id });
+});
+
+// The team's side (outside /staff, so the employee gets 403): the counts with the system's numbers, approve, reject.
+dashboardApi.get("/stock-counts", (req, res) => {
+  const current = new Map(listStock().map((r) => [`${r.product}|${r.color}|${r.size}`, r.quantity]));
+  res.json(
+    listCounts(intParam(req.query.limit, 10, 100)).map((c) => ({
+      ...c,
+      cells: c.cells.map((cell) => ({ ...cell, now: current.get(`${cell.product}|${cell.color}|${cell.size}`) ?? null })),
+    })),
+  );
+});
+
+dashboardApi.post("/stock-counts/:id/approve", (req, res) => {
+  const done = approveCount(Number(req.params.id));
+  if (typeof done === "string") {
+    res.status(400).json({ error: done });
+    return;
+  }
+  log("dashboard", `Libya warehouse count ${req.params.id} approved: ${done.changed} cells changed`);
+  res.json(done);
+});
+
+dashboardApi.post("/stock-counts/:id/reject", (req, res) => {
+  const done = rejectCount(Number(req.params.id), req.body?.reason);
+  if (typeof done === "string") {
+    res.status(400).json({ error: done });
+    return;
+  }
+  log("dashboard", `Libya warehouse count ${req.params.id} rejected`);
   res.json({ ok: true });
 });
