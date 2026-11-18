@@ -15,6 +15,7 @@ import { Catalog } from "./pages/Catalog";
 import { Orders } from "./pages/Orders";
 import { Money } from "./pages/Money";
 import { Blacklist } from "./pages/Blacklist";
+import { Campaigns } from "./pages/Campaigns";
 import { Leads } from "./pages/Leads";
 import { Stock } from "./pages/Stock";
 import { Supervisor } from "./pages/Supervisor";
@@ -67,6 +68,7 @@ function TeamApp() {
           <Route path="/money" component={Money} />
           <Route path="/libya" component={Libya} />
           <Route path="/blacklist" component={Blacklist} />
+          <Route path="/campaigns" component={Campaigns} />
           <Route path="/leads" component={Leads} />
           <Route path="/stock" component={Stock} />
           <Route path="/supervisor" component={Supervisor} />

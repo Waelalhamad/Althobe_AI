@@ -433,11 +433,54 @@ export type Decision =
 
 // --- Calls ------------------------------------------------------------------------------
 
+// Campaigns (src/campaigns.ts): Meta-approved templates to past customers.
+export type CampaignTemplate = {
+  name: string;
+  status: string;
+  category: string;
+  language: string;
+  body: string;
+  imageHeader: boolean;
+  unsupported: string;
+  components: { type: string; format?: string; text?: string; buttons?: { type: string; text?: string }[] }[];
+};
+export type NumberHealth = { quality: string; limit: string; canSend: string; notes: string[] };
+export type CampaignRow = {
+  id: number;
+  template: string;
+  segment: string;
+  segmentLabel: string;
+  days: number;
+  body: string;
+  dailyCap: number;
+  status: "running" | "paused" | "done" | "stopped";
+  note: string;
+  createdAt: number;
+  counts: Record<string, number>;
+  replied: number;
+  orders: number;
+  sentToday: number;
+};
+export type CampaignsView = {
+  templates: CampaignTemplate[] | { error: string };
+  health?: NumberHealth;
+  campaigns: CampaignRow[];
+  segments: Record<string, string>;
+};
+export type CampaignInput = { template: string; language: string; segment: string; days: number; dailyCap: number; photo?: string };
+
 export type BlacklistRow = { customer: string; name: string; reason: string; addedAt: number; notifiedAt: number | null };
 export type BlacklistCandidate = { customer: string; name: string; phone: string; city: string; reason: string; orderId: number; amount: number; status: string };
 export type BlacklistView = { list: BlacklistRow[]; candidates: BlacklistCandidate[]; message: string };
 
 export const api = {
+  campaigns: () => request<CampaignsView>("/campaigns"),
+  campaignCount: (segment: string, days: number) =>
+    request<{ send: number; ads: number }>(`/campaigns/count?segment=${encodeURIComponent(segment)}&days=${days}`),
+  audienceUrl: (segment: string, days: number) => `${BASE}/campaigns/audience.csv?segment=${encodeURIComponent(segment)}&days=${days}`,
+  campaignTest: (input: { template: string; language: string; photo?: string; to: string }) => post<{ ok: true }>("/campaigns/test", input),
+  createCampaign: (input: CampaignInput) => post<{ id: number }>("/campaigns", input),
+  campaignAction: (id: number, action: "start" | "pause" | "stop") => post(`/campaigns/${id}/${action}`),
   blacklist: () => request<BlacklistView>("/blacklist"),
   addBlacklist: (customers: string[], reason: string) => post("/blacklist", { customers, reason }),
   removeBlacklist: (customer: string) => request(`/blacklist/${encodeURIComponent(customer)}`, { method: "DELETE" }),

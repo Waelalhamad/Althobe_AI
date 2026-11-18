@@ -4,7 +4,7 @@ import express from "express";
 import { config } from "../config.js";
 import fs from "node:fs";
 import { decideReply, draftOrder, writeFollowUp, type ChatTurn } from "../agent.js";
-import { addCatalogItem, deleteCatalogItem, listCatalog, updateCatalogItem } from "../catalog.js";
+import { addCatalogItem, deleteCatalogItem, listCatalog, publicPhotoUrl, updateCatalogItem } from "../catalog.js";
 import { dataPath, transcribe } from "../media.js";
 import { answerIfWaiting, answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
 import { notifyOrder } from "../orders.js";
@@ -21,6 +21,7 @@ import {
 } from "../knowledge.js";
 import { addToBlacklist, blacklistCandidates, blacklistMessage, listBlacklist, markNotified, removeFromBlacklist } from "../blacklist.js";
 import { log } from "../scheduler.js";
+import { createCampaign, listCampaigns, listTemplates, numberHealth, SEGMENTS, segmentCustomers, setCampaignStatus, testSend, type Segment } from "../campaigns.js";
 import { missingStock } from "../stock.js";
 import {
   addCash,
@@ -594,6 +595,79 @@ dashboardApi.post("/blacklist/send", async (req, res) => {
     }
   }
   res.json({ sent, failed });
+});
+
+// Campaigns: Meta-approved templates sent to past customers outside the 24-hour window (campaigns.ts).
+const segmentOf = (v: unknown): Segment | undefined => (typeof v === "string" && v in SEGMENTS ? (v as Segment) : undefined);
+// A catalog photo (by id) as the public link WhatsApp fetches for the template's image header.
+const campaignPhoto = (id: unknown) => {
+  const item = typeof id === "string" && id ? listCatalog().find((i) => i.id === id) : undefined;
+  return item ? publicPhotoUrl(item) : undefined;
+};
+const daysOf = (v: unknown) => Math.min(365, Math.max(1, Math.round(Number(v) || 30)));
+
+dashboardApi.get("/campaigns", async (_req, res) => {
+  const [templates, health] = await Promise.all([
+    listTemplates().catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) })),
+    numberHealth().catch(() => undefined),
+  ]);
+  res.json({ templates, health, campaigns: listCampaigns(), segments: SEGMENTS });
+});
+
+dashboardApi.get("/campaigns/count", (req, res) => {
+  const segment = segmentOf(req.query.segment);
+  if (!segment) return void res.status(400).json({ error: "segment" });
+  const days = daysOf(req.query.days);
+  res.json({ send: segmentCustomers(segment, days).length, ads: segmentCustomers(segment, days, true).length });
+});
+
+// The phone list for a Facebook ad audience (Custom Audience): one number per line, with the country code.
+dashboardApi.get("/campaigns/audience.csv", (req, res) => {
+  const segment = segmentOf(req.query.segment);
+  if (!segment) return void res.status(400).json({ error: "segment" });
+  const days = daysOf(req.query.days);
+  const rows = segmentCustomers(segment, days, true).map((c) => `+${c}`);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="audience-${segment}-${days}d.csv"`);
+  res.send(["phone", ...rows].join("\n"));
+});
+
+dashboardApi.post("/campaigns/test", async (req, res) => {
+  const to = latinDigits(String(req.body?.to ?? "")).replace(/\D/g, "");
+  if (!/^\d{9,15}$/.test(to)) return void res.status(400).json({ error: "رقم غلط (مع رمز الدولة)" });
+  try {
+    await testSend({ template: String(req.body?.template ?? ""), language: String(req.body?.language ?? ""), image: campaignPhoto(req.body?.photo), to });
+    log("dashboard", `campaign test sent to ${to}`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+dashboardApi.post("/campaigns", async (req, res) => {
+  const segment = segmentOf(req.body?.segment);
+  if (!segment) return void res.status(400).json({ error: "segment" });
+  try {
+    const id = await createCampaign({
+      template: String(req.body?.template ?? ""),
+      language: String(req.body?.language ?? ""),
+      segment,
+      days: daysOf(req.body?.days),
+      dailyCap: Math.min(500, Math.max(10, Math.round(Number(req.body?.dailyCap) || 50))),
+      image: campaignPhoto(req.body?.photo),
+    });
+    res.json({ id });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+dashboardApi.post("/campaigns/:id/:action", (req, res) => {
+  const status = ({ start: "running", pause: "paused", stop: "stopped" } as const)[req.params.action as "start" | "pause" | "stop"];
+  if (!status) return void res.status(400).json({ error: "action" });
+  setCampaignStatus(Number(req.params.id), status);
+  log("dashboard", `campaign ${req.params.id}: ${status}`);
+  res.json({ ok: true });
 });
 
 dashboardApi.get("/almost-orders", (_req, res) => {

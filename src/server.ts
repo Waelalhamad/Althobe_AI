@@ -12,6 +12,7 @@ import { dashboardApi } from "./dashboard/api.js";
 import { dataPath } from "./media.js";
 import { startSupervisor } from "./supervisor.js";
 import { startFollowUps } from "./followup.js";
+import { startCampaigns } from "./campaigns.js";
 import { startDarbSync } from "./darbTrack.js";
 import "./tracking.js"; // customers hear when their order moves (after each Darb sync)
 import { startLearning } from "./learning.js";
@@ -174,6 +175,7 @@ app.listen(config.port, () => {
   startDarbSync();
   startLearning();
   startPauseEndWatch();
+  startCampaigns();
   startAlmostOrdersWatch();
   void startMeta();
   const channels = [

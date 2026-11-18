@@ -116,10 +116,24 @@ type WebhookPayload = {
         contacts?: { wa_id?: string; user_id?: string; username?: string; profile?: { name?: string } }[];
         message_echoes?: WaMessage[];
         history?: HistoryChunk[];
+        // Delivery reports of what we sent.
+        statuses?: MessageStatus[];
       };
     }[];
   }[];
 };
+
+export type MessageStatus = { id?: string; status?: string; errors?: { code?: number; title?: string; message?: string }[] };
+
+// Listeners kept here so the modules that need them (campaigns.ts) import this one, not the other way round.
+const statusListeners: ((statuses: MessageStatus[]) => void)[] = [];
+export function onMessageStatuses(fn: (statuses: MessageStatus[]) => void) {
+  statusListeners.push(fn);
+}
+const textListeners: ((customer: string, text: string) => void)[] = [];
+export function onCustomerTexts(fn: (customer: string, text: string) => void) {
+  textListeners.push(fn);
+}
 
 export function handleWhatsAppWebhook(payload: WebhookPayload) {
   for (const entry of payload.entry ?? []) {
@@ -142,6 +156,7 @@ export function handleWhatsAppWebhook(payload: WebhookPayload) {
           if (customer && phoneNumberId) setCustomerLine(customer, phoneNumberId);
           onCustomerMessage(message);
         }
+        if (value.statuses?.length) for (const fn of statusListeners) fn(value.statuses);
       } else if (change.field === "smb_message_echoes") {
         // A team member replied from the WhatsApp Business app on the phone.
         for (const echo of value.message_echoes ?? []) {
@@ -154,7 +169,7 @@ export function handleWhatsAppWebhook(payload: WebhookPayload) {
         if (phoneNumberId && phoneNumberId !== config.whatsapp.phoneNumberId) continue;
         for (const chunk of value.history ?? []) onHistoryChunk(chunk);
       }
-      // Other fields (statuses, smb_app_state_sync, ...) are ignored.
+      // Other fields (smb_app_state_sync, ...) are ignored.
     }
   }
 }
@@ -163,6 +178,7 @@ function onCustomerMessage(message: WaMessage) {
   const customer = message.from ?? message.from_user_id;
   if (!customer) return;
   if (message.type === "unsupported") return;
+  for (const fn of textListeners) fn(customer, describe(message));
   receiveCustomerMessage({
     customer,
     id: message.id,
