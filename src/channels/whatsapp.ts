@@ -736,10 +736,23 @@ async function respond(customer: string) {
     // Meta failing to deliver (tried three times) is usually over within the hour: the AI takes the chat back then and
     // answers if the customer still waits, instead of leaving them half a day.
     // A network failure (Dualhook unreachable for a moment, Nov 2026) passes too.
-    const passing = (error instanceof SendError && error.passing) || isNetworkError(error);
+    // The AI account out of credits (Nov 2026: 62 customers of a new ad paused 12 hours): every chat fails the same
+    // way until it's topped up, so the pause is an hour (the AI answers by itself once it's back) and one alert an hour.
+    const noCredits = isNoCredits(error);
+    const passing = (error instanceof SendError && error.passing) || isNetworkError(error) || noCredits;
     pauseAi(customer, "AI error", passing ? 1 : undefined);
     recordAiCall({ customer, channel: channelOf(customer), action: "error", reason: errorText(error) });
     log(key, `error, AI paused for this customer: ${errorText(error)}`);
+    if (noCredits) {
+      if (Date.now() - noCreditsAlertAt > 60 * 60 * 1000) {
+        noCreditsAlertAt = Date.now();
+        notifyError(
+          "🚨 رصيد OpenAI خلص: المساعد ما عم يرد على حدا. اشحنوا الرصيد هلق، والمساعد بيرد لحالو على المنتظرين خلال ساعة من الشحن (أو اضغطوا «رد على المنتظرين» باللوحة)",
+          errorText(error),
+        );
+      }
+      return;
+    }
     notifyError(
       passing
         ? `واتساب (ميتا) ما قبل يوصّل رد المساعد لـ ${customerLabel(customer)} بعد 3 محاولات. غالباً عطل مؤقت عندهم: ردو انتو، أو المساعد بيرجع يرد بعد ساعة إذا الزبون لسا ناطر`
@@ -1138,6 +1151,13 @@ function errorText(error: unknown): string {
   const cause = (error as { cause?: { code?: string; message?: string } }).cause;
   const detail = cause?.code || cause?.message;
   return detail && !error.message.includes(detail) ? `${error.message} (${detail})` : error.message;
+}
+
+let noCreditsAlertAt = 0;
+
+// The AI provider refused for lack of credits or quota.
+function isNoCredits(error: unknown): boolean {
+  return /no credits remaining|insufficient_quota|exceeded your current quota|credit balance is too low/i.test(errorText(error));
 }
 
 // fetch() couldn't reach the server at all (connection reset, timeout, DNS): passes like a 5xx.
