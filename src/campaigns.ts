@@ -7,7 +7,7 @@
 import { config } from "./config.js";
 import { contactName, db, saveMessage } from "./store.js";
 import { isBlacklisted } from "./blacklist.js";
-import { customerLine, onCustomerTexts, onMessageStatuses } from "./channels/whatsapp.js";
+import { customerLine, onCustomerTexts, onMessageStatuses, type MessageStatus } from "./channels/whatsapp.js";
 import { isMetaCustomer } from "./channels/meta.js";
 import { inWorkingHours } from "./supervisor.js";
 import { log } from "./scheduler.js";
@@ -30,7 +30,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS campaign_recipients (
     campaign    INTEGER NOT NULL,
     customer    TEXT    NOT NULL,
-    status      TEXT    NOT NULL,          -- 'queued' | 'sent' | 'delivered' | 'read' | 'failed' | 'skipped'
+    status      TEXT    NOT NULL,          -- 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'skipped'
+    attempts    INTEGER NOT NULL DEFAULT 0, -- passing failures (Meta/Dualhook down): moved on after a few
     wamid       TEXT,
     error       TEXT    NOT NULL DEFAULT '',
     sent_at     INTEGER,
@@ -187,10 +188,9 @@ export function segmentCustomers(segment: Segment, days: number, forAds = false)
 }
 
 // Opt-outs are recorded as the customer writes (the template's stop button arrives as its text too).
+export const isOptOut = (text: string) => OPT_OUT.test(text);
 onCustomerTexts((customer, text) => {
-  if (OPT_OUT.test(text)) {
-    db.prepare("INSERT OR IGNORE INTO campaign_optouts (customer, reason, created_at) VALUES (?, ?, ?)").run(customer, text.slice(0, 100), Date.now());
-  }
+  if (isOptOut(text)) optOut(customer, text);
 });
 
 // --- Campaigns ----------------------------------------------------------------------------
@@ -281,7 +281,7 @@ const sentSince = (id: number, since: number) =>
 
 const firstName = (customer: string) => contactName(customer).trim().split(/\s+/)[0]?.slice(0, 20) || "استاذ";
 
-function payload(c: CampaignRow, customer: string) {
+export function templatePayload(c: Pick<CampaignRow, "template" | "language" | "body" | "image">, customer: string) {
   const components: Record<string, unknown>[] = [];
   if (c.image) components.push({ type: "header", parameters: [{ type: "image", image: { link: c.image } }] });
   if (/\{\{\s*1\s*\}\}/.test(c.body)) components.push({ type: "body", parameters: [{ type: "text", text: firstName(customer) }] });
@@ -293,60 +293,119 @@ function payload(c: CampaignRow, customer: string) {
   };
 }
 
-// Meta's refusals of one customer (not the whole run): recorded and skipped.
-// 131049: Meta limits marketing messages to this user; 131050: the user stopped marketing messages;
-// 131026: not on WhatsApp / can't receive.
-const OPTED_OUT_CODE = 131050;
+// Meta's error codes (developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes).
+// About this one customer: recorded on their row, the run goes on.
+const OPTED_OUT_CODE = 131050; // the user stopped marketing messages from us
+// About the whole run (the template, the account, the number's limits): the campaign pauses, the row stays queued.
+// 132xxx: the template (missing, paused, disabled, wrong parameters); 131031: account locked; 131042: payment;
+// 131048: spam rate limit (too many blocks); 130429/80007: throughput; 131053: the header photo; 368: blocked for
+// policy; 190: the key. (131056, sent too fast to the same person, is about one customer.)
+const RUN_LEVEL = /"code"\s*:\s*(132\d{3}|131031|131042|131048|130429|80007|131053|368|190)\b/;
+const errorCode = (detail: string) => detail.match(/"code"\s*:\s*(\d+)/)?.[1];
 
-export async function sendCampaignMessage(c: CampaignRow, customer: string): Promise<{ ok: boolean; error?: string; passing?: boolean }> {
+const MAX_ATTEMPTS = 3;
+
+type SendResult = "sent" | "failed" | "retry" | "run_error";
+
+function updateRow(campaign: number, customer: string, fields: Record<string, string | number | null>) {
+  const keys = Object.keys(fields);
+  db.prepare(`UPDATE campaign_recipients SET ${keys.map((k) => `${k} = ?`).join(", ")}, updated_at = ? WHERE campaign = ? AND customer = ?`).run(
+    ...Object.values(fields),
+    Date.now(),
+    campaign,
+    customer,
+  );
+}
+
+function optOut(customer: string, reason: string) {
+  db.prepare("INSERT OR IGNORE INTO campaign_optouts (customer, reason, created_at) VALUES (?, ?, ?)").run(customer, reason.slice(0, 100), Date.now());
+}
+
+export function classifySendError(status: number, detail: string): "run_error" | "passing" | "customer" {
+  if (RUN_LEVEL.test(detail) || status === 401 || status === 403) return "run_error";
+  if (status >= 500 || status === 429) return "passing";
+  return "customer";
+}
+
+async function sendCampaignMessage(c: CampaignRow, customer: string): Promise<{ result: SendResult; detail?: string }> {
+  // Marked before the call: after a restart in the middle, this row is never sent again by itself.
+  updateRow(c.id, customer, { status: "sending" });
   const res = await fetch(`${config.whatsapp.dualhook.baseUrl}/${config.whatsapp.phoneNumberId}/messages`, {
     method: "POST",
     headers: { ...headers(), "Content-Type": "application/json" },
-    body: JSON.stringify(payload(c, customer)),
+    body: JSON.stringify(templatePayload(c, customer)),
   }).catch((err: unknown) => new Response(`network: ${String(err)}`, { status: 599 }));
   const now = Date.now();
   if (res.ok) {
-    const wamid = ((await res.json()) as { messages?: { id?: string }[] }).messages?.[0]?.id;
-    db.prepare("UPDATE campaign_recipients SET status = 'sent', wamid = ?, sent_at = ?, updated_at = ? WHERE campaign = ? AND customer = ?").run(
-      wamid ?? null,
-      now,
-      now,
-      c.id,
-      customer,
-    );
+    const wamid = ((await res.json().catch(() => ({}))) as { messages?: { id?: string }[] }).messages?.[0]?.id;
+    updateRow(c.id, customer, { status: "sent", wamid: wamid ?? null, sent_at: now });
     // In the chat, for the AI to know what the customer answers, and for the team.
     const text = c.body.replace(/\{\{\s*1\s*\}\}/g, firstName(customer));
     saveMessage({ customer, role: "business", source: "ai", text: `[sent our offer message] ${text}`, wamid });
-    return { ok: true };
+    return { result: "sent" };
   }
-  const detail = (await res.text().catch(() => "")).slice(0, 300);
-  // Dualhook/Meta down for a moment: stays queued, tried on a later round.
-  if (res.status >= 500 || res.status === 429) return { ok: false, error: `${res.status} ${detail}`, passing: true };
-  if (new RegExp(`"code"\\s*:\\s*${OPTED_OUT_CODE}`).test(detail)) {
-    db.prepare("INSERT OR IGNORE INTO campaign_optouts (customer, reason, created_at) VALUES (?, 'Meta: stopped marketing messages', ?)").run(customer, now);
+  const detail = `${res.status} ${(await res.text().catch(() => "")).slice(0, 300)}`;
+  const kind = classifySendError(res.status, detail);
+  if (kind === "run_error") {
+    updateRow(c.id, customer, { status: "queued" });
+    return { result: "run_error", detail };
   }
-  db.prepare("UPDATE campaign_recipients SET status = 'failed', error = ?, sent_at = ?, updated_at = ? WHERE campaign = ? AND customer = ?").run(
-    `${res.status} ${detail}`,
-    now,
-    now,
-    c.id,
-    customer,
-  );
-  return { ok: false, error: `${res.status} ${detail}` };
+  if (kind === "passing") {
+    // Dualhook/Meta down for a moment: queued again, given up after a few tries.
+    const row = db.prepare("SELECT attempts FROM campaign_recipients WHERE campaign = ? AND customer = ?").get(c.id, customer) as { attempts: number };
+    if (row.attempts + 1 < MAX_ATTEMPTS) {
+      updateRow(c.id, customer, { status: "queued", attempts: row.attempts + 1, error: detail });
+      return { result: "retry", detail };
+    }
+  }
+  if (errorCode(detail) === String(OPTED_OUT_CODE)) optOut(customer, "Meta: stopped marketing messages");
+  updateRow(c.id, customer, { status: "failed", error: detail, sent_at: now });
+  return { result: "failed", detail };
 }
 
-// Delivery reports from the webhook: "sent" by the API only means Meta took it.
-onMessageStatuses((statuses) => {
-  const set = db.prepare(
-    `UPDATE campaign_recipients SET status = ?, error = ?, updated_at = ? WHERE wamid = ?
-       AND (status IN ('sent', 'delivered') OR ? = 'failed')`,
-  );
+// Delivery reports from the webhook: the API's answer only means Meta took the message; most refusals of one
+// customer (marketing limit, stopped our messages, not on WhatsApp) arrive here as "failed".
+let statusesSeen = false;
+const STATUS_RANK: Record<string, number> = { sending: 0, sent: 1, delivered: 2, read: 3 };
+export function applyStatuses(statuses: MessageStatus[]) {
+  const find = db.prepare("SELECT campaign, customer, status FROM campaign_recipients WHERE wamid = ?");
   for (const s of statuses) {
     if (!s.id || !["delivered", "read", "failed"].includes(s.status ?? "")) continue;
-    const error = s.errors?.map((e) => `${e.code ?? ""} ${e.title ?? e.message ?? ""}`.trim()).join("; ") ?? "";
-    set.run(s.status!, error, Date.now(), s.id, s.status!);
+    const row = find.get(s.id) as { campaign: number; customer: string; status: string } | undefined;
+    if (!row) continue;
+    if (s.status === "failed") {
+      const error = s.errors?.map((e) => `${e.code ?? ""} ${e.title ?? e.message ?? ""}`.trim()).join("; ") ?? "";
+      if (s.errors?.some((e) => e.code === OPTED_OUT_CODE)) optOut(row.customer, "Meta: stopped marketing messages");
+      updateRow(row.campaign, row.customer, { status: "failed", error });
+    } else if ((STATUS_RANK[s.status!] ?? 0) > (STATUS_RANK[row.status] ?? 9)) {
+      // Never back: a late "delivered" after "read" keeps "read"; a failed row stays failed.
+      updateRow(row.campaign, row.customer, { status: s.status! });
+    }
   }
+}
+onMessageStatuses((statuses) => {
+  if (!statusesSeen) {
+    statusesSeen = true;
+    log("campaigns", "delivery reports are coming in from the webhook");
+  }
+  applyStatuses(statuses);
 });
+
+// Why this customer shouldn't get this campaign right now (checked at send time: since the campaign was made they may
+// have written, ordered, been handed to the team, asked to stop, or got another campaign).
+export function sendBlocker(c: Pick<CampaignRow, "id" | "segment">, customer: string): string | undefined {
+  const now = Date.now();
+  if (isBlacklisted(customer)) return "blacklisted";
+  if (db.prepare("SELECT 1 FROM campaign_optouts WHERE customer = ?").get(customer)) return "opted out";
+  const lastWrote = (db.prepare("SELECT MAX(created_at) AS t FROM messages WHERE customer = ? AND role = 'customer'").get(customer) as { t: number | null }).t ?? 0;
+  if (lastWrote > now - DAY) return "wrote recently";
+  if (db.prepare("SELECT 1 FROM pauses WHERE customer = ? AND until > ?").get(customer, now)) return "with the team";
+  if (db.prepare("SELECT 1 FROM campaign_recipients WHERE customer = ? AND campaign != ? AND sent_at > ?").get(customer, c.id, now - 7 * DAY))
+    return "another campaign this week";
+  if (db.prepare("SELECT 1 FROM orders WHERE customer = ? AND status IN ('new', 'confirmed')").get(customer)) return "order on its way";
+  if (c.segment !== "buyers" && db.prepare("SELECT 1 FROM orders WHERE customer = ?").get(customer)) return "ordered";
+  return undefined;
+}
 
 // Stops every running campaign, with the reason, and tells the team once.
 function stopAll(note: string) {
@@ -355,6 +414,12 @@ function stopAll(note: string) {
   db.prepare("UPDATE campaigns SET status = 'paused', note = ? WHERE status = 'running'").run(note);
   log("campaigns", `paused: ${note}`);
   notify("error", `⏸ <b>وقفت الحملات</b>: ${esc(note)}`);
+}
+
+function pauseCampaign(c: CampaignRow, note: string, detail = "") {
+  db.prepare("UPDATE campaigns SET status = 'paused', note = ? WHERE id = ?").run(note, c.id);
+  log("campaigns", `campaign ${c.id} paused: ${note} ${detail}`);
+  notify("error", `⏸ <b>حملة ${c.id} وقفت</b> (${esc(c.template)}): ${esc(note)}${detail ? `\n<code>${esc(detail.slice(0, 300))}</code>` : ""}`);
 }
 
 // Of the last sends of a campaign, too many failed: something is wrong (template, number, audience).
@@ -374,7 +439,7 @@ async function tick() {
   if (!running.length || !inWorkingHours(Date.now())) return;
   busy = true;
   try {
-    // The number's quality, every 20 minutes of a run: RED (or sending limited further) stops everything.
+    // The number's quality, every 20 minutes of a run: RED (or sending blocked) stops everything.
     if (Date.now() - healthCheckedAt > 20 * 60 * 1000) {
       healthCheckedAt = Date.now();
       const health = await numberHealth().catch(() => undefined);
@@ -383,31 +448,31 @@ async function tick() {
     }
     for (const c of running) {
       if (tooManyFailures(c.id)) {
-        db.prepare("UPDATE campaigns SET status = 'paused', note = ? WHERE id = ?").run("كتير رسائل فشلت بآخر الإرسال: شوفوا الأخطاء قبل ما تكملوا", c.id);
-        notify("error", `⏸ <b>حملة ${c.id} وقفت</b>: كتير رسائل فشلت (${esc(c.template)})`);
+        pauseCampaign(c, "كتير رسائل فشلت بآخر الإرسال: شوفوا الأخطاء قبل ما تكملوا");
         continue;
       }
       if (sentSince(c.id, startOfToday()) >= c.daily_cap) continue;
-      const next = db
-        .prepare("SELECT customer FROM campaign_recipients WHERE campaign = ? AND status = 'queued' ORDER BY rowid LIMIT 1")
-        .get(c.id) as { customer: string } | undefined;
+      // The next one that may still get it (a few skipped per round at most).
+      let next: string | undefined;
+      for (let i = 0; i < 20 && !next; i++) {
+        const row = db
+          .prepare("SELECT customer FROM campaign_recipients WHERE campaign = ? AND status = 'queued' ORDER BY attempts, rowid LIMIT 1")
+          .get(c.id) as { customer: string } | undefined;
+        if (!row) break;
+        const why = sendBlocker(c, row.customer);
+        if (why) updateRow(c.id, row.customer, { status: "skipped", error: why });
+        else next = row.customer;
+      }
       if (!next) {
-        db.prepare("UPDATE campaigns SET status = 'done' WHERE id = ?").run(c.id);
-        notify("order", `✅ <b>حملة ${c.id} خلصت</b> (${esc(c.template)})`);
+        if (!db.prepare("SELECT 1 FROM campaign_recipients WHERE campaign = ? AND status = 'queued'").get(c.id)) {
+          db.prepare("UPDATE campaigns SET status = 'done' WHERE id = ?").run(c.id);
+          notify("order", `✅ <b>حملة ${c.id} خلصت</b> (${esc(c.template)})`);
+        }
         continue;
       }
-      // Checked again at send time: they may have written, ordered or asked to stop since it was made.
-      if (isBlacklisted(next.customer) || db.prepare("SELECT 1 FROM campaign_optouts WHERE customer = ?").get(next.customer)) {
-        db.prepare("UPDATE campaign_recipients SET status = 'skipped', updated_at = ? WHERE campaign = ? AND customer = ?").run(Date.now(), c.id, next.customer);
-        continue;
-      }
-      const lastWrote = (db.prepare("SELECT MAX(created_at) AS t FROM messages WHERE customer = ? AND role = 'customer'").get(next.customer) as { t: number | null }).t ?? 0;
-      if (lastWrote > Date.now() - DAY) {
-        db.prepare("UPDATE campaign_recipients SET status = 'skipped', error = 'wrote recently', updated_at = ? WHERE campaign = ? AND customer = ?").run(Date.now(), c.id, next.customer);
-        continue;
-      }
-      const r = await sendCampaignMessage(c, next.customer);
-      if (!r.ok) log(`wa:${next.customer}`, `campaign ${c.id} send failed: ${r.error}`);
+      const r = await sendCampaignMessage(c, next);
+      if (r.result === "run_error") pauseCampaign(c, "ميتا رفضت الإرسال (القالب أو الحساب أو حد الإرسال)", r.detail);
+      else if (r.result !== "sent") log(`wa:${next}`, `campaign ${c.id} send ${r.result}: ${r.detail}`);
     }
   } finally {
     busy = false;
@@ -419,27 +484,14 @@ export function startCampaigns() {
   setInterval(() => void tick().catch((e) => log("campaigns", `tick failed: ${String(e)}`)), 20 * 1000).unref();
 }
 
-// A test send of a template to one number (the team's own), before a campaign.
+// A test send of a template to one number (the team's own), before a campaign. Not saved in any chat.
 export async function testSend(input: { template: string; language: string; image?: string; to: string }) {
   const template = (await listTemplates()).find((t) => t.name === input.template && t.language === input.language);
   if (!template) throw new Error("القالب مش موجود");
-  const fake: CampaignRow = {
-    id: 0,
-    template: template.name,
-    language: template.language,
-    segment: "",
-    days: 0,
-    body: template.body,
-    image: input.image ?? null,
-    daily_cap: 0,
-    status: "",
-    note: "",
-    created_at: 0,
-  };
   const res = await fetch(`${config.whatsapp.dualhook.baseUrl}/${config.whatsapp.phoneNumberId}/messages`, {
     method: "POST",
     headers: { ...headers(), "Content-Type": "application/json" },
-    body: JSON.stringify(payload(fake, input.to)),
+    body: JSON.stringify(templatePayload({ template: template.name, language: template.language, body: template.body, image: input.image ?? null }, input.to)),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`${res.status} ${text.slice(0, 300)}`);
