@@ -13,7 +13,7 @@ process.env.KNOWLEDGE_DIR = path.resolve("knowledge");
 
 const { db, saveMessage, saveContact, pauseAi } = await import("../src/store.ts");
 const { asksForDiscount, handoffIsDiscount, statedWeight, toldNoBiggerSize, tooBigFor62 } = await import("../src/campaignSignals.ts");
-const { segmentCustomers, segmentMembers, templatePayload, applyStatuses, classifySendError, sendBlocker, isOptOut } = await import("../src/campaigns.ts");
+const { listCampaigns, segmentCustomers, segmentMembers, templatePayload, applyStatuses, classifySendError, sendBlocker, isOptOut } = await import("../src/campaigns.ts");
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -191,4 +191,28 @@ test("weights and sizes above what we have", () => {
   assert.ok(toldNoBiggerSize("للاسف اكبر مقاس متوفر 62"));
   assert.ok(toldNoBiggerSize("ما عندنا 64، أكبر مقاس 62 استاذ."));
   assert.ok(!toldNoBiggerSize("المقاسات المتوفرة: 56، 58، 60، 62 — وأكبر مقاس 62."));
+});
+
+test("a campaign counts the replies and orders of the customers it reached, not of failed sends", () => {
+  const id = Number(
+    db
+      .prepare("INSERT INTO campaigns (template, language, segment, days, body, daily_cap, status, created_at) VALUES ('t', 'ar', 'no_order', 30, 'x', 10, 'paused', ?)")
+      .run(now - 2 * DAY).lastInsertRowid,
+  );
+  const sentAt = now - DAY;
+  const row = db.prepare("INSERT INTO campaign_recipients (campaign, customer, status, sent_at, updated_at) VALUES (?, ?, ?, ?, ?)");
+  row.run(id, "218910000031", "delivered", sentAt, now); // answered and ordered
+  row.run(id, "218910000032", "failed", sentAt, now); // never got it, but ordered anyway
+  say("218910000031", "نبي الصور", HOUR);
+  db.prepare(
+    `INSERT INTO orders (customer, channel, name, phone, city, address, items, total, status, created_at, updated_at)
+     VALUES (?, 'whatsapp', 'x', '0910000000', 'طرابلس', 'x', '[]', '300 دينار', 'new', ?, ?)`,
+  ).run("218910000031", now - HOUR, now - HOUR);
+  db.prepare(
+    `INSERT INTO orders (customer, channel, name, phone, city, address, items, total, status, created_at, updated_at)
+     VALUES (?, 'whatsapp', 'x', '0910000000', 'طرابلس', 'x', '[]', '300 دينار', 'new', ?, ?)`,
+  ).run("218910000032", now - HOUR, now - HOUR);
+  const c = listCampaigns().find((x) => x.id === id)!;
+  assert.equal(c.replied, 1);
+  assert.equal(c.orders, 1);
 });
