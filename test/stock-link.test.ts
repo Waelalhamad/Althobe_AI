@@ -123,3 +123,29 @@ test("the order summary names a clearance set by its own name, and a loose set n
   assert.match(clearance, /المنتج: طقم مطرز زخرفة/);
   assert.match(clearance, /الإجمالي: 400 دينار/);
 });
+
+test("a hidden color is counted and sold, but never listed or sent unasked", async () => {
+  const { stockForPrompt, isHiddenPhoto, customerNamed, missingStock } = await import("../src/stock.ts");
+  setProductStock("طقم تجربة مخفي", [
+    { color: "رصاصي", size: "58", quantity: 4 },
+    { color: "رصاصي غامق", size: "58", quantity: 6, hidden: true },
+  ]);
+  const text = stockForPrompt();
+  const own = text.slice(text.indexOf("طقم تجربة مخفي:"));
+  assert.match(own, /- رصاصي: available in 58/);
+  assert.doesNotMatch(own.split("HIDDEN (only")[0]!, /رصاصي غامق/);
+  assert.match(text, /HIDDEN \(only for a customer who names the color himself\):\n[\s\S]*- طقم تجربة مخفي · رصاصي غامق: 58/);
+  // Saved again without the flag (an old dashboard page): it stays hidden.
+  setProductStock("طقم تجربة مخفي", [
+    { color: "رصاصي", size: "58", quantity: 4 },
+    { color: "رصاصي غامق", size: "58", quantity: 6 },
+  ]);
+  assert.ok(isHiddenPhoto({ product: "طقم تجربة مخفي", name: "رصاصي غامق" }));
+  assert.ok(!isHiddenPhoto({ product: "طقم تجربة مخفي", name: "رصاصي" }));
+  assert.ok(customerNamed("رصاصي غامق", ["عندك الرصاصي الغامق مقاس 58؟"]));
+  assert.ok(!customerNamed("رصاصي غامق", ["شن الألوان اللي عندكم؟", "رصاصي"]));
+  // Still sold to who asks: an order for it is checked against its pieces.
+  assert.deepEqual(missingStock([{ product: "طقم تجربة مخفي", color: "رصاصي غامق", size: "58", quantity: 1 }]), []);
+  setProductStock("طقم تجربة مخفي", [{ color: "رصاصي", size: "58", quantity: 4 }, { color: "رصاصي غامق", size: "58", quantity: 6, hidden: false }]);
+  assert.ok(!isHiddenPhoto({ product: "طقم تجربة مخفي", name: "رصاصي غامق" }));
+});

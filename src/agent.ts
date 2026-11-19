@@ -3,7 +3,7 @@ import { aiCostUsd, config } from "./config.js";
 import { loadKnowledge } from "./knowledge.js";
 import { catalogForPrompt, listCatalog, photoLabel, type CatalogItem } from "./catalog.js";
 import { fileAsDataUrl } from "./media.js";
-import { missingStock, offerPriceProblems, stockForPrompt } from "./stock.js";
+import { isHiddenPhoto, missingStock, offerPriceProblems, stockForPrompt } from "./stock.js";
 import { intlPhone } from "./darb.js";
 import { hasSizes, listStock, ONE_SIZE, SET_NAME, stockName, stockProductFor, type AiUsage, type OrderItem, type Payment } from "./store.js";
 
@@ -317,7 +317,7 @@ function chatMessages(history: ChatTurn[], context: CustomerContext): OpenAI.Cha
     {
       role: "developer",
       // The stock comes after the knowledge: it changes often, and what's before it stays cached.
-      content: `${INSTRUCTIONS}${catalogForPrompt()}\n\n# Knowledge documents\n\n${loadKnowledge()}${stockForPrompt()}${aboutCustomer}`,
+      content: `${INSTRUCTIONS}${catalogForPrompt((i) => isHiddenPhoto(i))}\n\n# Knowledge documents\n\n${loadKnowledge()}${stockForPrompt()}${aboutCustomer}`,
     },
     ...history.map((turn): OpenAI.Chat.Completions.ChatCompletionMessageParam => {
       if (turn.role === "business") return { role: "assistant", content: turn.text };

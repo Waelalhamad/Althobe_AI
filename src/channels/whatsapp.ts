@@ -39,7 +39,7 @@ import { isBlacklisted, shouldAlert } from "../blacklist.js";
 import { customerLabel, dashboardLink, esc, notify, notifyError } from "../telegram.js";
 import { isMetaCustomer, metaSendImage, metaSendText, metaTyping } from "./meta.js";
 import { noteHandoff } from "../learning.js";
-import { markedFirst, missingStock } from "../stock.js";
+import { customerNamed, isHiddenPhoto, markedFirst, missingStock } from "../stock.js";
 import { trackingNote } from "../darbTrack.js";
 import { setShipmentLocation } from "../darb.js";
 import { autoConfirmGaps } from "../autoConfirm.js";
@@ -987,7 +987,15 @@ function sendEndpoint(customer: string): { url: string; headers: Record<string, 
 
 async function sendPhotos(customer: string, ids: string[]) {
   const catalog = listCatalog();
-  const items = markedFirst(ids.map((id) => catalog.find((i) => i.id === id)).filter((i) => i !== undefined));
+  // A hidden color's photo only goes to a customer who named that color (the AI may still pick it by mistake).
+  const said = (
+    db.prepare("SELECT text FROM messages WHERE customer = ? AND role = 'customer' ORDER BY id DESC LIMIT 40").all(customer) as { text: string }[]
+  ).map((m) => m.text ?? "");
+  const items = markedFirst(ids.map((id) => catalog.find((i) => i.id === id)).filter((i) => i !== undefined)).filter((item) => {
+    if (!isHiddenPhoto(item) || customerNamed(item.name, said)) return true;
+    log("whatsapp", `hidden color photo not sent to ${customer}: ${item.id} ${item.product ?? ""} ${item.name}`);
+    return false;
+  });
   for (const item of items) {
     // A product other than our set: the product (model) and the color on the photo, so the customer can say which,
     // and the chat keeps the model too, for the AI to know which one they point at later.

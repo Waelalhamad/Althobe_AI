@@ -116,7 +116,7 @@ export function publicPhotoUrl(item: CatalogItem): string {
 }
 
 // The list the AI sees, so it knows which photos exist and what each shows.
-export function catalogForPrompt(): string {
+export function catalogForPrompt(hidden: (item: CatalogItem) => boolean = () => false): string {
   const items = listCatalog();
   if (!items.length) return "(No product photos uploaded yet. You cannot send photos.)";
   // Grouped by product, so the AI sends the photos of the product the customer asks about.
@@ -136,7 +136,7 @@ export function catalogForPrompt(): string {
         const lines = [...names]
           .map(([name, ps]) => {
             const description = ps.find((p) => p.description)?.description;
-            return `- ${ps.map((p) => p.id).join(", ")}: ${name}${description ? ` — ${description}` : ""}`;
+            return `- ${ps.map((p) => p.id).join(", ")}: ${name}${description ? ` — ${description}` : ""}${ps.every(hidden) ? " — HIDDEN color: only for a customer who names it himself" : ""}`;
           })
           .join("\n");
         return product ? `${product}:\n${lines}` : lines;

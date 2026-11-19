@@ -12,7 +12,8 @@ const inputClass = "rounded-xl border border-line bg-card-2 px-3 py-2 text-sm ou
 
 // A product's table while the team edits it: quantities as typed, by "color|size"; offer: the pieces marked for the
 // special price (النمر المكسرة), by the same key, and that price as typed.
-type Draft = { product: string; colors: string[]; sizes: string[]; q: Record<string, string>; offer?: string[]; offerPrice?: string };
+// hidden: the colors sold only to a customer who names them (never shown or offered).
+type Draft = { product: string; colors: string[]; sizes: string[]; q: Record<string, string>; offer?: string[]; offerPrice?: string; hidden?: string[] };
 
 const key = (color: string, size: string) => `${color}|${size}`;
 
@@ -24,6 +25,7 @@ function toDraft(p: StockProduct): Draft {
     q: Object.fromEntries(p.cells.map((c) => [key(c.color, c.size), String(c.quantity)])),
     offer: p.clearance?.cells.map((c) => key(c.color, c.size)) ?? [],
     offerPrice: p.clearance ? String(p.clearance.price) : "",
+    hidden: p.colors.filter((c) => p.cells.some((x) => x.color === c && x.hidden)),
   };
 }
 
@@ -233,11 +235,14 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
   const toggleOffer = (color: string, size: string) =>
     change({ offer: isOffered(color, size) ? offered.filter((k) => k !== key(color, size)) : [...offered, key(color, size)] });
 
+  const isHidden = (color: string) => (d.hidden ?? []).includes(color);
+  const toggleHidden = (color: string) => change({ hidden: isHidden(color) ? (d.hidden ?? []).filter((c) => c !== color) : [...(d.hidden ?? []), color] });
+
   const save = useMutation({
     mutationFn: () =>
       api.saveStock(
         d.product.trim(),
-        d.colors.flatMap((color) => d.sizes.map((size) => ({ color, size, quantity: value(color, size) }))),
+        d.colors.flatMap((color) => d.sizes.map((size) => ({ color, size, quantity: value(color, size), hidden: isHidden(color) }))),
         {
           price: Number(d.offerPrice) || 0,
           cells: offered.map((k) => {
@@ -354,7 +359,14 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
                         <X size={12} />
                       </button>
                       <ColorPhotos product={d.product} color={color} />
-                      {color}
+                      <span className={clsx(isHidden(color) && "text-muted line-through decoration-dotted")}>{color}</span>
+                      <button
+                        onClick={() => toggleHidden(color)}
+                        className={clsx("rounded-md px-1 text-[11px]", isHidden(color) ? "bg-card-2 font-semibold text-muted" : "text-muted opacity-60 hover:opacity-100")}
+                        title={isHidden(color) ? "رجّعه ينعرض" : "خفيه: محسوب بالمخزون بس المساعد ما بيعرضه ولا بيبعت صوره، إلا إذا الزبون طلب هاللون بالاسم"}
+                      >
+                        {isHidden(color) ? "🙈 مخفي" : "+ مخفي"}
+                      </button>
                     </span>
                   </td>
                   {d.sizes.map((size) => {

@@ -832,7 +832,7 @@ dashboardApi.get("/stock", (_req, res) => {
       clearance: clearance.get(product) ?? null,
       colors: [...new Set(mine.map((r) => r.color))],
       sizes: [...new Set(mine.map((r) => r.size))],
-      cells: mine.map((r) => ({ color: r.color, size: r.size, quantity: r.quantity, held: held.get(`${product}|${r.color}|${r.size}`) ?? 0 })),
+      cells: mine.map((r) => ({ color: r.color, size: r.size, quantity: r.quantity, hidden: r.hidden, held: held.get(`${product}|${r.color}|${r.size}`) ?? 0 })),
       updatedAt: Math.max(...mine.map((r) => r.updatedAt)),
     };
   });
@@ -850,7 +850,12 @@ dashboardApi.put("/stock/:product", (req, res) => {
   const cells = Array.isArray(req.body?.cells) ? (req.body.cells as Record<string, unknown>[]) : [];
   const seen = new Set<string>();
   const rows = cells
-    .map((c) => ({ color: String(c?.color ?? "").trim().slice(0, 60), size: String(c?.size ?? "").trim().slice(0, 20), quantity: Number(c?.quantity) }))
+    .map((c) => ({
+      color: String(c?.color ?? "").trim().slice(0, 60),
+      size: String(c?.size ?? "").trim().slice(0, 20),
+      quantity: Number(c?.quantity),
+      hidden: typeof c?.hidden === "boolean" ? c.hidden : undefined,
+    }))
     .filter((c) => c.color && c.size && Number.isFinite(c.quantity) && Math.abs(c.quantity) < 100_000)
     .filter((c) => {
       const key = `${stockName(c.color)}|${stockName(c.size)}`;

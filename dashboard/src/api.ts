@@ -219,7 +219,7 @@ export type StockProduct = {
   product: string;
   colors: string[];
   sizes: string[];
-  cells: { color: string; size: string; quantity: number; held: number }[];
+  cells: { color: string; size: string; quantity: number; held: number; hidden?: boolean }[]; // hidden: sold only to who names it
   details: string; // what the team wrote about it for the assistant (fabric, material…)
   clearance: { price: number; cells: { color: string; size: string }[] } | null; // pieces on a special price
   updatedAt: number;
@@ -552,7 +552,7 @@ export const api = {
     request<{ products: StockProduct[]; suggestions: { product: string; colors: string[] }[]; unmatched: UnmatchedItem[] }>("/stock"),
   saveStock: (
     product: string,
-    cells: { color: string; size: string; quantity: number }[],
+    cells: { color: string; size: string; quantity: number; hidden: boolean }[],
     clearance?: { price: number; cells: { color: string; size: string }[] },
   ) =>
     request(`/stock/${encodeURIComponent(product)}`, { method: "PUT", body: JSON.stringify({ cells, clearance }) }),

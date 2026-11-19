@@ -453,20 +453,31 @@ export function setOrderAsked(id: number, asked: boolean): boolean {
   return db.prepare("UPDATE orders SET asked_at = ? WHERE id = ?").run(asked ? Date.now() : null, id).changes > 0;
 }
 
-export type StockRow = { product: string; color: string; size: string; quantity: number; updatedAt: number };
+// A hidden piece is counted and sold, but never shown or offered: the AI sells it only to a customer who names that
+// color himself (the wave set's dark grey, 6 pieces, Nov 2026).
+if (!(db.prepare("PRAGMA table_info(stock)").all() as { name: string }[]).some((c) => c.name === "hidden")) {
+  db.exec("ALTER TABLE stock ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
+}
+
+export type StockRow = { product: string; color: string; size: string; quantity: number; updatedAt: number; hidden: boolean };
 
 export function listStock(): StockRow[] {
-  return db.prepare("SELECT product, color, size, quantity, updated_at AS updatedAt FROM stock ORDER BY product, color, size").all() as StockRow[];
+  const rows = db
+    .prepare("SELECT product, color, size, quantity, updated_at AS updatedAt, hidden FROM stock ORDER BY product, color, size")
+    .all() as (Omit<StockRow, "hidden"> & { hidden: number })[];
+  return rows.map((r) => ({ ...r, hidden: r.hidden === 1 }));
 }
 
 // Replaces one product's whole table (its colors and sizes).
-export function setProductStock(product: string, rows: { color: string; size: string; quantity: number }[]) {
+// A row without "hidden" keeps the flag its cell had (a dashboard page from before the flag).
+export function setProductStock(product: string, rows: { color: string; size: string; quantity: number; hidden?: boolean }[]) {
   const now = Date.now();
+  const was = new Set(listStock().filter((r) => r.product === product && r.hidden).map((r) => `${r.color}|${r.size}`));
   db.exec("BEGIN");
   try {
     db.prepare("DELETE FROM stock WHERE product = ?").run(product);
-    const insert = db.prepare("INSERT OR REPLACE INTO stock (product, color, size, quantity, updated_at) VALUES (?, ?, ?, ?, ?)");
-    for (const r of rows) insert.run(product, r.color, r.size, Math.round(r.quantity), now);
+    const insert = db.prepare("INSERT OR REPLACE INTO stock (product, color, size, quantity, updated_at, hidden) VALUES (?, ?, ?, ?, ?, ?)");
+    for (const r of rows) insert.run(product, r.color, r.size, Math.round(r.quantity), now, (r.hidden ?? was.has(`${r.color}|${r.size}`)) ? 1 : 0);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

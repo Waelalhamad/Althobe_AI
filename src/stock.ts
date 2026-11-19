@@ -41,8 +41,15 @@ function stockTable(): string {
   let anyClearance = false;
   let anyPush = false; // marked pieces with no special price: shown first at their usual price
   const lines: string[] = [];
-  for (const [product, colors] of products) {
+  const hiddenLines: string[] = [];
+  for (const [product, all] of products) {
     const oneSize = !hasSizes(product, rows);
+    // Hidden pieces are left out of the product's list and named apart, for a customer who asks for that color.
+    const colors = new Map([...all].map(([color, cells]) => [color, cells.filter((c) => !c.hidden)] as const).filter(([, cells]) => cells.length > 0));
+    for (const [color, cells] of all) {
+      const left = cells.filter((c) => c.hidden && c.quantity > 0).map((c) => c.size);
+      if (left.length) hiddenLines.push(`- ${product} · ${color}${oneSize ? "" : `: ${left.join(", ")}`}`);
+    }
     lines.push(oneSize ? `${product} (ONE standard size: never ask a size for it, never use the size table; ask the weight only if its knowledge document says so; size "ستاندرد" in submit_order):` : `${product}:`);
     const offer = clearance.find((c) => stockName(c.product) === stockName(product));
     for (const [color, sizes] of colors) {
@@ -96,8 +103,27 @@ This list is the truth about what we have, above anything the knowledge document
 - Don't send photos of a color that is sold out in every size, and don't offer it.
 - A color marked "ONLY A FEW LEFT" is almost gone: don't send its photo or name it when you show or list the colors yourself (show the others). If the customer asks for it, picks it from a photo or our ad names it, it is available: say so with "الكمية محدودة" in a few words (never the number) and carry on with their order.
 - Before calling submit_order, check every item against this list. If one is sold out (even when the summary was already sent and the customer confirmed), don't call submit_order: tell them kindly it just ran out and offer what we have in their size.
-- A color or size missing from this list isn't kept in stock here: answer from the knowledge documents.${clearanceRules}${pushRules}
-${lines.join("\n")}`;
+- A color or size missing from this list isn't kept in stock here: answer from the knowledge documents.${clearanceRules}${pushRules}${
+    hiddenLines.length
+      ? `
+- "HIDDEN" pieces below are in stock but not shown: never name them, list them, send their photo or offer them yourself, and they don't count when you say which colors a product comes in. Only when the customer names that exact color himself (in their words, not from our list) for that product: it's available in those sizes, carry on as usual (its photo may be sent then).`
+      : ""
+  }
+${lines.join("\n")}${hiddenLines.length ? `\nHIDDEN (only for a customer who names the color himself):\n${hiddenLines.join("\n")}` : ""}`;
+}
+
+// A photo of a color whose every piece is hidden: never sent unless the customer named that color.
+export function isHiddenPhoto(photo: { product?: string; name: string }, rows = listStock()): boolean {
+  const cells = rows.filter((r) => stockName(r.product) === stockName(photo.product ?? "") && stockName(r.color) === stockName(photo.name));
+  return cells.length > 0 && cells.every((c) => c.hidden);
+}
+
+// Did the customer name this color in the chat (their own words)? "رصاصي غامق" in «عندك رصاصي غامق؟».
+export function customerNamed(color: string, customerTexts: string[]): boolean {
+  // Word by word, each without its «ال»: «الرصاصي الغامق» names «رصاصي غامق».
+  const words = (t: string) => stockName(t).split(/[^\p{L}\p{N}]+/u).map((w) => w.replace(/^ال(?=\S{3,})/, "")).filter(Boolean);
+  const c = words(color).join(" ");
+  return c.length > 0 && customerTexts.some((t) => ` ${words(t).join(" ")} `.includes(` ${c} `));
 }
 
 // Photos with the colors the team marked (to sell first, or on offer) first, the rest in the AI's order: the AI
