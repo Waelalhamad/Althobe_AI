@@ -169,3 +169,8 @@ test("sizes come from the stock per product, and a sale is said as written", asy
   setSale("طقم سادة فرملة وجهين", null, "");
   assert.doesNotMatch(stockForPrompt(), /ON SALE/);
 });
+
+test("a request that fits several products: narrowed by stock and shown with photos", async () => {
+  const { stockForPrompt } = await import("../src/stock.ts");
+  assert.match(stockForPrompt(), /ONE left: offer that one straight away[\s\S]*Never ask "موج ولا زخرفة؟"/);
+});

@@ -52,6 +52,10 @@ function stockTable(): string {
     if (left.length) sizeLines.push(`- ${product}: ${left.join(", ")}`);
   }
   const numeric = (product: string) => [...(products.get(product)?.values() ?? [])].flat().filter((c) => !c.hidden && c.quantity > 0).map((c) => Number(c.size)).filter((n) => n > 0);
+  // Several products kept: a request that fits more than one ("طقم مطرز", "طقم سادة رصاصي 62") is narrowed by what is
+  // really available, and shown with photos instead of asking "X or Y?" in words (the customer can't tell the
+  // embroideries or the collars apart by name).
+  const several = products.size > 1;
   const largest = Math.max(0, ...[...products.keys()].flatMap(numeric));
   const withLargest = [...products.keys()].filter((p) => numeric(p).includes(largest));
   for (const [product, all] of products) {
@@ -124,7 +128,8 @@ This list is the truth about what we have, above anything the knowledge document
       : ""
   }${
     sizeLines.length
-      ? `
+      ? `${several ? `
+- A request that fits more than one product here ("طقم مطرز", "طقم سادة", a color more than one set has): first keep only the products that have what the customer asked for available (that color, and their size if you know it; HIDDEN pieces don't count). ONE left: offer that one straight away with its name, price and the photo of that color; don't ask which one. Several left: in ONE reply, send one photo of each (that color's photo if they asked a color) and name each with its price, then ask which one they liked. Never ask "موج ولا زخرفة؟" or "أي فرملة؟" in words without the photos. This is above the knowledge documents' rules about photos ("once in the chat", "only that color") and about asking. None has it: say so kindly and offer what we have in their size.` : ""}
 - The sizes each product has right now are listed under "Sizes in stock", above any size range in the knowledge documents (which may give one product's range as if it were all). The largest size we have right now is ${largest || "?"} (${withLargest.join(" / ")}). A customer who needs a size bigger than the product he asked for has: offer the product that has it, before saying we don't have it.`
       : ""
   }${
