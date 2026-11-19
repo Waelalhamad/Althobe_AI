@@ -18,6 +18,15 @@ const STATUS: Record<string, { tone: "ok" | "warn" | "muted" | "info"; text: str
   stopped: { tone: "muted", text: "ملغاة" },
 };
 
+// How each group is found (shown under the picker): what the customer said or did in the chat.
+const SEGMENT_HELP: Record<string, string> = {
+  fur_no_order: "كتبوا عن الفروة (أو الصقع) وما عملوا طلب.",
+  no_order: "كتبولنا وما عملوا أي طلب. المجموعة كبيرة وفيها اللي كتب مرة وحدة بس: اختاروا آخر 30 يوم.",
+  discount_no_order: "طلبوا خصم أو تخفيض أو «آخر سعر» (بكلامهم أو لما حوّلهم الذكاء الاصطناعي للفريق) وما طلبوا. مستثنى طلبات الجملة والتجار. مناسبة لعرض تنزيلات 20%.",
+  size_too_big: "قالوا وزنهم فوق 105 كغ، أو سألوا عن مقاس أكبر من 62 (64…)، أو انقال لهم إنو أكبر مقاس عندنا 62، وما طلبوا. مناسبة لـ«طقم سادة فرملة وجهين» (لحد 64).",
+  buyers: "انسلم طلبهم قبل (بدون اللي اشتكوا أو رجّعوا). مناسبة لعرض طقم تاني بسعر التنزيلات.",
+};
+
 export function Campaigns() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["campaigns"], queryFn: api.campaigns, refetchInterval: 30_000 });
@@ -115,8 +124,9 @@ export function Campaigns() {
             <Download className="size-4" /> نزّل ملف الأرقام للإعلان
           </a>
         </div>
+        {SEGMENT_HELP[segment] && <p className="mt-2 text-xs text-muted">{SEGMENT_HELP[segment]}</p>}
         <p className="mt-2 text-xs text-muted">
-          الحملة ما بتبعت لـ: اللي عندهم طلب، القائمة السوداء، اللي طلبوا يوقفوا الرسائل، اللي كتبوا آخر 24 ساعة، اللي محوّلين للفريق، واللي وصلتهم حملة بآخر أسبوع. ملف الإعلان بيشيل بس القائمة السوداء واللي طلبوا يوقفوا.
+          الحملة ما بتبعت لـ: اللي عندهم طلب، القائمة السوداء، اللي طلبوا يوقفوا الرسائل، اللي كتبوا آخر 24 ساعة، اللي محوّلين للفريق، اللي اشتكوا من طلب، الأرقام من برا ليبيا، واللي وصلتهم حملة بآخر أسبوع. ملف الإعلان بيشيل بس القائمة السوداء واللي طلبوا يوقفوا.
         </p>
       </Card>
 
