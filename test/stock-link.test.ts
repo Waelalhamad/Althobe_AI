@@ -114,3 +114,12 @@ test("a deleted photo's id is never given to another photo", async () => {
   assert.ok(![a, b].includes(add()));
   assert.equal(new Set(listCatalog().map((i) => i.id)).size, listCatalog().length);
 });
+
+test("the order summary names a clearance set by its own name, and a loose set name is sent back", async () => {
+  const { orderSummary } = await import("../src/agent.ts");
+  const base = { name: "علي", phone: "0910000000", city: "طرابلس", address: "طرابلس", notes: "", payment: "cash" as const };
+  assert.match(orderSummary({ ...base, total: "", items: [{ product: "الثوب العربي", color: "فضي", size: "58", quantity: 1 }] } as never), /المنتج: طقم عربي 3 قطع[\s\S]*385 دينار/);
+  const clearance = orderSummary({ ...base, total: "400 دينار", items: [{ product: "طقم مطرز زخرفة", color: "فضي", size: "58", quantity: 1 }] } as never);
+  assert.match(clearance, /المنتج: طقم مطرز زخرفة/);
+  assert.match(clearance, /الإجمالي: 400 دينار/);
+});

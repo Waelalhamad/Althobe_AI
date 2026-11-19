@@ -5,7 +5,7 @@ import { catalogForPrompt, listCatalog, photoLabel, type CatalogItem } from "./c
 import { fileAsDataUrl } from "./media.js";
 import { missingStock, offerPriceProblems, stockForPrompt } from "./stock.js";
 import { intlPhone } from "./darb.js";
-import { hasSizes, ONE_SIZE, SET_NAME, type AiUsage, type OrderItem, type Payment } from "./store.js";
+import { hasSizes, listStock, ONE_SIZE, SET_NAME, stockName, stockProductFor, type AiUsage, type OrderItem, type Payment } from "./store.js";
 
 // Created on first use, so the server can start (e.g. in listen-only mode) before OPENAI_API_KEY is set.
 let client: OpenAI | undefined;
@@ -957,8 +957,9 @@ export function orderSummary(order: CollectedOrder): string {
   const items = order.items.length ? order.items : [{ product: "", color: "", size: "", quantity: 1 }];
   const one = items.length === 1;
   const count = items.reduce((n, i) => n + (Number(i.quantity) || 1), 0);
-  // Our set unless the items name another product; a one-size product has no size line.
-  const isSet = (i: OrderItem) => !i.product?.trim() || SET_NAME.test(i.product);
+  // Our main set unless the items name another product (the clearance sets are "طقم …" too, with their own name
+  // and price); a one-size product has no size line.
+  const isSet = (i: OrderItem) => !i.product?.trim() || (SET_NAME.test(i.product) && isMainSet(i.product));
   const products = [...new Set(items.map((i) => (isSet(i) ? "طقم عربي 3 قطع" : i.product!.trim())))];
   const size = (i: OrderItem) => (ONE_SIZE.test(String(i.size ?? "").trim()) ? "" : String(i.size));
   return [
@@ -982,10 +983,31 @@ export function orderSummary(order: CollectedOrder): string {
     .join("\n");
 }
 
+// The main set: its stock product (or no stock kept under that name and no other set it could be).
+function isMainSet(product: string): boolean {
+  const kept = stockProductFor(product);
+  return kept ? stockName(kept) === stockName(MAIN_SET) : !listStock().some((r) => SET_NAME.test(r.product) && stockName(r.product) !== stockName(MAIN_SET));
+}
+const MAIN_SET = "طقم عربي ثلاث قطع";
+
+// A set or fur named so it fits no stock product, or several ("طقم مطرز": موج or زخرفة?): its piece would take no
+// stock and be sold unchecked. The model writes the product's name as the stock list has it.
+function unknownProduct(items: OrderItem[]): string[] {
+  const rows = listStock();
+  if (!rows.length) return [];
+  const names = [...new Set(rows.map((r) => r.product))];
+  return items.flatMap((i, n) =>
+    i.product?.trim() && (SET_NAME.test(i.product) || /فرو/.test(i.product)) && !stockProductFor(i.product, rows)
+      ? [`Item ${n + 1}'s product "${i.product}" isn't one product of the stock list. Write its exact name from the list (${names.join(" / ")}); if you don't know which one the customer means, ask them with the photos.`]
+      : [],
+  );
+}
+
 // An order the model wants to save but can't be: told back to it, so it asks the customer (see decideReply).
 function orderProblems(order: CollectedOrder, said?: { fur: boolean; set: boolean }): string[] {
   return [
     ...wrongProduct(order.items, said),
+    ...unknownProduct(order.items),
     ...(libyanMobile(order.phone) ? [] : [`The phone "${order.phone}" is not a full Libyan mobile number (10 digits starting 091-095, or +218).`]),
     ...order.items.flatMap((i, n) => [
       // A product sold in one size has none to ask.

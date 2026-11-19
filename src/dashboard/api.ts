@@ -795,8 +795,8 @@ dashboardApi.post("/stock/:product/rename", (req, res) => {
   const from = String(req.params.product);
   const to = String(req.body?.to ?? "").trim().slice(0, 100);
   try {
-    const { orders } = renameStockProduct(from, to);
-    const photos = renameCatalogProduct(from, to, (a, b) => stockName(a) === stockName(b));
+    let photos = 0;
+    const { orders } = renameStockProduct(from, to, () => (photos = renameCatalogProduct(from, to, (a, b) => stockName(a) === stockName(b))));
     log("dashboard", `stock product renamed: "${from}" → "${to}" (${orders} open orders, ${photos} photos)`);
     res.json({ ok: true, orders, photos });
   } catch (error) {

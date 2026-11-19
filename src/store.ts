@@ -538,7 +538,7 @@ export function setProductDetails(product: string, details: string) {
 // A stock product gets a new name everywhere the system keeps it, at once: its stock, details, offer, what open
 // orders took of it and those orders' items, and its old name stays an alias (orders and chats that still say it).
 // The product photos (a file, not this database) are renamed by the caller after this succeeds.
-export function renameStockProduct(from: string, to: string): { orders: number } {
+export function renameStockProduct(from: string, to: string, alsoInside?: () => void): { orders: number } {
   const old = listStock().filter((r) => r.product === from);
   if (!old.length) throw new Error(`no stock product "${from}"`);
   if (!to.trim() || stockName(to) === stockName(from)) throw new Error("the new name is empty or the same");
@@ -563,11 +563,21 @@ export function renameStockProduct(from: string, to: string): { orders: number }
         orders++;
       }
     }
+    // A count the keeper sent and the team hasn't decided yet: its cells follow, or approving it would miss them.
+    const hasCounts = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'stock_counts'").get();
+    const counts = (hasCounts ? db.prepare("SELECT id, cells FROM stock_counts WHERE status = 'pending'").all() : []) as { id: number; cells: string }[];
+    for (const c of counts) {
+      const cells = JSON.parse(c.cells) as { product: string }[];
+      if (cells.some((x) => x.product === from))
+        db.prepare("UPDATE stock_counts SET cells = ? WHERE id = ?").run(JSON.stringify(cells.map((x) => (x.product === from ? { ...x, product: to } : x))), c.id);
+    }
     db.prepare("UPDATE stock_aliases SET product = ? WHERE product = ?").run(to, from);
     db.prepare("DELETE FROM stock_aliases WHERE alias = ?").run(stockName(to));
     db.prepare("INSERT INTO stock_aliases (alias, product, created_at) VALUES (?, ?, ?) ON CONFLICT (alias) DO UPDATE SET product = excluded.product").run(
       stockName(from), to, Date.now(),
     );
+    // The photos (a file): last, so their failure undoes all of it.
+    alsoInside?.();
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
