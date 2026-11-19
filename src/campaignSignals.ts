@@ -63,11 +63,8 @@ export function statedWeight(text: string): number | undefined {
 }
 
 const BIG_SIZE = [
-  // «مقاس 64», «رقم 66», «نلبس 64», «في 64», «يوجد مقاس 64»
-  /(?:مقاس\S*|قياس\S*|رقم\S*|نمرة|size|سايز|نلبس\S*|ألبس|البس|متوفر|يوجد|عندكم|عندك|فيه|في|موجود)\s*(?:مقاس\s*|رقم\s*)?(?<![\d.])6[3-8](?![\d.,]*\d)(?!\s*(?:كيلو|كغ|كج|كلغ|kg|سم|متر))/i,
-  /^\s*6[3-8]\s*[.؟?!]?\s*$/,
-  // «62 63», «62 او 64»: only sizes, one of them above 62
-  /^(?=(?:.*?(?<![\d.])6[3-8](?![\d.,]*\d)))\s*(?:\d{2}\s*(?:[,،/-]|و|او|أو)?\s*)+$/,
+  // «مقاس 64», «رقم 66», «نلبس 64», «يوجد مقاس 64»
+  /(?:مقاس\S*|قياس\S*|رقم\S*|نمرة|size|سايز|نلبس\S*|ألبس|البس)\s*(?:مقاس\s*|رقم\s*)?(?<![\d.])6[3-8](?![\d.,]*\d)(?!\s*(?:كيلو|كغ|كج|كلغ|kg|سم|متر))/i,
   // «أكبر من 62», «مقاس أكبر», «في مقاس اكبر»
   /[اأإ]كبر\s*من\s*(?:مقاس\s*)?(?:ال)?62/,
   /مقاس(?:ات)?\s*(?:[اأإ]كبر|[اأإ]كثر|اوسع|أوسع)(?![؀-ۿ])/,
@@ -77,12 +74,23 @@ const BIG_SIZE = [
   /(?<![\d.a-z])(?:[4-9]\s*x|xxxx+)\s*l?(?![a-z])/i,
 ];
 
-// The customer asked for a size above 62, or said a weight above 105 kg.
-export function tooBigFor62(text: string): string | undefined {
+// Only a number, or «في 64»: a size when we had just asked about the size, but after «كم وزنك» it is a weight
+// (a man of 65 kg answering «65»). So they count only with our previous message.
+const BARE_SIZE = [
+  /^\s*6[3-8]\s*[.؟?!]?\s*$/,
+  // «62 63», «62 او 64»: only sizes, one of them above 62
+  /^(?=(?:.*?(?<![\d.])6[3-8](?![\d.,]*\d)))\s*(?:\d{2}\s*(?:[,،/-]|و|او|أو)?\s*)+$/,
+  /^(?:في|فيه|يوجد|متوفر|عندكم|عندك|موجود)\s*(?<![\d.])6[3-8]\s*[.؟?!]?\s*$/,
+];
+const askedSize = (ours: string) => /مقاس|قياس|رقم/.test(ours) && !/وزن|كيلو|كغ/.test(ours);
+
+// The customer asked for a size above 62, or said a weight above 105 kg. ours: our message just before theirs.
+export function tooBigFor62(text: string, ours = ""): string | undefined {
   const w = statedWeight(text);
   if (w && w > MAX_KG) return `وزنه ${w} كغ`;
   const t = westernDigits(customerWords(text));
   if (t && BIG_SIZE.some((r) => r.test(t))) return "سأل عن مقاس أكبر من 62";
+  if (t && askedSize(ours) && BARE_SIZE.some((r) => r.test(t))) return "رد بمقاس أكبر من 62";
   return undefined;
 }
 

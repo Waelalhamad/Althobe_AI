@@ -181,10 +181,16 @@ test("discount words", () => {
 });
 
 test("weights and sizes above what we have", () => {
-  for (const t of ["وزني 120", "الوزن ١٣٠ كيلو", "انا طولي 180ووزني 110كيلو", "الوزن95الطول192 والوزن 106", "هل يوجد مقاس 64", "رقم 66", "64", "٦٥", "62 63", "اكبر من 62", "في مقاس اكبر", "مقاسي XXXXL", "نبي 4x"]) {
+  for (const t of ["وزني 120", "الوزن ١٣٠ كيلو", "انا طولي 180ووزني 110كيلو", "الوزن95الطول192 والوزن 106", "هل يوجد مقاس 64", "رقم 66", "نلبس 64", "اكبر من 62", "في مقاس اكبر", "مقاسي XXXXL", "نبي 4x"]) {
     assert.ok(tooBigFor62(t), t);
   }
   for (const t of ["وزني 100", "الوزن 105", "الوزن95الطول192", "نبي رقم 56 xl", "58xl", "مقاس 60", "62", "طولي 190", "وزن الطقم 400 جرام", "لا 60مقاس كبير عليا", "نبي مقاس 62 3x", "0914950567"]) {
+    assert.ok(!tooBigFor62(t), t);
+  }
+  // A bare number is a size only after we asked about the size; after «كم وزنك» it is the weight (65 kg).
+  for (const t of ["64", "٦٥", "62 63", "في 64"]) {
+    assert.ok(tooBigFor62(t, "كم مقاس حضرتك أستاذي"), t);
+    assert.ok(!tooBigFor62(t, "وكم وزنك تقريباً استاذ؟ باش نتأكدو المقاس يجي عليك"), t);
     assert.ok(!tooBigFor62(t), t);
   }
   assert.equal(statedWeight("وزني ١٢٠ كيلو"), 120);

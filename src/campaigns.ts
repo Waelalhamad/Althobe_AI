@@ -155,17 +155,20 @@ function chatSignals(): Signals {
   ]);
   if (signalsCache?.key === key) return signalsCache.value;
   const value: Signals = { discount: new Map(), size: new Map(), unhappy: new Set() };
-  for (const r of db.prepare("SELECT customer, text FROM messages WHERE role = 'customer'").iterate() as Iterable<{ customer: string; text: string }>) {
+  // In order, with our last message to each customer: a bare «64» means a size after «كم مقاسك؟», a weight after «كم وزنك؟».
+  const lastOurs = new Map<string, string>();
+  for (const r of db.prepare("SELECT customer, role, text FROM messages ORDER BY id").iterate() as Iterable<{ customer: string; role: string; text: string }>) {
+    if (r.role !== "customer") {
+      lastOurs.set(r.customer, r.text);
+      // Our own words: told there is no size above 62.
+      if (!value.size.has(r.customer) && r.text.includes("62") && toldNoBiggerSize(r.text)) value.size.set(r.customer, "انقاله إنو أكبر مقاس عندنا 62");
+      continue;
+    }
     if (!value.discount.has(r.customer) && asksForDiscount(r.text)) value.discount.set(r.customer, "كتب: " + customerWords(r.text).slice(0, 60));
     if (!value.size.has(r.customer)) {
-      const why = tooBigFor62(r.text);
+      const why = tooBigFor62(r.text, lastOurs.get(r.customer));
       if (why) value.size.set(r.customer, why);
     }
-  }
-  // Our own words: told there is no size above 62.
-  const told = db.prepare("SELECT customer, text FROM messages WHERE role = 'business' AND text LIKE '%62%'");
-  for (const r of told.iterate() as Iterable<{ customer: string; text: string }>) {
-    if (!value.size.has(r.customer) && toldNoBiggerSize(r.text)) value.size.set(r.customer, "انقاله إنو أكبر مقاس عندنا 62");
   }
   // A handoff written about a chat (the AI's reason, or the pause it left): a discount asked, or a complaint.
   const reasons = db
