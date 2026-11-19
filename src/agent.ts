@@ -976,7 +976,7 @@ export function orderSummary(order: CollectedOrder): string {
     (order.address || order.city) && `العنوان: ${order.address || order.city}`,
     // Without the total the model gave, only the set's price is known here.
     (order.total || items.every(isSet)) && `الإجمالي: ${order.total || `${385 * count} دينار`} (شامل التوصيل)`,
-    order.payment === "transfer" ? "الدفع: تحويل مصرفي" : items.every(isSet) ? "الدفع: كاش عند الاستلام بعد ما تقيس" : "الدفع: كاش عند الاستلام",
+    order.payment === "transfer" ? "الدفع: تحويل مصرفي" : items.every((i) => !i.product?.trim() || SET_NAME.test(i.product)) ? "الدفع: كاش عند الاستلام بعد ما تقيس" : "الدفع: كاش عند الاستلام",
     "نثبّتلك الطلب استاذ؟",
   ]
     .filter(Boolean)
@@ -986,7 +986,9 @@ export function orderSummary(order: CollectedOrder): string {
 // The main set: its stock product (or no stock kept under that name and no other set it could be).
 function isMainSet(product: string): boolean {
   const kept = stockProductFor(product);
-  return kept ? stockName(kept) === stockName(MAIN_SET) : !listStock().some((r) => SET_NAME.test(r.product) && stockName(r.product) !== stockName(MAIN_SET));
+  // The main set is what an item with no product means (its name can change with a rename).
+  const main = stockProductFor("") ?? MAIN_SET;
+  return kept ? stockName(kept) === stockName(main) : !listStock().some((r) => SET_NAME.test(r.product) && stockName(r.product) !== stockName(main));
 }
 const MAIN_SET = "طقم عربي ثلاث قطع";
 
