@@ -535,6 +535,49 @@ export function setProductDetails(product: string, details: string) {
     ).run(product, text, Date.now());
 }
 
+// A stock product gets a new name everywhere the system keeps it, at once: its stock, details, offer, what open
+// orders took of it and those orders' items, and its old name stays an alias (orders and chats that still say it).
+// The product photos (a file, not this database) are renamed by the caller after this succeeds.
+export function renameStockProduct(from: string, to: string): { orders: number } {
+  const old = listStock().filter((r) => r.product === from);
+  if (!old.length) throw new Error(`no stock product "${from}"`);
+  if (!to.trim() || stockName(to) === stockName(from)) throw new Error("the new name is empty or the same");
+  if (listStock().some((r) => r.product !== from && stockName(r.product) === stockName(to))) throw new Error(`"${to}" is another product`);
+  const rows = listStock();
+  let orders = 0;
+  db.exec("BEGIN");
+  try {
+    for (const table of ["stock", "product_details", "stock_clearance", "order_stock"]) db.prepare(`UPDATE ${table} SET product = ? WHERE product = ?`).run(to, from);
+    const open = db.prepare("SELECT id, items FROM orders WHERE status IN ('new', 'confirmed')").all() as { id: number; items: string }[];
+    const save = db.prepare("UPDATE orders SET items = ? WHERE id = ?");
+    for (const o of open) {
+      const items = JSON.parse(o.items) as OrderItem[];
+      let changed = false;
+      for (const item of items)
+        if (stockProductFor(item.product, rows) === from) {
+          item.product = to;
+          changed = true;
+        }
+      if (changed) {
+        save.run(JSON.stringify(items), o.id);
+        orders++;
+      }
+    }
+    db.prepare("UPDATE stock_aliases SET product = ? WHERE product = ?").run(to, from);
+    db.prepare("DELETE FROM stock_aliases WHERE alias = ?").run(stockName(to));
+    db.prepare("INSERT INTO stock_aliases (alias, product, created_at) VALUES (?, ?, ?) ON CONFLICT (alias) DO UPDATE SET product = excluded.product").run(
+      stockName(from), to, Date.now(),
+    );
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    aliasCache = undefined;
+  }
+  return { orders };
+}
+
 export function deleteProductStock(product: string) {
   db.prepare("DELETE FROM stock WHERE product = ?").run(product);
   // Its card is gone from the stock page: its details and clearance with it.

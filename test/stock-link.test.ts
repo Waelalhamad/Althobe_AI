@@ -87,3 +87,30 @@ test("a piece that fits no product takes nothing and is flagged", () => {
   assert.deepEqual(listStock().map((r) => r.quantity), before.map((r) => r.quantity));
   assert.equal((db.prepare("SELECT COUNT(*) AS n FROM order_stock WHERE order_id = ?").get(id) as { n: number }).n, 0);
 });
+
+test("a renamed product keeps its stock, its open orders and its old name", async () => {
+  const { renameStockProduct, stockProductFor: forName } = await import("../src/store.ts");
+  const id = order([{ product: "طقم موج", color: "فضي", size: "58", quantity: 1 }]);
+  assert.equal(qty("طقم مطرز موج", "فضي", "58"), 2);
+  assert.deepEqual(renameStockProduct("طقم مطرز موج", "طقم موج شتوي"), { orders: 1 });
+  assert.equal(qty("طقم موج شتوي", "فضي", "58"), 2);
+  assert.equal(forName("طقم مطرز موج"), "طقم موج شتوي");
+  const items = JSON.parse((db.prepare("SELECT items FROM orders WHERE id = ?").get(id) as { items: string }).items);
+  assert.equal(items[0].product, "طقم موج شتوي");
+  assert.throws(() => renameStockProduct("طقم موج شتوي", MAIN));
+  setOrderStatus(id, "cancelled");
+  assert.equal(qty("طقم موج شتوي", "فضي", "58"), 3);
+});
+
+test("a deleted photo's id is never given to another photo", async () => {
+  const { addCatalogItem, deleteCatalogItem, listCatalog } = await import("../src/catalog.ts");
+  const add = () => addCatalogItem({ product: "طقم مطرز موج", name: "فضي", description: "", data: Buffer.from("x"), mime: "image/jpeg" }).id;
+  const a = add();
+  const b = add();
+  deleteCatalogItem(b);
+  const c = add();
+  assert.notEqual(c, b);
+  deleteCatalogItem(a);
+  assert.ok(![a, b].includes(add()));
+  assert.equal(new Set(listCatalog().map((i) => i.id)).size, listCatalog().length);
+});

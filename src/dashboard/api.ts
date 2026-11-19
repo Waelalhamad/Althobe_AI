@@ -4,7 +4,7 @@ import express from "express";
 import { config } from "../config.js";
 import fs from "node:fs";
 import { decideReply, draftOrder, writeFollowUp, type ChatTurn } from "../agent.js";
-import { addCatalogItem, deleteCatalogItem, listCatalog, publicPhotoUrl, updateCatalogItem } from "../catalog.js";
+import { addCatalogItem, deleteCatalogItem, listCatalog, publicPhotoUrl, renameCatalogProduct, updateCatalogItem } from "../catalog.js";
 import { dataPath, transcribe } from "../media.js";
 import { answerIfWaiting, answerWaiting, latinDigits, localPhone, sendTeamMessage } from "../channels/whatsapp.js";
 import { notifyOrder } from "../orders.js";
@@ -52,6 +52,7 @@ import {
   setProductStock,
   stockName,
   heldStock,
+  renameStockProduct,
   unmatchedOrderItems,
   getSetting,
   ORDER_STATUSES,
@@ -787,6 +788,20 @@ dashboardApi.patch("/catalog/:id", (req, res) => {
     return;
   }
   res.json(item);
+});
+
+// Renames a stock product everywhere at once: stock, details, offer, open orders, aliases, then its photos.
+dashboardApi.post("/stock/:product/rename", (req, res) => {
+  const from = String(req.params.product);
+  const to = String(req.body?.to ?? "").trim().slice(0, 100);
+  try {
+    const { orders } = renameStockProduct(from, to);
+    const photos = renameCatalogProduct(from, to, (a, b) => stockName(a) === stockName(b));
+    log("dashboard", `stock product renamed: "${from}" → "${to}" (${orders} open orders, ${photos} photos)`);
+    res.json({ ok: true, orders, photos });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 dashboardApi.delete("/catalog/:id", (req, res) => {

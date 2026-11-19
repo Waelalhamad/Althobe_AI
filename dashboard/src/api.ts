@@ -557,6 +557,8 @@ export const api = {
   ) =>
     request(`/stock/${encodeURIComponent(product)}`, { method: "PUT", body: JSON.stringify({ cells, clearance }) }),
   checkStock: (items: OrderItem[]) => post<{ missing: string[] }>("/stock/check", { items }),
+  renameStock: (product: string, to: string) =>
+    request<{ ok: true; orders: number; photos: number }>(`/stock/${encodeURIComponent(product)}/rename`, { method: "POST", body: JSON.stringify({ to }) }),
   deleteStock: (product: string) => request(`/stock/${encodeURIComponent(product)}`, { method: "DELETE" }),
   saveProductDetails: (product: string, details: string) =>
     request(`/stock/${encodeURIComponent(product)}/details`, { method: "PUT", body: JSON.stringify({ details }) }),

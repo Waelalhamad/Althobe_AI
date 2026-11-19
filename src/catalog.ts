@@ -27,22 +27,44 @@ export function photoLabel(item: CatalogItem, setName: RegExp): string {
 
 export function listCatalog(): CatalogItem[] {
   try {
-    return JSON.parse(fs.readFileSync(INDEX, "utf8")) as CatalogItem[];
+    return readIndex();
   } catch {
     return [];
   }
 }
 
+// For changes: a list that can't be read throws, so a change never saves over it with only the new photo.
+function readIndex(): CatalogItem[] {
+  if (!fs.existsSync(INDEX)) return [];
+  return JSON.parse(fs.readFileSync(INDEX, "utf8")) as CatalogItem[];
+}
+
+// Written whole to a side file and swapped in, so a reader never sees half a list.
 function saveIndex(items: CatalogItem[]) {
   fs.mkdirSync(path.dirname(INDEX), { recursive: true });
-  fs.writeFileSync(INDEX, JSON.stringify(items, null, 2));
+  const tmp = `${INDEX}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(items, null, 2));
+  fs.renameSync(tmp, INDEX);
+}
+
+// Photo ids are never given twice: a deleted photo's id stays its own, as chats and orders still name it
+// (p54 was a white set photo, deleted, and 6 minutes later a new wave set photo got "p54").
+const NEXT_ID = path.resolve(config.dataDir, "catalog", "next-id");
+function nextId(items: CatalogItem[]): string {
+  const seen = Math.max(0, ...items.map((i) => Number(i.id.replace(/^p/, "")) || 0));
+  let kept = 0;
+  try {
+    kept = Number(fs.readFileSync(NEXT_ID, "utf8")) || 0;
+  } catch {}
+  const n = Math.max(seen + 1, kept);
+  fs.mkdirSync(path.dirname(NEXT_ID), { recursive: true });
+  fs.writeFileSync(NEXT_ID, String(n + 1));
+  return `p${n}`;
 }
 
 export function addCatalogItem(input: { product: string; name: string; description: string; data: Buffer; mime: string }): CatalogItem {
-  const items = listCatalog();
-  let n = items.length + 1;
-  while (items.some((i) => i.id === `p${n}`)) n++;
-  const id = `p${n}`;
+  const items = readIndex();
+  const id = nextId(items);
   // A random suffix in the file name so the public photo URL can't be guessed before it is sent.
   const file = saveFile("catalog", `${id}-${crypto.randomBytes(6).toString("hex")}`, input.data, input.mime);
   const item = { id, product: input.product, name: input.name, description: input.description, file, mime: input.mime, createdAt: Date.now() };
@@ -54,7 +76,7 @@ export function updateCatalogItem(
   id: string,
   patch: { product?: string; name?: string; description?: string },
 ): CatalogItem | undefined {
-  const items = listCatalog();
+  const items = readIndex();
   const item = items.find((i) => i.id === id);
   if (!item) return undefined;
   if (typeof patch.product === "string") item.product = patch.product;
@@ -65,13 +87,26 @@ export function updateCatalogItem(
 }
 
 export function deleteCatalogItem(id: string): boolean {
-  const items = listCatalog();
+  const items = readIndex();
   const item = items.find((i) => i.id === id);
   if (!item) return false;
   const full = dataPath(item.file);
   if (full && fs.existsSync(full)) fs.unlinkSync(full);
   saveIndex(items.filter((i) => i.id !== id));
   return true;
+}
+
+// A product's photos move to its new name (with the stock rename).
+export function renameCatalogProduct(from: string, to: string, same: (a: string, b: string) => boolean): number {
+  const items = readIndex();
+  let n = 0;
+  for (const item of items)
+    if (item.product && same(item.product, from)) {
+      item.product = to;
+      n++;
+    }
+  if (n) saveIndex(items);
+  return n;
 }
 
 // Public link WhatsApp downloads the photo from (served by /catalog/<file>).

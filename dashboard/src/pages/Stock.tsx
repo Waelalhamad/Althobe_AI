@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { AlertTriangle, Boxes, ImagePlus, Loader2, Plus, Save, Trash2, X } from "lucide-react";
+import { AlertTriangle, Boxes, ImagePlus, Pencil, Loader2, Plus, Save, Trash2, X } from "lucide-react";
 import { api, mediaUrl, type CatalogItem, type StockProduct, type UnmatchedItem } from "../api";
 import { prepareImage } from "../image";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
@@ -257,6 +257,23 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["stock"] }),
   });
 
+  // A new name everywhere at once: stock, details, offer, open orders and the photos; the old name keeps working.
+  const rename = useMutation({
+    mutationFn: (to: string) => api.renameStock(d.product, to),
+    onSuccess: (r) => {
+      void queryClient.invalidateQueries({ queryKey: ["stock"] });
+      void queryClient.invalidateQueries({ queryKey: ["catalog"] });
+      window.alert(`تغيّر الاسم: ${r.orders} طلب مفتوح و${r.photos} صورة.`);
+    },
+    onError: (e) => window.alert(e instanceof Error ? e.message : String(e)),
+  });
+  const askRename = () => {
+    if (dirty && !window.confirm("في تعديلات مش محفوظة بهالجدول رح تضيع. نكمل؟")) return;
+    const to = window.prompt(`الاسم الجديد لـ «${d.product}»
+(بيتغيّر بالمخزون والصور والطلبات المفتوحة، والاسم القديم بيضل مفهوم)`, d.product)?.trim();
+    if (to && to !== d.product) rename.mutate(to);
+  };
+
   const addColor = () => {
     const color = newColor.trim();
     if (color && !d.colors.includes(color)) change({ colors: [...d.colors, color] });
@@ -282,6 +299,11 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
         {out.length > 0 && <Badge tone="bad">{out.length} خلص</Badge>}
         {saved && <span className="text-xs text-muted">آخر تعديل {ago(saved.updatedAt)}</span>}
         <div className="ms-auto flex gap-2">
+          {saved && (
+            <Button variant="ghost" onClick={askRename} disabled={rename.isPending} title="غيّر اسم المنتج">
+              <Pencil size={16} />
+            </Button>
+          )}
           {saved && (
             <Button
               variant="ghost"
