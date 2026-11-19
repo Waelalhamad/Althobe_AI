@@ -7,6 +7,7 @@
 import { config } from "./config.js";
 import { contactName, db, saveMessage } from "./store.js";
 import { isBlacklisted } from "./blacklist.js";
+import { asksForDiscount, customerWords, handoffIsComplaint, handoffIsDiscount, toldNoBiggerSize, tooBigFor62 } from "./campaignSignals.js";
 import { customerLine, onCustomerTexts, onMessageStatuses, type MessageStatus } from "./channels/whatsapp.js";
 import { isMetaCustomer } from "./channels/meta.js";
 import { inWorkingHours } from "./supervisor.js";
@@ -132,6 +133,8 @@ export async function listTemplates(): Promise<Template[]> {
 export const SEGMENTS = {
   fur_no_order: "سألوا عن الفروة وما طلبوا",
   no_order: "كتبولنا وما طلبوا (أي منتج)",
+  discount_no_order: "طلبوا خصم وما طلبوا (تنزيلات 20%)",
+  size_too_big: "مقاسهم أكبر من 62 (وزن فوق 105 كغ أو سألوا عن 64) وما طلبوا",
   buyers: "اشتروا منا قبل (انسلم طلبهم)",
 } as const;
 export type Segment = keyof typeof SEGMENTS;
@@ -140,9 +143,52 @@ export type Segment = keyof typeof SEGMENTS;
 const OPT_OUT = /^\s*(stop|unsubscribe|توقف|اوقف|أوقف|ايقاف|إيقاف|الغاء الاشتراك|إلغاء الاشتراك|لا ترسل)/i;
 const DAY = 24 * 60 * 60 * 1000;
 
+// What the chats say about each customer, for the groups that depend on it: who asked for a discount, whose size we
+// don't have, who had a complaint. One pass over the chats, kept until a message, a handoff or a pause is added.
+type Signals = { discount: Map<string, string>; size: Map<string, string>; unhappy: Set<string> };
+let signalsCache: { key: string; value: Signals } | undefined;
+function chatSignals(): Signals {
+  const key = JSON.stringify([
+    db.prepare("SELECT MAX(id) AS m, COUNT(*) AS n FROM messages").get(),
+    db.prepare("SELECT MAX(id) AS m FROM ai_calls").get(),
+    db.prepare("SELECT COUNT(*) AS n, MAX(until) AS m FROM pauses").get(),
+  ]);
+  if (signalsCache?.key === key) return signalsCache.value;
+  const value: Signals = { discount: new Map(), size: new Map(), unhappy: new Set() };
+  for (const r of db.prepare("SELECT customer, text FROM messages WHERE role = 'customer'").iterate() as Iterable<{ customer: string; text: string }>) {
+    if (!value.discount.has(r.customer) && asksForDiscount(r.text)) value.discount.set(r.customer, "كتب: " + customerWords(r.text).slice(0, 60));
+    if (!value.size.has(r.customer)) {
+      const why = tooBigFor62(r.text);
+      if (why) value.size.set(r.customer, why);
+    }
+  }
+  // Our own words: told there is no size above 62.
+  const told = db.prepare("SELECT customer, text FROM messages WHERE role = 'business' AND text LIKE '%62%'");
+  for (const r of told.iterate() as Iterable<{ customer: string; text: string }>) {
+    if (!value.size.has(r.customer) && toldNoBiggerSize(r.text)) value.size.set(r.customer, "انقاله إنو أكبر مقاس عندنا 62");
+  }
+  // A handoff written about a chat (the AI's reason, or the pause it left): a discount asked, or a complaint.
+  const reasons = db
+    .prepare(
+      `SELECT customer, reason FROM ai_calls WHERE action = 'handoff' AND reason IS NOT NULL
+       UNION ALL SELECT customer, reason FROM pauses WHERE reason LIKE 'AI handoff%'`,
+    )
+    .all() as { customer: string; reason: string }[];
+  for (const r of reasons) {
+    if (!value.discount.has(r.customer) && handoffIsDiscount(r.reason)) value.discount.set(r.customer, "تحويل للفريق بسبب خصم");
+    if (handoffIsComplaint(r.reason)) value.unhappy.add(r.customer);
+  }
+  signalsCache = { key, value };
+  return value;
+}
+
+const LIBYAN_MOBILE = /^2189\d{8}$/;
+
+export type SegmentMember = { customer: string; last: number; why: string };
+
 // The customers of a segment, with every exclusion applied. forAds: the list for a Facebook ad audience (no message
 // is sent, so only who they are counts: not the exclusions that protect the number).
-export function segmentCustomers(segment: Segment, days: number, forAds = false): string[] {
+export function segmentMembers(segment: Segment, days: number, forAds = false): SegmentMember[] {
   const now = Date.now();
   const since = now - days * DAY;
   const rows = db
@@ -166,6 +212,7 @@ export function segmentCustomers(segment: Segment, days: number, forAds = false)
           ),
         )
       : undefined;
+  const signals = chatSignals();
   const optedOut = new Set((db.prepare("SELECT customer FROM campaign_optouts").all() as { customer: string }[]).map((r) => r.customer));
   // Anyone sent a campaign in the last week: one at a time.
   const recent = new Set(
@@ -174,18 +221,35 @@ export function segmentCustomers(segment: Segment, days: number, forAds = false)
     ),
   );
   const paused = new Set((db.prepare("SELECT customer FROM pauses WHERE until > ?").all(now) as { customer: string }[]).map((r) => r.customer));
-  return rows
-    .filter(({ customer, last }) => {
-      if (!/^\d{9,15}$/.test(customer) || isMetaCustomer(customer) || customerLine(customer)) return false;
-      if (isBlacklisted(customer) || optedOut.has(customer)) return false;
+  const members: SegmentMember[] = [];
+  for (const { customer, last } of rows) {
+    if (!/^\d{9,15}$/.test(customer) || isMetaCustomer(customer) || customerLine(customer)) continue;
+    // We deliver inside Libya only: a number from abroad can't use an offer (it still counts for an ad audience).
+    if (!forAds && !LIBYAN_MOBILE.test(customer)) continue;
+    if (isBlacklisted(customer) || optedOut.has(customer)) continue;
+    if (!forAds) {
       // Wrote within the day: still in the 24-hour window, the AI talks with them.
-      if (!forAds && (last > now - DAY || recent.has(customer) || paused.has(customer) || open.has(customer))) return false;
-      if (segment === "buyers") return delivered.has(customer);
-      if (ordered.has(customer)) return false;
-      return segment === "no_order" || fur!.has(customer);
-    })
-    .map((r) => r.customer);
+      if (last > now - DAY || recent.has(customer) || paused.has(customer) || open.has(customer)) continue;
+      // A complaint or a return in their chat: an offer would only get the number blocked.
+      if (signals.unhappy.has(customer)) continue;
+    }
+    if (segment === "buyers") {
+      if (delivered.has(customer)) members.push({ customer, last, why: "انسلم طلبه" });
+    } else if (!ordered.has(customer)) {
+      const why =
+        segment === "no_order"
+          ? "كتب وما طلب"
+          : segment === "fur_no_order"
+            ? fur!.has(customer) && "سأل عن الفروة"
+            : (segment === "discount_no_order" ? signals.discount : signals.size).get(customer);
+      if (why) members.push({ customer, last, why });
+    }
+  }
+  return members;
 }
+
+export const segmentCustomers = (segment: Segment, days: number, forAds = false): string[] =>
+  segmentMembers(segment, days, forAds).map((m) => m.customer);
 
 // Opt-outs are recorded as the customer writes (the template's stop button arrives as its text too).
 export const isOptOut = (text: string) => OPT_OUT.test(text);
@@ -231,11 +295,11 @@ export function listCampaigns() {
   const counts = db.prepare("SELECT status, COUNT(*) AS n FROM campaign_recipients WHERE campaign = ? GROUP BY status");
   // Replies: customers who wrote after their campaign message.
   const replied = db.prepare(
-    `SELECT COUNT(*) AS n FROM campaign_recipients r WHERE r.campaign = ? AND r.sent_at IS NOT NULL
+    `SELECT COUNT(*) AS n FROM campaign_recipients r WHERE r.campaign = ? AND r.sent_at IS NOT NULL AND r.status != 'failed'
        AND EXISTS (SELECT 1 FROM messages m WHERE m.customer = r.customer AND m.role = 'customer' AND m.created_at > r.sent_at)`,
   );
   const orders = db.prepare(
-    `SELECT COUNT(*) AS n FROM campaign_recipients r WHERE r.campaign = ? AND r.sent_at IS NOT NULL
+    `SELECT COUNT(*) AS n FROM campaign_recipients r WHERE r.campaign = ? AND r.sent_at IS NOT NULL AND r.status != 'failed'
        AND EXISTS (SELECT 1 FROM orders o WHERE o.customer = r.customer AND o.created_at > r.sent_at)`,
   );
   return campaigns.map((c) => ({

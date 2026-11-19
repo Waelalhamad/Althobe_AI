@@ -12,7 +12,8 @@ process.env.DATABASE_PATH = path.join(tmp, "agent.db");
 process.env.KNOWLEDGE_DIR = path.resolve("knowledge");
 
 const { db, saveMessage, saveContact, pauseAi } = await import("../src/store.ts");
-const { segmentCustomers, templatePayload, applyStatuses, classifySendError, sendBlocker, isOptOut } = await import("../src/campaigns.ts");
+const { asksForDiscount, handoffIsDiscount, statedWeight, toldNoBiggerSize, tooBigFor62 } = await import("../src/campaignSignals.ts");
+const { segmentCustomers, segmentMembers, templatePayload, applyStatuses, classifySendError, sendBlocker, isOptOut } = await import("../src/campaigns.ts");
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -50,16 +51,51 @@ order(H, "delivered");
 say(P, "الفروة", 3 * DAY);
 pauseAi(P, "AI handoff: wants a discount", 12);
 
+// The clearance groups: a discount asked for, a size we don't have.
+const handoff = (customer: string, reason: string, ago: number) =>
+  db.prepare("INSERT INTO ai_calls (customer, channel, action, reason, created_at) VALUES (?, 'whatsapp', 'handoff', ?, ?)").run(customer, reason, now - ago);
+const Q = "218910000011"; // asked «في تخفيض؟» 5 days ago, no order
+const R = "218910000012"; // said he weighs 120 kg
+const S = "218910000013"; // asked for 64, then ordered
+const T = "218910000014"; // the AI handed him to the team over a discount
+const U = "218910000015"; // a wholesale price, not a discount on one set
+const V = "218910000016"; // only the ad's text has «خصم 25%»
+const W = "218910000017"; // we told him «للاسف اكبر مقاس 62»
+const X = "218910000018"; // asked a discount, then complained
+const Y = "201001112222"; // asked a discount, from Egypt
+const Z = "218910000020"; // bought and received, then complained
+const N = "218910000021"; // weighs 100 kg: 62 fits
+say(Q, "السلام عليكم في تخفيض؟", 5 * DAY);
+say(R, "[voice note] وزني ١٢٠ كيلو", 4 * DAY);
+say(S, "هل يوجد مقاس 64", 6 * DAY);
+order(S, "delivered");
+say(T, "غالي شوية", 3 * DAY);
+handoff(T, "الزبون يطلب خصم ويقول يريد السعر 300 بدلاً من 385", 3 * DAY);
+say(U, "كم سعر الجملة", 3 * DAY);
+handoff(U, "الزبون يسأل عن سعر جملة (طلب خصم أو سعر جملة)", 3 * DAY);
+say(V, "[from the ad: «شركة الثوب العربي» الآن بسعر منخفض خصم 25% طقم ثوب عربي] مرحبًا! هل يمكنني الحصول على مزيد من المعلومات حول هذا؟", 3 * DAY);
+say(W, "نبي مقاس يناسبني", 3 * DAY);
+saveMessage({ customer: W, role: "business", source: "staff", text: "للاسف اكبر مقاس 62", createdAt: now - 3 * DAY });
+say(X, "ممكن خصم؟", 3 * DAY);
+handoff(X, "الزبون اشتكى من تأخر التوصيل ويريد استرجاع", 2 * DAY);
+say(Y, "في خصم؟", 3 * DAY);
+say(Z, "شكرا وصلني", 8 * DAY);
+order(Z, "delivered");
+handoff(Z, "الزبون يشتكي أن المقاس ضيق ويريد استرجاع", 7 * DAY);
+say(N, "وزني 100 كيلو", 3 * DAY);
+
 test("a campaign goes only to the customers it may reach", () => {
   assert.deepEqual(segmentCustomers("fur_no_order", 30).sort(), [A]);
-  assert.deepEqual(segmentCustomers("no_order", 30).sort(), [A, G].sort());
-  assert.deepEqual(segmentCustomers("buyers", 30), [H]);
+  assert.deepEqual(segmentCustomers("no_order", 30).sort(), [A, G, Q, R, T, U, V, W, N].sort());
+  assert.deepEqual(segmentCustomers("buyers", 30).sort(), [H, S].sort()); // Z got her set but complained: no offer
   // Customers who wrote before the days asked for are out.
   assert.deepEqual(segmentCustomers("fur_no_order", 2), []);
 });
 
 test("the ad audience keeps everyone but the blacklisted and the opted out", () => {
   assert.deepEqual(segmentCustomers("fur_no_order", 30, true).sort(), [A, C, E, P].sort());
+  // A number from abroad still counts for an audience, a complaint too (only the messages need protecting).
+  assert.deepEqual(segmentCustomers("discount_no_order", 30, true).sort(), [P, Q, T, X, Y].sort());
 });
 
 test("checked again at send time", () => {
@@ -114,4 +150,45 @@ test("Meta's refusals: the run, a passing one, or one customer", () => {
 test("a customer asking to stop", () => {
   for (const t of ["توقف", "إيقاف العروض الترويجية", "Stop promotions", "STOP", "الغاء الاشتراك"]) assert.ok(isOptOut(t), t);
   for (const t of ["بكم الفروة", "ما تبعتلي الصور؟", "الطلب وقف عند المندوب", "نبي نوقف الطلب"]) assert.ok(!isOptOut(t), t);
+});
+
+test("who asked for a discount and didn't order", () => {
+  assert.deepEqual(segmentCustomers("discount_no_order", 30).sort(), [Q, T].sort());
+  // Not: wholesale (U), the ad's words (V), a complaint (X), abroad (Y), the team has him (P).
+  const why = Object.fromEntries(segmentMembers("discount_no_order", 30).map((m) => [m.customer, m.why]));
+  assert.match(why[Q], /تخفيض/);
+  assert.match(why[T], /خصم/);
+  assert.deepEqual(segmentCustomers("discount_no_order", 2), []);
+});
+
+test("whose size we don't have, and didn't order", () => {
+  // R: 120 kg; W: told our biggest is 62. Not S (ordered), N (100 kg fits), nor a size question about 60.
+  assert.deepEqual(segmentCustomers("size_too_big", 30).sort(), [R, W].sort());
+});
+
+test("a sent offer's answers are not read as what the customer asked", () => {
+  assert.equal(asksForDiscount("[sent our offer message] عندنا تنزيلات خصم 20%"), false);
+  assert.equal(asksForDiscount("[sent a reaction 👍 to: «ما في خصم»]"), false);
+  assert.equal(asksForDiscount("[answering our message «السعر ثابت»] طيب في تخفيض لو اخذت اثنين"), true);
+});
+
+test("discount words", () => {
+  for (const t of ["كم التخفيض", "في تخفيظ", "ديرلي سعر اقل شوي", "آخر سعر", "متقدرش تنزل السعر", "هل في خصم", "ياريت ارخص شوية"]) assert.ok(asksForDiscount(t), t);
+  for (const t of ["بكم الطقم", "كم السعر مع التوصيل", "مرحبا", "ولد يلبس 56", "نبي رقم 56 xl"]) assert.ok(!asksForDiscount(t), t);
+  assert.ok(handoffIsDiscount("الزبون يسأل عن تخفيض عند شراء 2"));
+  assert.ok(!handoffIsDiscount("الزبون يسأل عن سعر الجملة/خصم"));
+  assert.ok(!handoffIsDiscount("الزبون يسأل عن التوصيل"));
+});
+
+test("weights and sizes above what we have", () => {
+  for (const t of ["وزني 120", "الوزن ١٣٠ كيلو", "انا طولي 180ووزني 110كيلو", "الوزن95الطول192 والوزن 106", "هل يوجد مقاس 64", "رقم 66", "64", "٦٥", "62 63", "اكبر من 62", "في مقاس اكبر", "مقاسي XXXXL", "نبي 4x"]) {
+    assert.ok(tooBigFor62(t), t);
+  }
+  for (const t of ["وزني 100", "الوزن 105", "الوزن95الطول192", "نبي رقم 56 xl", "58xl", "مقاس 60", "62", "طولي 190", "وزن الطقم 400 جرام", "لا 60مقاس كبير عليا", "نبي مقاس 62 3x", "0914950567"]) {
+    assert.ok(!tooBigFor62(t), t);
+  }
+  assert.equal(statedWeight("وزني ١٢٠ كيلو"), 120);
+  assert.ok(toldNoBiggerSize("للاسف اكبر مقاس متوفر 62"));
+  assert.ok(toldNoBiggerSize("ما عندنا 64، أكبر مقاس 62 استاذ."));
+  assert.ok(!toldNoBiggerSize("المقاسات المتوفرة: 56، 58، 60، 62 — وأكبر مقاس 62."));
 });
