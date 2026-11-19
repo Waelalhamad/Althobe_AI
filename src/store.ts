@@ -404,7 +404,7 @@ export type OrderFields = Pick<NewOrder, "name" | "phone" | "city" | "address" |
 export function updateOrder(id: number, o: OrderFields): boolean {
   // Changed items (another color or size) move the stock with them.
   const before = stockState(id);
-  if (before?.applied) returnStock(id, before.items);
+  if (before?.applied) returnStock(id);
   const changed =
     db
       .prepare("UPDATE orders SET name = ?, phone = ?, city = ?, address = ?, items = ?, total = ?, notes = ?, payment = ?, updated_at = ? WHERE id = ?")
@@ -421,7 +421,7 @@ export function setOrderStatus(id: number, status: OrderStatus): boolean {
   const changed = db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(status, Date.now(), id).changes > 0;
   // A cancelled order gives its pieces back; un-cancelling takes them again.
   if (changed && before) {
-    if (status === "cancelled" && before.applied) returnStock(id, before.items);
+    if (status === "cancelled" && before.applied) returnStock(id);
     else if (status !== "cancelled" && before.status === "cancelled" && !before.applied) takeStock(id, before.items);
   }
   return changed;
@@ -562,6 +562,34 @@ export const ONE_SIZE = /^(?:ستاندرد|ستاندر|ستاندارد|standa
 // Our set's names, as the AI and the team write them (it has sizes, from the weight table).
 export const SET_NAME = /طقم|ثوب|جلاب|جلبي|كلابي|سوري/;
 
+// Other names of a stock product: what the AI wrote before the product had its dashboard name, or its name before
+// a rename ("طقم عربي 3 قطع" → "طقم عربي ثلاث قطع"). Keyed by stockName().
+db.exec(`
+  CREATE TABLE IF NOT EXISTS stock_aliases (
+    alias      TEXT    PRIMARY KEY,
+    product    TEXT    NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`);
+// The name an item with no product means, and the old names of our main set (in orders since before 2026-11).
+const MAIN_SET_ALIAS = "الثوب العربي";
+for (const alias of ["طقم عربي 3 قطع", "الطقم العربي 3 قطع", "طقم عربي ٣ قطع", "الثوب العربي", "ثوب عربي", "طقم عربي", "الطقم العربي", "الطقم العربي ثلاث قطع"])
+  db.prepare("INSERT OR IGNORE INTO stock_aliases (alias, product, created_at) VALUES (?, 'طقم عربي ثلاث قطع', ?)").run(stockName(alias), Date.now());
+
+let aliasCache: Map<string, string> | undefined;
+export function stockAliases(): Map<string, string> {
+  aliasCache ??= new Map((db.prepare("SELECT alias, product FROM stock_aliases").all() as { alias: string; product: string }[]).map((r) => [r.alias, r.product]));
+  return aliasCache;
+}
+export function setStockAlias(alias: string, product: string) {
+  const key = stockName(alias);
+  if (!key || key === stockName(product)) return;
+  db.prepare(
+    "INSERT INTO stock_aliases (alias, product, created_at) VALUES (?, ?, ?) ON CONFLICT (alias) DO UPDATE SET product = excluded.product",
+  ).run(key, product, Date.now());
+  aliasCache = undefined;
+}
+
 // The stock product an item's product name means. The name the AI writes can differ from the dashboard's
 // ("الثوب العربي" / "طقم عربي ثلاث قطع"): the same name, else the set by any of its names, else one name inside
 // the other. An item with no product is the only product kept, if there is one.
@@ -570,16 +598,19 @@ const only = <T,>(xs: T[]) => (xs.length === 1 ? xs[0] : undefined);
 
 export function stockProductFor(name: string | undefined, rows = listStock()): string | undefined {
   const products = [...new Set(rows.map((r) => r.product))];
-  const n = stockName(name ?? "");
-  // No product named: our set (what every order was before other products), or the only product kept.
-  if (!n) return products.find((p) => SET_NAME.test(stockName(p))) ?? (products.length === 1 ? products[0] : undefined);
+  // No product named: what every order was before other products, our main set.
+  const n = stockName(name ?? "") || stockName(MAIN_SET_ALIAS);
+  const alias = stockAliases().get(n);
+  const sets = products.filter((p) => SET_NAME.test(stockName(p)));
   return (
     products.find((p) => stockName(p) === n) ??
-    (SET_NAME.test(n) ? products.find((p) => SET_NAME.test(stockName(p))) : undefined) ??
+    (alias !== undefined ? products.find((p) => stockName(p) === stockName(alias)) : undefined) ??
     // Each word the AI wrote is in the product's name ("فروة شبك" → "فروة أبو شهري مطرز شبك"), or the other way:
     // only when that points to ONE product (plain "فروة" fits all three models and finds none).
     only(products.filter((p) => words(stockName(p)).every((w) => words(n).includes(w)))) ??
     only(products.filter((p) => words(n).every((w) => words(stockName(p)).includes(w)))) ??
+    // A set's name that fits none of them by its words: the set, only when one set is kept.
+    (SET_NAME.test(n) ? only(sets) : undefined) ??
     (products.length === 1 ? products[0] : undefined)
   );
 }
@@ -611,6 +642,38 @@ export function stockRowFor(item: OrderItem, rows = listStock()): StockRow | und
   );
 }
 
+// The stock cells each order took. Orders from before it: filled once from their items by today's names (exact
+// name or alias, never "the first set"), which is where they were taken from: the main set was the only set kept
+// until 2026-11-18, and no order under an old name was saved after the new sets came in.
+const ledgerIsNew = !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'order_stock'").get();
+db.exec(`
+  CREATE TABLE IF NOT EXISTS order_stock (
+    order_id INTEGER NOT NULL,
+    idx      INTEGER NOT NULL,             -- the item's place in orders.items
+    product  TEXT    NOT NULL,
+    color    TEXT    NOT NULL,
+    size     TEXT    NOT NULL,
+    quantity INTEGER NOT NULL,
+    PRIMARY KEY (order_id, idx)
+  );
+`);
+if (ledgerIsNew) {
+  const rows = listStock();
+  const record = db.prepare("INSERT OR REPLACE INTO order_stock (order_id, idx, product, color, size, quantity) VALUES (?, ?, ?, ?, ?, ?)");
+  db.exec("BEGIN");
+  try {
+    for (const o of db.prepare("SELECT id, items FROM orders WHERE stock_applied = 1").all() as { id: number; items: string }[])
+      (JSON.parse(o.items) as OrderItem[]).forEach((item, idx) => {
+        const row = stockRowFor(item, rows);
+        if (row) record.run(o.id, idx, row.product, row.color, row.size, item.quantity);
+      });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 // Called when a piece runs out (stock.ts sends the Telegram alert).
 let onStockOut: ((row: StockRow) => void) | undefined;
 export function whenStockRunsOut(fn: (row: StockRow) => void) {
@@ -624,28 +687,54 @@ function stockState(id: number): { items: OrderItem[]; status: OrderStatus; appl
   return row && { items: JSON.parse(row.items) as OrderItem[], status: row.status, applied: row.stock_applied === 1 };
 }
 
-function moveStock(items: OrderItem[], sign: 1 | -1) {
-  const rows = listStock();
-  const update = db.prepare("UPDATE stock SET quantity = quantity + ?, updated_at = ? WHERE product = ? AND color = ? AND size = ?");
-  for (const item of items) {
-    const row = stockRowFor(item, rows);
-    if (!row) continue;
-    const delta = sign * item.quantity;
-    update.run(delta, Date.now(), row.product, row.color, row.size);
-    const before = row.quantity;
-    row.quantity += delta;
-    if (before > 0 && row.quantity <= 0) onStockOut?.(row);
-  }
-}
-
 function takeStock(id: number, items: OrderItem[]) {
-  moveStock(items, -1);
+  const rows = listStock();
+  const update = db.prepare("UPDATE stock SET quantity = quantity - ?, updated_at = ? WHERE product = ? AND color = ? AND size = ?");
+  const record = db.prepare("INSERT OR REPLACE INTO order_stock (order_id, idx, product, color, size, quantity) VALUES (?, ?, ?, ?, ?, ?)");
+  db.prepare("DELETE FROM order_stock WHERE order_id = ?").run(id);
+  items.forEach((item, idx) => {
+    const row = stockRowFor(item, rows);
+    if (!row) return; // not kept in stock, or no such color/size: shown on the stock page
+    update.run(item.quantity, Date.now(), row.product, row.color, row.size);
+    record.run(id, idx, row.product, row.color, row.size, item.quantity);
+    const before = row.quantity;
+    row.quantity -= item.quantity;
+    if (before > 0 && row.quantity <= 0) onStockOut?.(row);
+  });
   db.prepare("UPDATE orders SET stock_applied = 1 WHERE id = ?").run(id);
 }
 
-function returnStock(id: number, items: OrderItem[]) {
-  moveStock(items, 1);
+// Gives back exactly what the order took (its rows in order_stock), whatever its items are called now.
+function returnStock(id: number) {
+  const taken = db.prepare("SELECT product, color, size, quantity FROM order_stock WHERE order_id = ?").all(id) as StockCell[];
+  const update = db.prepare("UPDATE stock SET quantity = quantity + ?, updated_at = ? WHERE product = ? AND color = ? AND size = ?");
+  for (const t of taken) update.run(t.quantity, Date.now(), t.product, t.color, t.size);
+  db.prepare("DELETE FROM order_stock WHERE order_id = ?").run(id);
   db.prepare("UPDATE orders SET stock_applied = 0 WHERE id = ?").run(id);
+}
+
+type StockCell = { product: string; color: string; size: string; quantity: number };
+
+// What each open order holds, cell by cell (the stock page's "held").
+export function heldStock(): (StockCell & { orderId: number })[] {
+  return db
+    .prepare(
+      `SELECT s.order_id AS orderId, s.product, s.color, s.size, s.quantity FROM order_stock s JOIN orders o ON o.id = s.order_id
+       WHERE o.status IN ('new', 'confirmed') AND o.stock_applied = 1`,
+    )
+    .all() as (StockCell & { orderId: number })[];
+}
+
+// Items of open orders that took no stock: a name that fits no product (or more than one), or a color/size that
+// product doesn't have. Never guessed onto another product: the team fixes the order or the product's names.
+export function unmatchedOrderItems(): { orderId: number; status: string; item: OrderItem }[] {
+  const orders = db
+    .prepare("SELECT id, status, items FROM orders WHERE status IN ('new', 'confirmed') AND stock_applied = 1 ORDER BY id")
+    .all() as { id: number; status: string; items: string }[];
+  const taken = new Set((db.prepare("SELECT order_id, idx FROM order_stock").all() as { order_id: number; idx: number }[]).map((r) => `${r.order_id}|${r.idx}`));
+  return orders.flatMap((o) =>
+    (JSON.parse(o.items) as OrderItem[]).flatMap((item, idx) => (taken.has(`${o.id}|${idx}`) ? [] : [{ orderId: o.id, status: o.status, item }])),
+  );
 }
 
 // The customer's latest WhatsApp message id (to mark it read / show "typing…").

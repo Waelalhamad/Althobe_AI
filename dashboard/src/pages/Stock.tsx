@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Boxes, ImagePlus, Loader2, Plus, Save, Trash2, X } from "lucide-react";
-import { api, mediaUrl, type CatalogItem, type StockProduct } from "../api";
+import { AlertTriangle, Boxes, ImagePlus, Loader2, Plus, Save, Trash2, X } from "lucide-react";
+import { api, mediaUrl, type CatalogItem, type StockProduct, type UnmatchedItem } from "../api";
 import { prepareImage } from "../image";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { ago, num } from "../format";
@@ -44,6 +44,8 @@ export function Stock() {
 
       <IncomingReturns />
 
+      <Unmatched items={q.data?.unmatched ?? []} />
+
       {tracked.map((p) => (
         <ProductTable key={p.product} initial={toDraft(p)} saved={p} />
       ))}
@@ -67,6 +69,30 @@ export function Stock() {
         </Card>
       )}
     </div>
+  );
+}
+
+// Open orders with a piece the system couldn't put on any product: it took no stock and won't give any back.
+// Never guessed onto "the nearest" product; fix the order's product name, color or size (or the stock table).
+function Unmatched({ items }: { items: UnmatchedItem[] }) {
+  if (!items.length) return null;
+  return (
+    <Card className="flex flex-col gap-2 border-amber-500/50">
+      <h2 className="flex items-center gap-2 font-semibold">
+        <AlertTriangle size={18} className="text-amber-500" /> قطع بطلبات مفتوحة مش مربوطة بالمخزون ({items.length})
+      </h2>
+      <p className="text-sm text-muted">
+        هالقطع ما انخصمت من أي منتج، ولما ينلغى الطلب ما بترجع لأي منتج. الاسم أو اللون أو المقاس مش متل المخزون. صلّحها من صفحة الطلبات أو زيد اللون والمقاس عالمخزون.
+      </p>
+      <ul className="flex flex-col gap-1 text-sm">
+        {items.map((u, i) => (
+          <li key={i} className="flex flex-wrap items-center gap-2">
+            <Badge>طلب #{u.orderId}</Badge>
+            <span>{[u.item.product || "بدون اسم منتج", u.item.color, u.item.size && `مقاس ${u.item.size}`, u.item.quantity > 1 && `×${u.item.quantity}`].filter(Boolean).join(" · ")}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 

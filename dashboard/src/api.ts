@@ -225,6 +225,9 @@ export type StockProduct = {
   updatedAt: number;
 };
 
+// An item of an open order that took no stock (its name fits no product, or that product has no such color/size).
+export type UnmatchedItem = { orderId: number; status: string; item: { product?: string; color: string; size: string; quantity: number } };
+
 export type RedirectCandidate = { orderId: number; reference: string; city: string; matches: number };
 // Goods on their way back to us (see src/darbRedirect.ts incomingReturns).
 export type IncomingReturn = {
@@ -545,7 +548,8 @@ export const api = {
   saveKnowledge: (name: string, body: string) =>
     request(`/knowledge/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ body }) }),
   deleteKnowledge: (name: string) => request(`/knowledge/${encodeURIComponent(name)}`, { method: "DELETE" }),
-  stock: () => request<{ products: StockProduct[]; suggestions: { product: string; colors: string[] }[] }>("/stock"),
+  stock: () =>
+    request<{ products: StockProduct[]; suggestions: { product: string; colors: string[] }[]; unmatched: UnmatchedItem[] }>("/stock"),
   saveStock: (
     product: string,
     cells: { color: string; size: string; quantity: number }[],

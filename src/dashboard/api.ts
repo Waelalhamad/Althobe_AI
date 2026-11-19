@@ -51,8 +51,8 @@ import {
   setProductDetails,
   setProductStock,
   stockName,
-  stockRowFor,
-  type OrderItem,
+  heldStock,
+  unmatchedOrderItems,
   getSetting,
   ORDER_STATUSES,
   pauseAi,
@@ -805,13 +805,8 @@ dashboardApi.delete("/catalog/:id", (req, res) => {
 dashboardApi.get("/stock", (_req, res) => {
   const rows = listStock();
   const held = new Map<string, number>();
-  const open = db.prepare("SELECT items FROM orders WHERE status IN ('new', 'confirmed') AND stock_applied = 1").all() as { items: string }[];
-  for (const o of open) {
-    for (const item of JSON.parse(o.items) as OrderItem[]) {
-      const row = stockRowFor(item, rows);
-      if (row) held.set(`${row.product}|${row.color}|${row.size}`, (held.get(`${row.product}|${row.color}|${row.size}`) ?? 0) + item.quantity);
-    }
-  }
+  // What each open order took, cell by cell (never re-read from its items' names).
+  for (const h of heldStock()) held.set(`${h.product}|${h.color}|${h.size}`, (held.get(`${h.product}|${h.color}|${h.size}`) ?? 0) + h.quantity);
   const details = new Map(listProductDetails().map((d) => [d.product, d.details]));
   const clearance = new Map(listClearance().map((c) => [c.product, { price: c.price, cells: c.cells }]));
   const products = [...new Set(rows.map((r) => r.product))].map((product) => {
@@ -831,7 +826,7 @@ dashboardApi.get("/stock", (_req, res) => {
     product,
     colors: [...new Set(catalog.filter((c) => c.product?.trim() === product).map((c) => c.name.replace(/^اللون\s*[:：]?\s*/, "").trim()))],
   }));
-  res.json({ products, suggestions });
+  res.json({ products, suggestions, unmatched: unmatchedOrderItems() });
 });
 
 // Saves one product's whole table: { colors, sizes, cells: [{ color, size, quantity }] }.
