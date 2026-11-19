@@ -39,7 +39,7 @@ import { isBlacklisted, shouldAlert } from "../blacklist.js";
 import { customerLabel, dashboardLink, esc, notify, notifyError } from "../telegram.js";
 import { isMetaCustomer, metaSendImage, metaSendText, metaTyping } from "./meta.js";
 import { noteHandoff } from "../learning.js";
-import { customerNamed, isHiddenPhoto, markedFirst, missingStock } from "../stock.js";
+import { customerNamed, markedFirst, missingStock, photoStock } from "../stock.js";
 import { trackingNote } from "../darbTrack.js";
 import { setShipmentLocation } from "../darb.js";
 import { autoConfirmGaps } from "../autoConfirm.js";
@@ -992,8 +992,9 @@ async function sendPhotos(customer: string, ids: string[]) {
     db.prepare("SELECT text FROM messages WHERE customer = ? AND role = 'customer' ORDER BY id DESC LIMIT 40").all(customer) as { text: string }[]
   ).map((m) => m.text ?? "");
   const items = markedFirst(ids.map((id) => catalog.find((i) => i.id === id)).filter((i) => i !== undefined)).filter((item) => {
-    if (!isHiddenPhoto(item) || customerNamed(item.name, said)) return true;
-    log("whatsapp", `hidden color photo not sent to ${customer}: ${item.id} ${item.product ?? ""} ${item.name}`);
+    const stock = photoStock(item);
+    if (stock === "shown" || (stock === "hidden" && customerNamed(item.name, said))) return true;
+    log("whatsapp", `${stock} color photo not sent to ${customer}: ${item.id} ${item.product ?? ""} ${item.name}`);
     return false;
   });
   for (const item of items) {

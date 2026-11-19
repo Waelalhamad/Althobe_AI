@@ -136,7 +136,7 @@ export function catalogForPrompt(hidden: (item: CatalogItem) => boolean = () => 
         const lines = [...names]
           .map(([name, ps]) => {
             const description = ps.find((p) => p.description)?.description;
-            return `- ${ps.map((p) => p.id).join(", ")}: ${name}${description ? ` — ${description}` : ""}${ps.every(hidden) ? " — HIDDEN color: only for a customer who names it himself" : ""}`;
+            return `- ${ps.map((p) => p.id).join(", ")}: ${name}${description ? ` — ${description}` : ""}${ps.every(hidden) ? " — NOT TO OFFER (hidden, or not in stock): see the stock list" : ""}`;
           })
           .join("\n");
         return product ? `${product}:\n${lines}` : lines;

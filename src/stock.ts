@@ -56,6 +56,19 @@ function stockTable(): string {
   // really available, and shown with photos instead of asking "X or Y?" in words (the customer can't tell the
   // embroideries or the collars apart by name).
   const several = products.size > 1;
+  // The same color in more than one product, with each one's sizes: the filter is written out, not left to the model
+  // (it asked "وجهين ولا حادّة ولا مدوّرة؟" for a grey 62 only the two-face set has).
+  const byColor = new Map<string, { name: string; where: string[] }>();
+  for (const [product, colors] of products)
+    for (const [color, cells] of colors) {
+      const left = cells.filter((c) => !c.hidden && c.quantity > 0).map((c) => c.size).sort(bySize);
+      if (!left.length) continue;
+      const k = stockName(color);
+      const entry = byColor.get(k) ?? { name: color, where: [] };
+      entry.where.push(hasSizes(product, rows) ? `${product} (${left.join(", ")})` : product);
+      byColor.set(k, entry);
+    }
+  const colorLines = [...byColor.values()].filter((e) => e.where.length > 1).map((e) => `- ${e.name}: ${e.where.join(" · ")}`);
   const largest = Math.max(0, ...[...products.keys()].flatMap(numeric));
   const withLargest = [...products.keys()].filter((p) => numeric(p).includes(largest));
   for (const [product, all] of products) {
@@ -121,7 +134,7 @@ This list is the truth about what we have, above anything the knowledge document
 - Don't send photos of a color that is sold out in every size, and don't offer it.
 - A color marked "ONLY A FEW LEFT" is almost gone: don't send its photo or name it when you show or list the colors yourself (show the others). If the customer asks for it, picks it from a photo or our ad names it, it is available: say so with "الكمية محدودة" in a few words (never the number) and carry on with their order.
 - Before calling submit_order, check every item against this list. If one is sold out (even when the summary was already sent and the customer confirmed), don't call submit_order: tell them kindly it just ran out and offer what we have in their size.
-- A color or size missing from this list isn't kept in stock here: answer from the knowledge documents.${clearanceRules}${pushRules}${
+- A product missing from this list isn't kept in stock here: answer from the knowledge documents. A product in this list has only the colors and sizes it lists: any other color or size of it is not available, even when we have its photo or the knowledge names it.${clearanceRules}${pushRules}${
     sales.length
       ? `
 - A product marked "ON SALE «…»" is on sale: say those words as written with its price, as good news, once in the chat («${saleText(sales[0]!)} 👌»). Its price is the price the knowledge gives it, already reduced: never work out, guess or say a price «before» or «بدل», and never give the sale to another product. A product not marked has no sale.`
@@ -129,8 +142,8 @@ This list is the truth about what we have, above anything the knowledge document
   }${
     sizeLines.length
       ? `${several ? `
-- A request that fits more than one product here ("طقم مطرز", "طقم سادة", a color more than one set has): first keep only the products that have what the customer asked for available (that color, and their size if you know it; HIDDEN pieces don't count). ONE left: offer that one straight away with its name, price and the photo of that color; don't ask which one. Several left: in ONE reply, send one photo of each (that color's photo if they asked a color) and name each with its price, then ask which one they liked. Never ask "موج ولا زخرفة؟" or "أي فرملة؟" in words without the photos. This is above the knowledge documents' rules about photos ("once in the chat", "only that color") and about asking. None has it: say so kindly and offer what we have in their size.` : ""}
-- The sizes each product has right now are listed under "Sizes in stock", above any size range in the knowledge documents (which may give one product's range as if it were all). The largest size we have right now is ${largest || "?"} (${withLargest.join(" / ")}). A customer who needs a size bigger than the product he asked for has: offer the product that has it, before saying we don't have it.`
+- A request that fits more than one product here ("طقم مطرز", "طقم سادة", a color more than one set has): first keep only the products that have what the customer asked for available (that color, and their size if you know it; HIDDEN pieces don't count). ONE left: offer that one straight away with its name, price and the photo of that color; don't ask which one. Several left: in ONE reply, send one photo of each (that color's photo if they asked a color) and name each with its price, then ask which one they liked. Never ask "موج ولا زخرفة؟" or "أي فرملة؟" in words without the photos. "Colors in more than one product" below already shows which products have each such color in which sizes: use it. This is above the knowledge documents' rules about photos ("once in the chat", "only that color") and about asking. None has it: say so kindly and offer what we have in their size.` : ""}
+- The sizes each product has right now are listed under "Sizes in stock", above any size range in the knowledge documents (which may give one product's range as if it were all). The largest size we have right now is ${largest || "?"} (${withLargest.join(" / ")}). A customer who needs a size bigger than the product he asked for has: offer the product that has it, before saying we don't have it. A customer asking about a size (a number like 62 or 64, «أكبر مقاس», or his weight to know his size) is asking about our sets: answer that, never ask «الطقم ولا الفروة؟».`
       : ""
   }${
     hiddenLines.length
@@ -138,13 +151,24 @@ This list is the truth about what we have, above anything the knowledge document
 - "HIDDEN" pieces below are in stock but not shown: never name them, list them, send their photo or offer them yourself, and they don't count when you say which colors a product comes in. Only when the customer names that exact color himself (in their words, not from our list) for that product: it's available in those sizes, carry on as usual (its photo may be sent then).`
       : ""
   }
-${sizeLines.length ? `Sizes in stock (any color):\n${sizeLines.join("\n")}\n` : ""}${lines.join("\n")}${hiddenLines.length ? `\nHIDDEN (only for a customer who names the color himself):\n${hiddenLines.join("\n")}` : ""}`;
+${sizeLines.length ? `Sizes in stock (any color):\n${sizeLines.join("\n")}\n` : ""}${colorLines.length ? `Colors in more than one product (where each is available, in which sizes):\n${colorLines.join("\n")}\n` : ""}${lines.join("\n")}${hiddenLines.length ? `\nHIDDEN (only for a customer who names the color himself):\n${hiddenLines.join("\n")}` : ""}`;
 }
 
 // A photo of a color whose every piece is hidden: never sent unless the customer named that color.
+// Also a color of a stock product that its stock doesn't have at all (the wave set's dark grey has photos, but the
+// team kept it out of the stock on purpose).
 export function isHiddenPhoto(photo: { product?: string; name: string }, rows = listStock()): boolean {
-  const cells = rows.filter((r) => stockName(r.product) === stockName(photo.product ?? "") && stockName(r.color) === stockName(photo.name));
-  return cells.length > 0 && cells.every((c) => c.hidden);
+  return photoStock(photo, rows) !== "shown";
+}
+
+// "shown": offered as usual (or not a stock product); "hidden": counted but only for who names it; "absent": the
+// product is kept in stock but not this color.
+export function photoStock(photo: { product?: string; name: string }, rows = listStock()): "shown" | "hidden" | "absent" {
+  const product = photo.product?.trim() ? rows.find((r) => stockName(r.product) === stockName(photo.product!))?.product : undefined;
+  if (!product) return "shown";
+  const cells = rows.filter((r) => r.product === product && stockName(r.color) === stockName(photo.name));
+  if (!cells.length) return "absent";
+  return cells.every((c) => c.hidden) ? "hidden" : "shown";
 }
 
 // Did the customer name this color in the chat (their own words)? "رصاصي غامق" in «عندك رصاصي غامق؟».
