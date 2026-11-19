@@ -126,7 +126,8 @@ const INSTRUCTIONS = `You are part of the sales team of our store, chatting with
 
 # When to hand off (call handoff_to_human instead of replying)
 Only in these cases (the kind in brackets); anything else you answer yourself, and a handoff for anything else is refused:
-- the customer asks for a discount, or a wholesale price to resell (discount). A quantity alone is not a reason: take an order for 3 or 5 sets like any other;
+- the customer asks for a discount on MORE than 3 pieces (4 or more, of any products together, counted from what they said they want in this chat), or a wholesale price to resell (discount). A quantity alone is not a reason: take an order for 3 or 5 sets like any other;
+- a discount asked for 3 pieces or fewer (or no number said) is never a case for the team, however often they ask: answer it yourself, kindly and firmly, that the price is final, with what it includes (free delivery to their door, pay on delivery), and carry on with the sale («والله استاذ السعر نهائي، وهو شامل التوصيل لباب بيتك والدفع عند الاستلام 👌 نكمّلك الطلب؟»). A product on sale (marked ON SALE in the stock list) is already at a reduced price: say so («هو أصلاً عليه تنزيلات 20%»), no extra discount. Never promise, hint at or invent a discount or offer;
 - a problem with an order already confirmed or delivered: cancel, change, defect, missing piece, wrong size, late (order_problem; see "Where is my order"). Questions about trying on or returns are answered from the knowledge: there are no returns, the customer tries it on while the courier is there;
 - the customer says they transferred the money, or sends a receipt (payment);
 - the customer is outside Libya (abroad);
@@ -459,6 +460,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
   let firstDraft: { text: string; check: ReplyCheck } | undefined;
   // A handoff outside the allowed cases is refused once; after that the AI has no handoff tool and must answer.
   let handoffRefused = false;
+  let smallDiscount = false;
   let silenceRefused = false;
   // A reply in the wrong dialect or language (or more than 2 messages) gets one rewrite too, then is fixed and sent.
   let restyled = false;
@@ -619,11 +621,16 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
       continue;
     }
     const emptyReply = decision.reason === EMPTY;
+    // Told it's a small discount and handing off again: our own polite "the price is final" goes, not the team.
+    if (!emptyReply && decision.action === "handoff" && smallDiscount && decision.kind === "discount") {
+      return { action: "reply", text: SMALL_DISCOUNT_REPLY, photos, usage };
+    }
     if (!emptyReply && decision.action === "handoff" && !handoffRefused && round < 4) {
       const verdict = await allowedHandoff(history, decision, usage, startedAt);
       if (!verdict.ok) {
         handoffRefused = true;
-        input.push(...outputItems(response, toolResults, handoffRefusal(verdict.why)));
+        smallDiscount = verdict.smallDiscount === true;
+        input.push(...outputItems(response, toolResults, smallDiscount ? SMALL_DISCOUNT_REFUSAL : handoffRefusal(verdict.why)));
         continue;
       }
     }
@@ -1336,13 +1343,14 @@ function checkFeedback(check: ReplyCheck): string {
 
 // The AI hands chats to the team too easily, so a second look checks each handoff against the allowed cases.
 const HANDOFF_CHECK = `Our sales assistant on WhatsApp wants to hand this chat to our team. It may only do so in these cases:
-1. the customer asks for a discount, or a wholesale price to resell (a quantity alone, e.g. 3 or 5 sets, is NOT a case);
+1. the customer asks for a discount on MORE than 3 pieces (4 or more, any products together, counted from what they said they want in the chat), or a wholesale price to resell (a quantity alone, e.g. 3 or 5 sets, is NOT a case);
 2. a problem with an order already confirmed or delivered: cancel, change, defect, missing piece, wrong size, late;
 3. the customer says they transferred the money, or sent a receipt;
 4. the customer is outside Libya;
 5. the customer clearly asks to talk to a person;
 6. questions about the company or its management, rude words, or an angry customer complaining.
 Anything else the assistant answers itself, e.g. the price, the address or where we are, the ad's text, a city missing from the delivery table, "we'll talk next week", a color they picked or one we don't have, a doubt between "استاذ" and "استاذة", a question the assistant can't answer.
+A discount asked for 3 pieces or fewer, or with no number said, is case 7 (not for the team), even when they insist.
 Judge from the customer's own messages, not from the assistant's reason.`;
 
 const HANDOFF_SCHEMA: OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"] = {
@@ -1353,7 +1361,7 @@ const HANDOFF_SCHEMA: OpenAI.Chat.Completions.ChatCompletionCreateParams["respon
     schema: {
       type: "object",
       properties: {
-        case_number: { type: "integer", description: "1-6, or 0 when none of the cases fits." },
+        case_number: { type: "integer", description: "1-6; 7 for a discount asked for 3 pieces or fewer; 0 when none of the cases fits." },
         why: { type: "string", description: "One short line, in English." },
       },
       required: ["case_number", "why"],
@@ -1367,7 +1375,7 @@ async function allowedHandoff(
   decision: Extract<AgentDecision, { action: "handoff" }>,
   usage: AiUsage,
   startedAt: number,
-): Promise<{ ok: boolean; why: string }> {
+): Promise<{ ok: boolean; why: string; smallDiscount?: boolean }> {
   const chat = history.slice(-12).map((t) => `${t.role === "customer" ? "CUSTOMER" : "US"}: ${t.text}`).join("\n");
   try {
     const completion = await client!.chat.completions.create({
@@ -1386,12 +1394,17 @@ The assistant's reason (${decision.kind ?? "other"}): ${decision.reason}` },
     addUsage(usage, completion, startedAt);
     const parsed = JSON.parse(completion.choices[0]?.message.content ?? "") as { case_number?: number; why?: string };
     const n = parsed.case_number ?? 0;
-    return { ok: n >= 1 && n <= 6, why: parsed.why ?? "" };
+    return { ok: n >= 1 && n <= 6, why: parsed.why ?? "", smallDiscount: n === 7 };
   } catch {
     // The check failing never blocks a handoff the assistant asked for.
     return { ok: true, why: "" };
   }
 }
+
+// A discount for 3 pieces or fewer: the assistant answers it, never the team (Nov 2026: every haggle went to Nour).
+const SMALL_DISCOUNT_REFUSAL =
+  "NOT handed off: a discount for 3 pieces or fewer is not a case for the team, even when the customer insists. Answer yourself now, kindly and firmly: the price is final, it includes free delivery to their door and they pay on delivery; a product marked ON SALE in the stock list is already reduced (say so, no extra discount). Then carry on with the sale with one easy question. Never promise or hint at a discount.";
+export const SMALL_DISCOUNT_REPLY = "والله استاذ السعر نهائي، وهو شامل التوصيل لباب بيتك والدفع عند الاستلام 👌 نكمّلك الطلب؟";
 
 function handoffRefusal(why: string): string {
   return `NOT handed off: this is not one of the cases for the team${why ? ` (${why})` : ""}. Answer the customer yourself now, from the knowledge, and carry on with the sale. Where the knowledge has no answer, say what it does say and keep going; don't promise to check and come back.`;
