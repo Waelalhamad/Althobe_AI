@@ -1,5 +1,5 @@
 // Stock for the AI and the team: what is left per color and size, so nobody sells what we don't have.
-import { hasSizes, listClearance, listProductDetails, listStock, stockName, stockRowFor, whenStockRunsOut, type OrderItem, type StockRow } from "./store.js";
+import { hasSizes, listClearance, listProductDetails, listSales, listStock, saleText, stockName, stockRowFor, whenStockRunsOut, type OrderItem, type StockRow } from "./store.js";
 import { esc, notify } from "./telegram.js";
 
 // Telegram: a color/size just ran out.
@@ -42,15 +42,29 @@ function stockTable(): string {
   let anyPush = false; // marked pieces with no special price: shown first at their usual price
   const lines: string[] = [];
   const hiddenLines: string[] = [];
+  const sales = listSales();
+  // Sizes come from the stock, per product (the main set 56-62, one clearance set up to 64): never a fixed range.
+  const bySize = (a: string, b: string) => (Number(a) || Infinity) - (Number(b) || Infinity) || a.localeCompare(b);
+  const sizeLines: string[] = [];
+  for (const [product, colors] of products) {
+    if (!hasSizes(product, rows)) continue;
+    const left = [...new Set([...colors.values()].flat().filter((c) => !c.hidden && c.quantity > 0).map((c) => c.size))].sort(bySize);
+    if (left.length) sizeLines.push(`- ${product}: ${left.join(", ")}`);
+  }
+  const numeric = (product: string) => [...(products.get(product)?.values() ?? [])].flat().filter((c) => !c.hidden && c.quantity > 0).map((c) => Number(c.size)).filter((n) => n > 0);
+  const largest = Math.max(0, ...[...products.keys()].flatMap(numeric));
+  const withLargest = [...products.keys()].filter((p) => numeric(p).includes(largest));
   for (const [product, all] of products) {
     const oneSize = !hasSizes(product, rows);
+    const sale = sales.find((x) => stockName(x.product) === stockName(product));
     // Hidden pieces are left out of the product's list and named apart, for a customer who asks for that color.
     const colors = new Map([...all].map(([color, cells]) => [color, cells.filter((c) => !c.hidden)] as const).filter(([, cells]) => cells.length > 0));
     for (const [color, cells] of all) {
       const left = cells.filter((c) => c.hidden && c.quantity > 0).map((c) => c.size);
       if (left.length) hiddenLines.push(`- ${product} · ${color}${oneSize ? "" : `: ${left.join(", ")}`}`);
     }
-    lines.push(oneSize ? `${product} (ONE standard size: never ask a size for it, never use the size table; ask the weight only if its knowledge document says so; size "ستاندرد" in submit_order):` : `${product}:`);
+    const onSale = sale ? ` — ON SALE «${saleText(sale)}»` : "";
+    lines.push(oneSize ? `${product}${onSale} (ONE standard size: never ask a size for it, never use the size table; ask the weight only if its knowledge document says so; size "ستاندرد" in submit_order):` : `${product}${onSale}:`);
     const offer = clearance.find((c) => stockName(c.product) === stockName(product));
     for (const [color, sizes] of colors) {
       const left = sizes.filter((s) => s.quantity > 0).map((s) => s.size);
@@ -104,12 +118,22 @@ This list is the truth about what we have, above anything the knowledge document
 - A color marked "ONLY A FEW LEFT" is almost gone: don't send its photo or name it when you show or list the colors yourself (show the others). If the customer asks for it, picks it from a photo or our ad names it, it is available: say so with "الكمية محدودة" in a few words (never the number) and carry on with their order.
 - Before calling submit_order, check every item against this list. If one is sold out (even when the summary was already sent and the customer confirmed), don't call submit_order: tell them kindly it just ran out and offer what we have in their size.
 - A color or size missing from this list isn't kept in stock here: answer from the knowledge documents.${clearanceRules}${pushRules}${
+    sales.length
+      ? `
+- A product marked "ON SALE «…»" is on sale: say those words as written with its price, as good news, once in the chat («${saleText(sales[0]!)} 👌»). Its price is the price the knowledge gives it, already reduced: never work out, guess or say a price «before» or «بدل», and never give the sale to another product. A product not marked has no sale.`
+      : ""
+  }${
+    sizeLines.length
+      ? `
+- The sizes each product has right now are listed under "Sizes in stock", above any size range in the knowledge documents (which may give one product's range as if it were all). The largest size we have right now is ${largest || "?"} (${withLargest.join(" / ")}). A customer who needs a size bigger than the product he asked for has: offer the product that has it, before saying we don't have it.`
+      : ""
+  }${
     hiddenLines.length
       ? `
 - "HIDDEN" pieces below are in stock but not shown: never name them, list them, send their photo or offer them yourself, and they don't count when you say which colors a product comes in. Only when the customer names that exact color himself (in their words, not from our list) for that product: it's available in those sizes, carry on as usual (its photo may be sent then).`
       : ""
   }
-${lines.join("\n")}${hiddenLines.length ? `\nHIDDEN (only for a customer who names the color himself):\n${hiddenLines.join("\n")}` : ""}`;
+${sizeLines.length ? `Sizes in stock (any color):\n${sizeLines.join("\n")}\n` : ""}${lines.join("\n")}${hiddenLines.length ? `\nHIDDEN (only for a customer who names the color himself):\n${hiddenLines.join("\n")}` : ""}`;
 }
 
 // A photo of a color whose every piece is hidden: never sent unless the customer named that color.

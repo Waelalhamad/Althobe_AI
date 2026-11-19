@@ -172,6 +172,90 @@ function ColorPhotos({ product, color }: { product: string; color: string }) {
   );
 }
 
+// A sale on the whole product: the assistant says the words with the price, and never a price «before».
+function ProductSale({ product, saved }: { product: string; saved: StockProduct["sale"] }) {
+  const queryClient = useQueryClient();
+  const [percent, setPercent] = useState(saved?.percent ? String(saved.percent) : "");
+  const [label, setLabel] = useState(saved?.label ?? "");
+  useEffect(() => {
+    setPercent(saved?.percent ? String(saved.percent) : "");
+    setLabel(saved?.label ?? "");
+  }, [saved?.percent, saved?.label]);
+  const save = useMutation({
+    mutationFn: () => api.saveSale(product, percent.trim() ? Number(percent) : null, label),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["stock"] }),
+  });
+  const dirty = percent !== (saved?.percent ? String(saved.percent) : "") || label !== (saved?.label ?? "");
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line p-3">
+      <h3 className="text-sm font-semibold">تنزيلات</h3>
+      {saved && <Badge tone="warn">{saved.label || `تنزيلات ${saved.percent}%`}</Badge>}
+      <input value={percent} onChange={(e) => setPercent(e.target.value.replace(/[^\d]/g, "").slice(0, 2))} placeholder="%" className={clsx(inputClass, "num w-16 text-center")} aria-label="نسبة التنزيلات" />
+      <input value={label} onChange={(e) => setLabel(e.target.value.slice(0, 80))} placeholder="الجملة (اختياري): تنزيلات 20%" className={clsx(inputClass, "w-56")} />
+      <span className="text-xs text-muted">المساعد بيقولها مع السعر، وما بيحسب سعر «قبل». فضّيهن لتشيل التنزيلات.</span>
+      <ErrorNote error={save.error} />
+      <Button className="ms-auto" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+        <Save size={16} /> احفظ
+      </Button>
+    </div>
+  );
+}
+
+// Many photos at once for one product: each file's name is its color («بني.jpg», «بني 2.jpg» → بني).
+const colorFromFile = (name: string) =>
+  name
+    .replace(/\.[^.]+$/, "")
+    .replace(/[\s_-]*[(（]?\s*[\d٠-٩]+\s*[)）]?$/, "")
+    .replace(/[_]+/g, " ")
+    .trim();
+
+function BulkPhotos({ product }: { product: string }) {
+  const queryClient = useQueryClient();
+  const input = useRef<HTMLInputElement>(null);
+  const [done, setDone] = useState<string>();
+  const add = useMutation({
+    // One after another, in name order, so «بني» comes before «بني 2».
+    mutationFn: async (files: File[]) => {
+      const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, "ar", { numeric: true }));
+      const colors = new Map<string, number>();
+      for (const file of sorted) {
+        const color = colorFromFile(file.name);
+        if (!color) continue;
+        const img = await prepareImage(file);
+        await api.addPhoto({ product: product.trim(), name: color, description: "", mime: img.mime, data: img.data });
+        colors.set(color, (colors.get(color) ?? 0) + 1);
+      }
+      return colors;
+    },
+    onSuccess: (colors) => setDone([...colors].map(([c, n]) => `${c} (${n})`).join("، ")),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ["catalog"] }),
+  });
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line p-3">
+      <h3 className="text-sm font-semibold">رفع صور مجمّع</h3>
+      <span className="text-xs text-muted">اختار كل الصور مرة وحدة. اسم الملف هو اللون: «بني.jpg»، «بني 2.jpg»، «رصاصي غامق 3.jpg».</span>
+      <Button className="ms-auto" variant="ghost" onClick={() => input.current?.click()} disabled={add.isPending}>
+        {add.isPending ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={16} />} اختار الصور
+      </Button>
+      <input
+        ref={input}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        multiple
+        hidden
+        onChange={(e) => {
+          const files = [...(e.target.files ?? [])];
+          e.target.value = "";
+          setDone(undefined);
+          if (files.length) add.mutate(files);
+        }}
+      />
+      <ErrorNote error={add.error} />
+      {done && <div className="w-full text-xs text-ok">انرفعت: {done}</div>}
+    </div>
+  );
+}
+
 const DETAILS_MAX = 1500;
 
 // What the assistant says about the product when a customer asks (fabric, material…): only what's written here.
@@ -454,7 +538,9 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
         </div>
       )}
 
+      {saved && <ProductSale product={saved.product} saved={saved.sale ?? null} />}
       {saved && <ProductDetails product={saved.product} saved={saved.details ?? ""} />}
+      {saved && <BulkPhotos product={saved.product} />}
 
       <p className="text-xs text-muted">
         الرقم هو الباقي للبيع: الطلبات يلي انسجلت انقصت منو. "+N بطلبات" يعني في N قطعة بطلبات لسا ما انبعتت (موجودة عندكن بس محجوزة)، فلما تعدّو

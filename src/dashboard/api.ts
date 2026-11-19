@@ -52,6 +52,8 @@ import {
   setProductStock,
   stockName,
   heldStock,
+  listSales,
+  setSale,
   renameStockProduct,
   unmatchedOrderItems,
   getSetting,
@@ -823,12 +825,14 @@ dashboardApi.get("/stock", (_req, res) => {
   // What each open order took, cell by cell (never re-read from its items' names).
   for (const h of heldStock()) held.set(`${h.product}|${h.color}|${h.size}`, (held.get(`${h.product}|${h.color}|${h.size}`) ?? 0) + h.quantity);
   const details = new Map(listProductDetails().map((d) => [d.product, d.details]));
+  const sales = new Map(listSales().map((x) => [x.product, { percent: x.percent, label: x.label }]));
   const clearance = new Map(listClearance().map((c) => [c.product, { price: c.price, cells: c.cells }]));
   const products = [...new Set(rows.map((r) => r.product))].map((product) => {
     const mine = rows.filter((r) => r.product === product);
     return {
       product,
       details: details.get(product) ?? "",
+      sale: sales.get(product) ?? null,
       clearance: clearance.get(product) ?? null,
       colors: [...new Set(mine.map((r) => r.color))],
       sizes: [...new Set(mine.map((r) => r.size))],
@@ -888,6 +892,23 @@ dashboardApi.put("/stock/:product", (req, res) => {
     `stock saved for ${product}: ${rows.reduce((n, r) => n + Math.max(0, r.quantity), 0)} pieces in ${rows.length} color/size` +
       (offerCells.length ? (offerPrice ? `; clearance ${offerPrice} on ${offerCells.length}` : `; ${offerCells.length} pushed first`) : ""),
   );
+  res.json({ ok: true });
+});
+
+// A sale on the product: { percent, label }. Neither removes it.
+dashboardApi.put("/stock/:product/sale", (req, res) => {
+  const product = String(req.params.product);
+  if (!listStock().some((r) => r.product === product)) {
+    res.status(404).json({ error: "المنتج مو بالمخزون" });
+    return;
+  }
+  const percent = req.body?.percent === null || req.body?.percent === "" ? null : Number(req.body?.percent);
+  if (percent !== null && !(Number.isFinite(percent) && percent >= 1 && percent <= 90)) {
+    res.status(400).json({ error: "النسبة لازم تكون بين 1 و90" });
+    return;
+  }
+  setSale(product, percent, String(req.body?.label ?? ""));
+  log("dashboard", `sale on ${product}: ${percent ?? "-"}% «${String(req.body?.label ?? "")}»`);
   res.json({ ok: true });
 });
 

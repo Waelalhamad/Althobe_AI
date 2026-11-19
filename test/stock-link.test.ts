@@ -149,3 +149,23 @@ test("a hidden color is counted and sold, but never listed or sent unasked", asy
   setProductStock("طقم تجربة مخفي", [{ color: "رصاصي", size: "58", quantity: 4 }, { color: "رصاصي غامق", size: "58", quantity: 6, hidden: false }]);
   assert.ok(!isHiddenPhoto({ product: "طقم تجربة مخفي", name: "رصاصي غامق" }));
 });
+
+test("sizes come from the stock per product, and a sale is said as written", async () => {
+  const { stockForPrompt } = await import("../src/stock.ts");
+  const { setSale } = await import("../src/store.ts");
+  setProductStock("طقم سادة فرملة وجهين", [
+    { color: "بني", size: "62", quantity: 2 },
+    { color: "بني", size: "64", quantity: 3 },
+    { color: "أسود", size: "66", quantity: 0 },
+  ]);
+  setSale("طقم سادة فرملة وجهين", 20, "");
+  const text = stockForPrompt();
+  assert.match(text, /Sizes in stock \(any color\):[\s\S]*- طقم سادة فرملة وجهين: 62, 64\n/);
+  assert.match(text, /largest size we have right now is 64 \(طقم سادة فرملة وجهين\)/);
+  assert.match(text, /طقم سادة فرملة وجهين — ON SALE «تنزيلات 20%»:/);
+  assert.match(text, /never work out, guess or say a price «before»/);
+  // The main set isn't on sale.
+  assert.doesNotMatch(text, /طقم عربي ثلاث قطع — ON SALE/);
+  setSale("طقم سادة فرملة وجهين", null, "");
+  assert.doesNotMatch(stockForPrompt(), /ON SALE/);
+});

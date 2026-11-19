@@ -221,6 +221,7 @@ export type StockProduct = {
   sizes: string[];
   cells: { color: string; size: string; quantity: number; held: number; hidden?: boolean }[]; // hidden: sold only to who names it
   details: string; // what the team wrote about it for the assistant (fabric, material…)
+  sale: { percent: number | null; label: string } | null; // «تنزيلات 20%»: said with the price, no «before» price
   clearance: { price: number; cells: { color: string; size: string }[] } | null; // pieces on a special price
   updatedAt: number;
 };
@@ -557,6 +558,8 @@ export const api = {
   ) =>
     request(`/stock/${encodeURIComponent(product)}`, { method: "PUT", body: JSON.stringify({ cells, clearance }) }),
   checkStock: (items: OrderItem[]) => post<{ missing: string[] }>("/stock/check", { items }),
+  saveSale: (product: string, percent: number | null, label: string) =>
+    request(`/stock/${encodeURIComponent(product)}/sale`, { method: "PUT", body: JSON.stringify({ percent, label }) }),
   renameStock: (product: string, to: string) =>
     request<{ ok: true; orders: number; photos: number }>(`/stock/${encodeURIComponent(product)}/rename`, { method: "POST", body: JSON.stringify({ to }) }),
   deleteStock: (product: string) => request(`/stock/${encodeURIComponent(product)}`, { method: "DELETE" }),

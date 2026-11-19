@@ -535,6 +535,33 @@ export function setClearance(product: string, price: number, cells: { color: str
   ).run(product, Math.max(0, Math.round(price) || 0), JSON.stringify(cells), Date.now());
 }
 
+// A sale on a whole product («تنزيلات 20%»): what the AI says with its price. Only the percent and/or the words the
+// team wrote; the AI never works out a "before" price from them.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS stock_sale (
+    product    TEXT    PRIMARY KEY,
+    percent    INTEGER,                    -- 1-90, or null
+    label      TEXT    NOT NULL DEFAULT '', -- e.g. «تنزيلات 20%»; empty: «تنزيلات <percent>%»
+    updated_at INTEGER NOT NULL
+  );
+`);
+export type Sale = { product: string; percent: number | null; label: string };
+export function listSales(): Sale[] {
+  return db.prepare("SELECT product, percent, label FROM stock_sale ORDER BY product").all() as Sale[];
+}
+// No percent and no words removes it.
+export function setSale(product: string, percent: number | null, label: string) {
+  const p = percent && percent >= 1 && percent <= 90 ? Math.round(percent) : null;
+  const l = label.trim().slice(0, 80);
+  if (!p && !l) db.prepare("DELETE FROM stock_sale WHERE product = ?").run(product);
+  else
+    db.prepare(
+      `INSERT INTO stock_sale (product, percent, label, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (product) DO UPDATE SET percent = excluded.percent, label = excluded.label, updated_at = excluded.updated_at`,
+    ).run(product, p, l, Date.now());
+}
+export const saleText = (s: Sale) => s.label || `تنزيلات ${s.percent}%`;
+
 // Empty text removes them.
 export function setProductDetails(product: string, details: string) {
   const text = details.trim().slice(0, DETAILS_MAX);
@@ -558,7 +585,7 @@ export function renameStockProduct(from: string, to: string, alsoInside?: () => 
   let orders = 0;
   db.exec("BEGIN");
   try {
-    for (const table of ["stock", "product_details", "stock_clearance", "order_stock"]) db.prepare(`UPDATE ${table} SET product = ? WHERE product = ?`).run(to, from);
+    for (const table of ["stock", "product_details", "stock_clearance", "stock_sale", "order_stock"]) db.prepare(`UPDATE ${table} SET product = ? WHERE product = ?`).run(to, from);
     const open = db.prepare("SELECT id, items FROM orders WHERE status IN ('new', 'confirmed')").all() as { id: number; items: string }[];
     const save = db.prepare("UPDATE orders SET items = ? WHERE id = ?");
     for (const o of open) {
@@ -604,6 +631,7 @@ export function deleteProductStock(product: string) {
   // Its card is gone from the stock page: its details and clearance with it.
   db.prepare("DELETE FROM product_details WHERE product = ?").run(product);
   db.prepare("DELETE FROM stock_clearance WHERE product = ?").run(product);
+  db.prepare("DELETE FROM stock_sale WHERE product = ?").run(product);
 }
 
 // "الأسود" / "أسود" / "اللون: اسود" → "اسود"; Arabic digits → 0-9.
