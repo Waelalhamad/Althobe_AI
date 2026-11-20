@@ -27,6 +27,7 @@ import {
   setOrderStatus,
   findSameOrder,
   updateOrderLocation,
+  getSetting,
   setSetting,
   teamPauseMinutes,
   PAYMENT_LABEL,
@@ -1114,7 +1115,27 @@ function adNote(m: WaMessage): string {
   const ad = m.referral;
   if (!ad) return "";
   const text = [ad.headline && `«${ad.headline.trim()}»`, ad.body?.trim().slice(0, 300)].filter(Boolean).join(" ");
-  return `[from the ad${text ? `: ${text}` : ""}${ad.source_url ? ` ${ad.source_url}` : ""}] `;
+  const product = adProduct(ad.source_url);
+  const known = product ? ` (this ad is for: ${product}; the customer wants this product)` : "";
+  return `[from the ad${text ? `: ${text}` : ""}${ad.source_url ? ` ${ad.source_url}` : ""}${known}] `;
+}
+
+// Ads whose referral carries no words (a WhatsApp Status ad sends only its link): which product each one sells.
+// Keyed by the ad id, the last number in the link (".../status/preview/<our number>/<ad id>"). Setting "ad_products"
+// (JSON {adId: product}) adds to or overrides these.
+const AD_PRODUCTS: Record<string, string> = {
+  "120251042966520207": "فروة أبو شهري مطرزة",
+};
+function adProduct(url?: string): string | undefined {
+  const id = url?.match(/(\d{12,})\/?$/)?.[1];
+  if (!id) return undefined;
+  let saved: Record<string, string> = {};
+  try {
+    saved = JSON.parse(getSetting("ad_products") || "{}") as Record<string, string>;
+  } catch {
+    /* a broken setting is just no extra ads */
+  }
+  return saved[id] ?? AD_PRODUCTS[id];
 }
 
 function describeContent(m: WaMessage): string {
