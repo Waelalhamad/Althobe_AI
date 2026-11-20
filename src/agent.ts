@@ -460,6 +460,7 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
   let firstDraft: { text: string; check: ReplyCheck } | undefined;
   // A handoff outside the allowed cases is refused once; after that the AI has no handoff tool and must answer.
   let handoffRefused = false;
+  let summaryYesRefused = false;
   let smallDiscount = false;
   let silenceRefused = false;
   // A reply in the wrong dialect or language (or more than 2 messages) gets one rewrite too, then is fixed and sent.
@@ -624,6 +625,13 @@ export async function decideReply(history: ChatTurn[], context: CustomerContext 
     // Told it's a small discount and handing off again: our own polite "the price is final" goes, not the team.
     if (!emptyReply && decision.action === "handoff" && smallDiscount && decision.kind === "discount") {
       return { action: "reply", text: SMALL_DISCOUNT_REPLY, photos, usage };
+    }
+    // "تم" to our summary's «نثبتلك الطلب؟» is a yes, even when the summary asks for the transfer receipt: the model
+    // read it as "I transferred" and handed the order to the team, and it was never saved.
+    if (!emptyReply && decision.action === "handoff" && !summaryYesRefused && confirmedSummary(history) && round < 4) {
+      summaryYesRefused = true;
+      input.push(...outputItems(response, toolResults, SUMMARY_YES_REFUSAL));
+      continue;
     }
     if (!emptyReply && decision.action === "handoff" && !handoffRefused && round < 4) {
       const verdict = await allowedHandoff(history, decision, usage, startedAt);
@@ -1149,6 +1157,18 @@ function asksForPhotos(history: ChatTurn[]): boolean {
 }
 
 // The customer's latest messages answer our question or give details (a phone, a size): silence is never right then.
+// Our last message is the order summary asking to confirm, and the customer only said yes.
+const SUMMARY_ASK = /(?:نثب?ت|نأكد|نؤكد|نحجز)[^\n]{0,20}(?:الطلب|الحجز)|تأكد(?:لي)? الطلب/;
+const YES_WORDS = /^(?:تم+|نعم|اي+|إي+|ايوه|ايه|أيوه|اوكي?|ok|okay|باهي|تمام|اكيد|أكيد|ثبت|ثبته|ثبتها|ثبتو|اكد|أكد|موافق|خلاص|هيا|يلا|ماشي|حاضر|صح|اه|آه|ان شاء الله|انشاءالله|انشالله|بارك الله فيك|[ ,.،!👍🙏👌✅❤️]+)+$/i;
+export function confirmedSummary(history: ChatTurn[]): boolean {
+  const lastOurs = history.findLastIndex((t) => t.role === "business");
+  if (lastOurs < 0 || !SUMMARY_ASK.test(history[lastOurs]!.text.replace(/[ً-ْ]/g, ""))) return false;
+  const theirs = history.slice(lastOurs + 1).filter((t) => t.role === "customer");
+  return theirs.length > 0 && theirs.every((t) => YES_WORDS.test(t.text.trim().replace(/\s+/g, " ")));
+}
+const SUMMARY_YES_REFUSAL =
+  "Not a handoff: the customer just confirmed the order summary (their short yes answers our «نثبتلك الطلب؟»). With a bank transfer it does NOT mean they already paid. Call submit_order now with the summary's details, then reply that the order is booked and, for a transfer, to send the receipt photo once they transfer.";
+
 function answersUs(history: ChatTurn[]): boolean {
   const lastOurs = history.findLastIndex((t) => t.role === "business");
   const theirs = history.slice(lastOurs + 1).filter((t) => t.role === "customer");
