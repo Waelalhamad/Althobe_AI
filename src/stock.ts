@@ -1,5 +1,5 @@
 // Stock for the AI and the team: what is left per color and size, so nobody sells what we don't have.
-import { hasSizes, listClearance, listProductDetails, listSales, listStock, saleText, stockName, stockRowFor, whenStockRunsOut, type OrderItem, type StockRow } from "./store.js";
+import { hasSizes, SET_NAME, stockProductFor, listClearance, listProductDetails, listSales, listStock, saleText, stockName, stockRowFor, whenStockRunsOut, type OrderItem, type StockRow } from "./store.js";
 import { esc, notify } from "./telegram.js";
 
 // Telegram: a color/size just ran out.
@@ -69,6 +69,25 @@ function stockTable(): string {
       byColor.set(k, entry);
     }
   const colorLines = [...byColor.values()].filter((e) => e.where.length > 1).map((e) => `- ${e.name}: ${e.where.join(" · ")}`);
+  // The main set sold out in a color and size another set has (grey 56: the plain sharp-collar set): written out,
+  // or the model says "خلص" and loses the sale.
+  const mainSet = stockProductFor("", rows);
+  const subLines: string[] = [];
+  const sameColor = (a: string, b: string) => {
+    const x = stockName(a);
+    const y = stockName(b);
+    return x === y || x.includes(y) || y.includes(x);
+  };
+  if (mainSet && hasSizes(mainSet, rows)) {
+    for (const [color, cells] of products.get(mainSet) ?? []) {
+      for (const cell of cells.filter((c) => c.quantity <= 0)) {
+        const others = rows.filter(
+          (r) => r.product !== mainSet && SET_NAME.test(r.product) && !r.hidden && r.quantity > 0 && sameColor(r.color, color) && stockName(r.size) === stockName(cell.size),
+        );
+        if (others.length) subLines.push(`- ${color} ${cell.size} (sold out in ${mainSet}) → offer: ${others.map((o) => `${o.product} · ${o.color} ${o.size}`).join(" / ")}`);
+      }
+    }
+  }
   const largest = Math.max(0, ...[...products.keys()].flatMap(numeric));
   const withLargest = [...products.keys()].filter((p) => numeric(p).includes(largest));
   for (const [product, all] of products) {
@@ -151,7 +170,7 @@ This list is the truth about what we have, above anything the knowledge document
 - "HIDDEN" pieces below are in stock but not shown: never name them, list them, send their photo or offer them yourself, and they don't count when you say which colors a product comes in. Only when the customer names that exact color himself (in their words, not from our list) for that product: it's available in those sizes, carry on as usual (its photo may be sent then).`
       : ""
   }
-${sizeLines.length ? `Sizes in stock (any color):\n${sizeLines.join("\n")}\n` : ""}${colorLines.length ? `Colors in more than one product (where each is available, in which sizes):\n${colorLines.join("\n")}\n` : ""}${lines.join("\n")}${hiddenLines.length ? `\nHIDDEN (only for a customer who names the color himself):\n${hiddenLines.join("\n")}` : ""}`;
+${sizeLines.length ? `Sizes in stock (any color):\n${sizeLines.join("\n")}\n` : ""}${colorLines.length ? `Colors in more than one product (where each is available, in which sizes):\n${colorLines.join("\n")}\n` : ""}${subLines.length ? `SOLD OUT IN THE MAIN SET, BUT ANOTHER SET HAS IT (never say «خلص» alone: in the same reply, one line that ours is finished in that size, then offer the set on the right as good news by its name, its price from the knowledge, what it is in a few words, and its photo of that color):\n${subLines.join("\n")}\n` : ""}${lines.join("\n")}${hiddenLines.length ? `\nHIDDEN (only for a customer who names the color himself):\n${hiddenLines.join("\n")}` : ""}`;
 }
 
 // A photo of a color whose every piece is hidden: never sent unless the customer named that color.
