@@ -79,6 +79,12 @@ export const config = {
     verifyToken: process.env.META_VERIFY_TOKEN?.trim() || undefined,
     pageId: optional("META_PAGE_ID", "113663356959082"),
     instagramId: optional("META_INSTAGRAM_ID", "17841451978447995"),
+    // Instagram API with Instagram Login (the app's "API setup with Instagram login"): the account's own token
+    // ("Generate token") and the Instagram app secret shown there. With them Instagram is read and sent through
+    // graph.instagram.com, which serves our own account without Advanced Access; without them, through the page.
+    igToken: process.env.META_IG_TOKEN?.trim() ?? "",
+    igAppSecret: process.env.META_IG_APP_SECRET?.trim() ?? "",
+    igGraphUrl: optional("META_IG_GRAPH_URL", "https://graph.instagram.com/v23.0").replace(/\/+$/, ""),
   },
 
   // Instagram + Messenger through Chatwoot.

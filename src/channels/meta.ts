@@ -6,7 +6,7 @@
 import crypto from "node:crypto";
 import { config } from "../config.js";
 import { log } from "../scheduler.js";
-import { db, saveContact } from "../store.js";
+import { db, getSetting, saveContact, setSetting } from "../store.js";
 import { notifyError } from "../telegram.js";
 import { receiveCustomerMessage, receiveStaffMessage, type MediaJob } from "./whatsapp.js";
 
@@ -45,22 +45,29 @@ type MetaEvent = {
 type MetaPayload = { object?: string; entry?: { id?: string; time?: number; messaging?: MetaEvent[] }[] };
 
 // X-Hub-Signature-256 = "sha256=" + HMAC_SHA256(app secret, raw body)
+// Instagram Login deliveries are signed with the Instagram app secret, the others with the app secret.
 export function validMetaSignature(body: Buffer, signature: string | undefined): boolean {
-  if (!signature || !config.meta.appSecret) return false;
-  const expected = "sha256=" + crypto.createHmac("sha256", config.meta.appSecret).update(body).digest("hex");
+  if (!signature) return false;
   const a = Buffer.from(signature);
-  const b = Buffer.from(expected);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  return [config.meta.appSecret, config.meta.igAppSecret].some((secret) => {
+    if (!secret) return false;
+    const b = Buffer.from("sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex"));
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  });
 }
+
+// Our Instagram account's ids (Instagram Login may name it by another id than the page's view of it).
+const ourInstagramIds = new Set([config.meta.instagramId]);
 
 export function handleMetaWebhook(payload: MetaPayload) {
   const prefix = payload.object === "page" ? "fb:" : payload.object === "instagram" ? "ig:" : undefined;
   if (!prefix) return;
-  const ours = prefix === "fb:" ? config.meta.pageId : config.meta.instagramId;
   for (const entry of payload.entry ?? []) {
+    if (prefix === "ig:" && entry.id) ourInstagramIds.add(entry.id);
     for (const event of entry.messaging ?? []) {
       try {
-        if (event.message?.is_echo || event.sender?.id === ours) onEcho(prefix, event);
+        const ours = prefix === "fb:" ? event.sender?.id === config.meta.pageId : ourInstagramIds.has(event.sender?.id ?? "");
+        if (event.message?.is_echo || ours) onEcho(prefix, event);
         else if (event.sender?.id) onCustomerEvent(prefix, event);
       } catch (error) {
         console.error("Meta webhook event failed:", error);
@@ -226,6 +233,63 @@ function pageToken(): Promise<string> {
   return pageTokenPromise;
 }
 
+// --- Instagram Login (graph.instagram.com) ---
+
+const useInstagramLogin = () => Boolean(config.meta.igToken);
+
+// The account token lasts 60 days and is renewed with itself; the renewed one is kept in the settings.
+const IG_TOKEN = "meta_ig_token";
+const IG_TOKEN_AT = "meta_ig_token_at";
+function igToken(): string {
+  const saved = getSetting(IG_TOKEN);
+  // A new token set on the server wins over an older renewed one.
+  return saved && getSetting("meta_ig_token_from") === config.meta.igToken ? saved : config.meta.igToken;
+}
+
+async function igGraph<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${config.meta.igGraphUrl}/${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${igToken()}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = (await res.json().catch(() => ({}))) as T & { error?: { message?: string; code?: number } };
+  if (!res.ok || data.error) throw new Error(`Instagram ${res.status}: ${data.error?.message ?? "request failed"}${data.error?.code ? ` (${data.error.code})` : ""}`);
+  return data;
+}
+
+async function renewIgToken() {
+  const at = Number(getSetting(IG_TOKEN_AT) ?? 0);
+  if (getSetting("meta_ig_token_from") === config.meta.igToken && Date.now() - at < 7 * 24 * 3600_000) return;
+  try {
+    const host = new URL(config.meta.igGraphUrl).origin;
+    const res = await fetch(`${host}/refresh_access_token?grant_type=ig_refresh_token&access_token=${encodeURIComponent(igToken())}`);
+    const data = (await res.json().catch(() => ({}))) as { access_token?: string; error?: { message?: string } };
+    if (!data.access_token) throw new Error(data.error?.message ?? `HTTP ${res.status}`);
+    setSetting(IG_TOKEN, data.access_token);
+    setSetting("meta_ig_token_from", config.meta.igToken);
+    setSetting(IG_TOKEN_AT, String(Date.now()));
+    log("meta", "Instagram token renewed for 60 days");
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    log("meta", `Instagram token not renewed (tried again tomorrow): ${text}`);
+  }
+}
+
+async function startInstagramLogin() {
+  try {
+    const me = await igGraph<{ user_id?: string; id?: string; username?: string }>("GET", "me?fields=user_id,username");
+    for (const id of [me.user_id, me.id]) if (id) ourInstagramIds.add(id);
+    await igGraph("POST", `me/subscribed_apps?subscribed_fields=messages,messaging_postbacks,message_reactions`);
+    log("meta", `Instagram @${me.username} subscribed (Instagram Login)`);
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    log("meta", `could not subscribe Instagram: ${text}`);
+    notifyError("ربط إنستغرام", text);
+  }
+  await renewIgToken();
+  setInterval(() => void renewIgToken(), 24 * 3600_000).unref();
+}
+
 // At startup: the page sends its Messenger and Instagram messages to our app.
 export async function startMeta() {
   if (!config.meta.enabled) return;
@@ -239,6 +303,7 @@ export async function startMeta() {
     log("meta", `could not subscribe the page: ${text}`);
     notifyError("ربط ماسنجر وإنستغرام", text);
   }
+  if (useInstagramLogin()) await startInstagramLogin();
 }
 
 // The customer's name (and Instagram username), once.
@@ -250,7 +315,8 @@ async function ensureProfile(customer: string) {
   const id = customer.slice(3);
   try {
     if (customer.startsWith("ig:")) {
-      const p = await graph<{ name?: string; username?: string }>("GET", `${id}?fields=name,username`);
+      const fields = `${id}?fields=name,username`;
+      const p = useInstagramLogin() ? await igGraph<{ name?: string; username?: string }>("GET", fields) : await graph<{ name?: string; username?: string }>("GET", fields);
       saveContact(customer, p.name ?? "", p.username ?? "");
     } else {
       const p = await graph<{ first_name?: string; last_name?: string }>("GET", `${id}?fields=first_name,last_name`);
@@ -294,6 +360,10 @@ function chunks(customer: string, text: string): string[] {
 }
 
 async function send(customer: string, message: Record<string, unknown>): Promise<string | undefined> {
+  if (customer.startsWith("ig:") && useInstagramLogin()) {
+    const data = await igGraph<{ message_id?: string }>("POST", "me/messages", { recipient: { id: customer.slice(3) }, message });
+    return data.message_id;
+  }
   const data = await graph<{ message_id?: string }>("POST", `${config.meta.pageId}/messages`, {
     recipient: { id: customer.slice(3) },
     messaging_type: "RESPONSE",
@@ -316,6 +386,7 @@ export function metaSendImage(customer: string, url: string): Promise<string | u
 // Seen and "typing…" while the AI thinks. Optional: errors are ignored.
 export async function metaTyping(customer: string) {
   for (const action of ["mark_seen", "typing_on"]) {
-    await graph("POST", `${config.meta.pageId}/messages`, { recipient: { id: customer.slice(3) }, sender_action: action }).catch(() => undefined);
+    const body = { recipient: { id: customer.slice(3) }, sender_action: action };
+    await (customer.startsWith("ig:") && useInstagramLogin() ? igGraph("POST", "me/messages", body) : graph("POST", `${config.meta.pageId}/messages`, body)).catch(() => undefined);
   }
 }
