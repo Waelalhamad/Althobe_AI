@@ -95,6 +95,9 @@ export const config = {
     get botToken() {
       return required("CHATWOOT_BOT_TOKEN");
     },
+    // An agent's own access token (Profile settings → Access Token): reads the conversation's messages, which
+    // Chatwoot doesn't let a bot do. Without it the AI sees only the message it answers.
+    userToken: process.env.CHATWOOT_USER_TOKEN?.trim() || undefined,
     // Optional: if Chatwoot signs deliveries (X-Chatwoot-Signature), set the webhook secret here.
     webhookSecret: process.env.CHATWOOT_WEBHOOK_SECRET?.trim() || undefined,
   },

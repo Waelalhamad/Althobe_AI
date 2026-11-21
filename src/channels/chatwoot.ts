@@ -1,6 +1,6 @@
 // Instagram + Messenger through Chatwoot (Agent Bot webhook).
 import { config } from "../config.js";
-import { decideReply } from "../agent.js";
+import { decideReply, type ChatTurn } from "../agent.js";
 import { addPrivateNote, getHistory, handOffToHuman, sendReply } from "../chatwoot.js";
 import { log, scheduleReply } from "../scheduler.js";
 import { recordAiCall, saveOrder } from "../store.js";
@@ -14,6 +14,7 @@ export type MessageCreatedEvent = {
   event: string;
   id: number;
   message_type: string; // "incoming" | "outgoing" | "activity" | "template"
+  content?: string | null;
   private?: boolean;
   account?: { id: number };
   conversation?: { id: number; status: string };
@@ -24,12 +25,23 @@ const DEFAULT_ORDER_MESSAGE = "تم الحجز استاذ 🙏 الفريق يت
 
 const seenMessageIds = new Map<number, number>(); // message id -> time seen
 
+// What we saw of each conversation, for when Chatwoot won't give its messages (a bot token can't read them).
+const seenTurns = new Map<number, ChatTurn[]>();
+function remember(conversationId: number, turn: ChatTurn) {
+  const turns = seenTurns.get(conversationId) ?? [];
+  turns.push(turn);
+  seenTurns.set(conversationId, turns.slice(-config.historyLimit));
+}
+
 export function handleChatwootEvent(event: MessageCreatedEvent) {
-  if (event.event !== "message_created" || aiBlockedReason()) return;
-  if (event.message_type !== "incoming" || event.private) return; // ignore our own and team messages
+  if (event.event !== "message_created") return;
   const accountId = event.account?.id;
   const conversation = event.conversation;
-  if (!accountId || !conversation) return;
+  if (!accountId || !conversation || event.private) return;
+  if (event.message_type === "incoming" || event.message_type === "outgoing") {
+    remember(conversation.id, { role: event.message_type === "incoming" ? "customer" : "business", text: event.content?.trim() || "[empty message]" });
+  }
+  if (aiBlockedReason() || event.message_type !== "incoming") return; // ignore our own and team messages
 
   // "pending" = the bot owns the conversation. "open" = a human took over, so the bot stays quiet.
   if (conversation.status !== "pending") return;
@@ -43,7 +55,11 @@ export function handleChatwootEvent(event: MessageCreatedEvent) {
 async function respond(accountId: number, conversationId: number) {
   const key = `cw:${conversationId}`;
   try {
-    const history = await getHistory(accountId, conversationId);
+    const history = await getHistory(accountId, conversationId).catch((error) => {
+      const seen = seenTurns.get(conversationId);
+      if (!seen?.length) throw error;
+      return seen;
+    });
     const decision = await decideReply(history);
     recordAiCall({
       customer: key,

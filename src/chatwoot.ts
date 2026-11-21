@@ -14,13 +14,13 @@ type ChatwootMessage = {
   attachments?: { file_type: string }[];
 };
 
-async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function api<T>(path: string, init: RequestInit = {}, token = config.chatwoot.botToken): Promise<T> {
   const url = `${config.chatwoot.baseUrl}/api/v1${path}`;
   const res = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      api_access_token: config.chatwoot.botToken,
+      api_access_token: token,
       ...init.headers,
     },
   });
@@ -35,6 +35,8 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 export async function getHistory(accountId: number, conversationId: number): Promise<ChatTurn[]> {
   const data = await api<{ payload: ChatwootMessage[] }>(
     `/accounts/${accountId}/conversations/${conversationId}/messages`,
+    {},
+    config.chatwoot.userToken ?? config.chatwoot.botToken,
   );
 
   return data.payload
