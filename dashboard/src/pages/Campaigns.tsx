@@ -18,6 +18,15 @@ const STATUS: Record<string, { tone: "ok" | "warn" | "muted" | "info"; text: str
   stopped: { tone: "muted", text: "ملغاة" },
 };
 
+const TEMPLATE_STATUS: Record<string, { tone: "ok" | "warn" | "bad"; text: string }> = {
+  APPROVED: { tone: "ok", text: "مقبول" },
+  PENDING: { tone: "warn", text: "عم يتراجع" },
+  REJECTED: { tone: "bad", text: "مرفوض" },
+};
+
+const DEFAULT_REPLIES = ["إيه ابعتلي الصور", "إيقاف العروض", ""];
+const TEMPLATE_FIELD = "mt-1 block w-full rounded-xl border border-line bg-card-2 px-3 py-2";
+
 // How each group is found (shown under the picker): what the customer said or did in the chat.
 const SEGMENT_HELP: Record<string, string> = {
   fur_no_order: "كتبوا عن الفروة (أو الصقع) وما عملوا طلب.",
@@ -26,6 +35,84 @@ const SEGMENT_HELP: Record<string, string> = {
   size_too_big: "قالوا وزنهم فوق 105 كغ، أو سألوا عن مقاس أكبر من 62 (64…)، أو انقال لهم إنو أكبر مقاس عندنا 62، وما طلبوا. مناسبة لـ«طقم سادة فرملة وجهين» (لحد 64).",
   buyers: "انسلم طلبهم قبل (بدون اللي اشتكوا أو رجّعوا). مناسبة لعرض طقم تاني بسعر التنزيلات.",
 };
+
+function NewTemplate({ refresh }: { refresh: () => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [header, setHeader] = useState("");
+  const [body, setBody] = useState("");
+  const [footer, setFooter] = useState("");
+  const [buttons, setButtons] = useState(DEFAULT_REPLIES);
+  const [notice, setNotice] = useState("");
+  const replies = buttons.map((text) => text.trim()).filter(Boolean);
+  const submit = useMutation({
+    mutationFn: () => api.createTemplate({ name, header, body, footer, buttons: replies }),
+    onSuccess: ({ status }) => {
+      setNotice(`انبعت القالب لميتا. الحالة: ${TEMPLATE_STATUS[status]?.text ?? status}.`);
+      setName("");
+      setHeader("");
+      setBody("");
+      setFooter("");
+      setButtons(DEFAULT_REPLIES);
+      return refresh();
+    },
+  });
+
+  return (
+    <Card>
+      <h3 className="mb-1 font-semibold">قالب جديد</h3>
+      <p className="mb-3 text-xs text-muted">القالب تسويقي وبالعربي. ميتا لازم توافق عليه قبل ما تقدر تبعته بحملة.</p>
+      <div className="grid items-start gap-4 md:grid-cols-2">
+        <form onSubmit={(event) => {
+          event.preventDefault();
+          setNotice("");
+          submit.mutate();
+        }}>
+          <fieldset disabled={submit.isPending} className="space-y-3">
+            <label className="block text-sm">
+              اسم القالب (أحرف إنكليزية صغيرة، أرقام أو _ بس)
+              <input dir="ltr" className={TEMPLATE_FIELD} value={name} onChange={(event) => setName(event.target.value)} placeholder="winter_offer" pattern="[a-z0-9_]+" maxLength={512} required />
+            </label>
+            <label className="block text-sm">
+              عنوان نصّي (اختياري)
+              <input className={TEMPLATE_FIELD} value={header} onChange={(event) => setHeader(event.target.value)} maxLength={60} />
+            </label>
+            <label className="block text-sm">
+              <span className="flex justify-between gap-2"><span>نص الرسالة</span><span dir="ltr" className="text-xs text-muted">{body.length} / 1024</span></span>
+              <textarea className={TEMPLATE_FIELD} value={body} onChange={(event) => setBody(event.target.value)} rows={5} maxLength={1024} aria-describedby="template-body-help" required />
+            </label>
+            <p id="template-body-help" className="text-xs text-muted"><bdi dir="ltr">{"{{1}}"}</bdi> بيصير اسم الزبون. إذا بدك تستخدمه، حطّه بنص الرسالة، مو بأولها أو بآخرها.</p>
+            <label className="block text-sm">
+              التذييل (اختياري)
+              <input className={TEMPLATE_FIELD} value={footer} onChange={(event) => setFooter(event.target.value)} maxLength={60} />
+            </label>
+            <div className="space-y-2">
+              <p className="text-sm">أزرار الرد السريع (اختيارية، لحد ٣)</p>
+              {buttons.map((text, index) => (
+                <input key={index} className={TEMPLATE_FIELD} aria-label={`رد سريع ${index + 1}`} placeholder={`رد سريع ${index + 1}`} maxLength={25} value={text} onChange={(event) => setButtons((current) => current.map((label, slot) => slot === index ? event.target.value : label))} />
+              ))}
+            </div>
+            <Button type="submit" disabled={!name || !body.trim() || submit.isPending}>{submit.isPending ? "عم ينبعت…" : "ابعت القالب لميتا"}</Button>
+          </fieldset>
+          <ErrorNote error={submit.error} />
+          {notice && <p role="status" className="mt-2 text-sm text-ok">{notice}</p>}
+        </form>
+        <div className="rounded-xl border border-line bg-card-2 p-4">
+          <p className="mb-2 text-xs font-semibold text-muted">هيك بتطلع الرسالة عالواتساب</p>
+          <div className="max-w-sm rounded-2xl rounded-ss-sm bg-emerald-100 p-3 text-sm text-emerald-950 shadow-sm">
+            {header.trim() && <p className="mb-1 break-words font-semibold">{header.trim()}</p>}
+            <p className="whitespace-pre-wrap break-words">{body.trim().replace(/\{\{1\}\}/g, "محمد") || "اكتب نص الرسالة لتشوفها هون…"}</p>
+            {footer.trim() && <p className="mt-2 break-words text-xs text-emerald-800">{footer.trim()}</p>}
+            {replies.length > 0 && (
+              <ul className="mt-2 divide-y divide-emerald-200 border-t border-emerald-200 text-center font-semibold text-emerald-800">
+                {replies.map((label, index) => <li key={index} className="break-words py-2">{label}</li>)}
+              </ul>
+            )}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 export function Campaigns() {
   const qc = useQueryClient();
@@ -58,15 +145,22 @@ export function Campaigns() {
     },
   });
   const action = useMutation({ mutationFn: (a: { id: number; action: "start" | "pause" | "stop" }) => api.campaignAction(a.id, a.action), onSuccess: refresh });
+  const removeTemplate = useMutation({
+    mutationFn: api.deleteTemplate,
+    onSuccess: (_result, name) => {
+      setPick((current) => current.startsWith(name + "|") ? "" : current);
+      return refresh();
+    },
+  });
 
   const health = q.data?.health;
   const quality = health ? QUALITY[health.quality] ?? { tone: "muted" as const, text: health.quality } : undefined;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5">
+    <div dir="rtl" className="mx-auto max-w-5xl space-y-5">
       <PageHeader
         title="رسائل للزباين القدام"
-        subtitle="بعد 24 ساعة من آخر رسالة للزبون، واتساب ما بيسمح إلا بقالب وافقت عليه ميتا. بتعملوا القالب بـ WhatsApp Manager، وبيطلع هون لما ينقبل. أو نزّلوا ملف أرقام لإعلان فيسبوك (أأمن على الرقم)."
+        subtitle="بعد 24 ساعة من آخر رسالة للزبون، واتساب ما بيسمح إلا بقالب وافقت عليه ميتا. فيكن تعملوا القالب من هون وتتابعوا حالته. أو نزّلوا ملف أرقام لإعلان فيسبوك (أأمن على الرقم)."
       />
       <ErrorNote error={q.error ?? test.error ?? create.error ?? action.error} />
 
@@ -131,32 +225,41 @@ export function Campaigns() {
       </Card>
 
       <Card>
-        <h2 className="mb-3 font-semibold">٢. القالب</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-semibold">٢. قوالب الرسائل</h2>
+          <Button variant="ghost" disabled={q.isFetching} onClick={() => void q.refetch()}>تحديث</Button>
+        </div>
         {templatesError && <p className="text-sm text-bad">ما قدرت جيب القوالب: {templatesError}</p>}
-        {!templatesError && templates.length === 0 && (
-          <Empty icon={Megaphone} text="ما في قوالب لسا. اعملوا واحد بـ WhatsApp Manager ← Message templates، وبيطلع هون." />
+        <ErrorNote error={removeTemplate.error} />
+        {!templatesError && q.data && templates.length === 0 && (
+          <Empty icon={Megaphone} text="ما في قوالب لسا. فيكن تعملوا أول قالب من النموذج تحت." />
         )}
         <div className="grid gap-2 md:grid-cols-2">
           {templates.map((t) => {
             const key = `${t.name}|${t.language}`;
-            const approved = t.status === "APPROVED";
+            const status = TEMPLATE_STATUS[t.status];
+            const inUse = q.data?.campaigns.some((campaign) => campaign.template === t.name && campaign.status === "running");
             return (
-              <button
-                key={key}
-                onClick={() => setPick(key)}
-                className={`rounded-xl border p-3 text-start ${pick === key ? "border-primary bg-primary/10" : "border-line bg-card-2"}`}
-              >
-                <div className="mb-1 flex flex-wrap items-center gap-2">
-                  <span className="font-semibold ltr">{t.name}</span>
-                  <Badge tone={approved ? "ok" : t.status === "REJECTED" ? "bad" : "warn"}>
-                    {approved ? "مقبول" : t.status === "REJECTED" ? "مرفوض" : "عم يتراجع"}
-                  </Badge>
-                  <Badge>{t.category === "MARKETING" ? "تسويقي" : t.category === "UTILITY" ? "خدمي" : t.category}</Badge>
-                  {t.imageHeader && <Badge tone="info">فيه صورة</Badge>}
+              <div key={key} className={`min-w-0 rounded-xl border ${pick === key ? "border-primary bg-primary/10" : "border-line bg-card-2"}`}>
+                <button type="button" onClick={() => setPick(key)} aria-pressed={pick === key} className="block w-full rounded-xl p-3 text-start">
+                  <div className="mb-1 flex flex-wrap items-center gap-2">
+                    <bdi dir="ltr" className="break-all font-semibold">{t.name}</bdi>
+                    <Badge><bdi dir="ltr">{t.language}</bdi></Badge>
+                    <Badge tone={status?.tone}>{status?.text ?? t.status}</Badge>
+                    <Badge>{t.category === "MARKETING" ? "تسويقي" : t.category === "UTILITY" ? "خدمي" : t.category}</Badge>
+                    {t.imageHeader && <Badge tone="info">فيه صورة</Badge>}
+                  </div>
+                  <p className="whitespace-pre-wrap break-words text-sm text-muted">{t.body}</p>
+                  {t.status === "REJECTED" && t.rejected_reason && <p className="mt-1 text-xs text-bad">سبب الرفض: <bdi>{t.rejected_reason}</bdi></p>}
+                  {t.unsupported && <p className="mt-1 text-xs text-bad">ما بينبعت من هون: {t.unsupported}</p>}
+                </button>
+                <div className="flex items-center justify-end gap-2 px-3 pb-3">
+                  {inUse && <span className="text-xs text-muted">عم تستخدمه حملة شغالة</span>}
+                  <Button variant="danger" className="px-3 py-1" disabled={inUse || removeTemplate.isPending} onClick={() => {
+                    if (confirm(`تحذف القالب «${t.name}» من ميتا بكل لغاته؟`)) removeTemplate.mutate(t.name);
+                  }}>احذف</Button>
                 </div>
-                <p className="whitespace-pre-wrap text-sm text-muted">{t.body}</p>
-                {t.unsupported && <p className="mt-1 text-xs text-bad">ما بينبعت من هون: {t.unsupported}</p>}
-              </button>
+              </div>
             );
           })}
         </div>
@@ -174,6 +277,8 @@ export function Campaigns() {
           </div>
         )}
       </Card>
+
+      <NewTemplate refresh={refresh} />
 
       <Card>
         <h2 className="mb-3 font-semibold">٣. جرّب وابعت</h2>

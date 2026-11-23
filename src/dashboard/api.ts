@@ -21,7 +21,7 @@ import {
 } from "../knowledge.js";
 import { addToBlacklist, blacklistCandidates, blacklistMessage, listBlacklist, markNotified, removeFromBlacklist } from "../blacklist.js";
 import { log } from "../scheduler.js";
-import { createCampaign, listCampaigns, listTemplates, numberHealth, SEGMENTS, segmentCustomers, setCampaignStatus, testSend, type Segment } from "../campaigns.js";
+import { createCampaign, createTemplate, deleteTemplate, listCampaigns, listTemplates, numberHealth, SEGMENTS, segmentCustomers, setCampaignStatus, testSend, type Segment } from "../campaigns.js";
 import { missingStock } from "../stock.js";
 import {
   addCash,
@@ -638,6 +638,26 @@ dashboardApi.get("/campaigns/audience.csv", (req, res) => {
   res.send(["phone", ...rows].join("\n"));
 });
 
+dashboardApi.post("/campaigns/templates", async (req, res) => {
+  try {
+    const result = await createTemplate(req.body);
+    log("dashboard", `campaign template submitted: ${req.body.name} (${result.status})`);
+    res.status(201).json(result);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+dashboardApi.delete("/campaigns/templates/:name", async (req, res) => {
+  try {
+    await deleteTemplate(req.params.name);
+    log("dashboard", `campaign template deleted: ${req.params.name}`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
 dashboardApi.post("/campaigns/test", async (req, res) => {
   const to = latinDigits(String(req.body?.to ?? "")).replace(/\D/g, "");
   if (!/^\d{9,15}$/.test(to)) return void res.status(400).json({ error: "رقم غلط (مع رمز الدولة)" });
@@ -671,9 +691,13 @@ dashboardApi.post("/campaigns", async (req, res) => {
 dashboardApi.post("/campaigns/:id/:action", (req, res) => {
   const status = ({ start: "running", pause: "paused", stop: "stopped" } as const)[req.params.action as "start" | "pause" | "stop"];
   if (!status) return void res.status(400).json({ error: "action" });
-  setCampaignStatus(Number(req.params.id), status);
-  log("dashboard", `campaign ${req.params.id}: ${status}`);
-  res.json({ ok: true });
+  try {
+    setCampaignStatus(Number(req.params.id), status);
+    log("dashboard", `campaign ${req.params.id}: ${status}`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
 });
 
 dashboardApi.get("/almost-orders", (_req, res) => {

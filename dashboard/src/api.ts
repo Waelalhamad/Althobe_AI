@@ -467,11 +467,13 @@ export type CampaignTemplate = {
   status: string;
   category: string;
   language: string;
+  rejected_reason?: string;
   body: string;
   imageHeader: boolean;
   unsupported: string;
   components: { type: string; format?: string; text?: string; buttons?: { type: string; text?: string }[] }[];
 };
+export type CampaignTemplateInput = { name: string; language?: string; header?: string; body: string; footer?: string; buttons?: string[] };
 export type NumberHealth = { quality: string; limit: string; canSend: string; notes: string[] };
 export type CampaignRow = {
   id: number;
@@ -503,6 +505,8 @@ export type BlacklistView = { list: BlacklistRow[]; candidates: BlacklistCandida
 
 export const api = {
   campaigns: () => request<CampaignsView>("/campaigns"),
+  createTemplate: (input: CampaignTemplateInput) => post<{ id: string; status: string }>("/campaigns/templates", input),
+  deleteTemplate: (name: string) => request<{ ok: true }>(`/campaigns/templates/${encodeURIComponent(name)}`, { method: "DELETE" }),
   campaignCount: (segment: string, days: number) =>
     request<{ send: number; ads: number }>(`/campaigns/count?segment=${encodeURIComponent(segment)}&days=${days}`),
   audienceUrl: (segment: string, days: number) => `${BASE}/campaigns/audience.csv?segment=${encodeURIComponent(segment)}&days=${days}`,

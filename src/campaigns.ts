@@ -1,4 +1,4 @@
-// Campaigns: a WhatsApp message template (approved by Meta in WhatsApp Manager) sent to a group of past customers,
+// Campaigns: a WhatsApp message template approved by Meta, sent to a group of past customers,
 // outside WhatsApp's 24-hour window. Only templates can be sent there.
 // In Nov 2026 the number was YELLOW with "customers were blocking your phone number", and every sale runs on it, so:
 // small daily caps, working hours only, a send at a time, never twice the same campaign to anyone, a customer who asks
@@ -7,6 +7,7 @@
 import { config } from "./config.js";
 import { contactName, db, saveMessage } from "./store.js";
 import { isBlacklisted } from "./blacklist.js";
+import { buildTemplatePayload, validateTemplateName } from "./campaignTemplate.js";
 import { asksForDiscount, customerWords, handoffIsComplaint, handoffIsDiscount, toldNoBiggerSize, tooBigFor62 } from "./campaignSignals.js";
 import { customerLine, onCustomerTexts, onMessageStatuses, type MessageStatus } from "./channels/whatsapp.js";
 import { isMetaCustomer } from "./channels/meta.js";
@@ -60,6 +61,7 @@ export type Template = {
   status: string;
   category: string;
   language: string;
+  rejected_reason?: string;
   components: Component[];
   body: string;
   imageHeader: boolean;
@@ -116,7 +118,7 @@ function unsupportedReason(components: Component[]): string {
 }
 
 export async function listTemplates(): Promise<Template[]> {
-  const url = `${config.whatsapp.dualhook.baseUrl}/${await waba()}/message_templates?limit=100&fields=name,status,category,language,components`;
+  const url = `${config.whatsapp.dualhook.baseUrl}/${await waba()}/message_templates?limit=100&fields=name,status,category,language,components,rejected_reason`;
   const res = await fetch(url, { headers: headers() });
   if (!res.ok) throw new Error(`templates: ${res.status} ${(await res.text()).slice(0, 200)}`);
   const data = (await res.json()) as { data?: Omit<Template, "body" | "imageHeader" | "unsupported">[] };
@@ -126,6 +128,56 @@ export async function listTemplates(): Promise<Template[]> {
     imageHeader: t.components.some((c) => c.type === "HEADER" && c.format === "IMAGE"),
     unsupported: unsupportedReason(t.components),
   }));
+}
+
+type TemplatePayload = ReturnType<typeof buildTemplatePayload>;
+type CreatedTemplate = { id: string; status: string };
+
+function writeTemplate(method: "POST", query: string, body: TemplatePayload): Promise<CreatedTemplate>;
+function writeTemplate(method: "DELETE", query: string): Promise<void>;
+async function writeTemplate(method: "POST" | "DELETE", query: string, body?: TemplatePayload): Promise<CreatedTemplate | void> {
+  const failure = method === "POST" ? "ما قدرنا نبعت القالب لميتا" : "ما قدرنا نحذف القالب من ميتا";
+  try {
+    const url = `${config.whatsapp.dualhook.baseUrl}/${await waba()}/message_templates${query}`;
+    const res = await fetch(url, {
+      method,
+      headers: { ...headers(), ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body && JSON.stringify(body),
+    });
+    const data = (await res.json().catch(() => null)) as {
+      id?: string;
+      status?: string;
+      success?: boolean;
+      error?: { error_user_msg?: string; message?: string };
+    } | null;
+    if (!res.ok || data?.error) throw new Error(data?.error?.error_user_msg || data?.error?.message || `HTTP ${res.status}`);
+    if (method === "POST" && data?.id && data.status) return { id: data.id, status: data.status };
+    if (method === "DELETE" && data?.success === true) return;
+    throw new Error("رد ميتا ناقص");
+  } catch (error) {
+    throw new Error(`${failure}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function createTemplate(input: unknown) {
+  return writeTemplate("POST", "", buildTemplatePayload(input));
+}
+
+// Don't let a campaign start while Meta is processing a deletion by name (across languages).
+const deletingTemplates = new Set<string>();
+
+export async function deleteTemplate(input: unknown) {
+  const name = validateTemplateName(input);
+  if (deletingTemplates.has(name)) throw new Error("القالب عم ينحذف، جرّب بعد شوي");
+  if (db.prepare("SELECT 1 FROM campaigns WHERE template = ? AND status = 'running' LIMIT 1").get(name)) {
+    throw new Error("ما فيك تحذف قالب عم تستخدمه حملة شغالة. وقّف الحملة بالأول.");
+  }
+  deletingTemplates.add(name);
+  try {
+    await writeTemplate("DELETE", `?name=${encodeURIComponent(name)}`);
+  } finally {
+    deletingTemplates.delete(name);
+  }
 }
 
 // --- Who gets it ------------------------------------------------------------------------
@@ -290,6 +342,10 @@ export async function createCampaign(input: CampaignInput): Promise<number> {
 }
 
 export function setCampaignStatus(id: number, status: "running" | "paused" | "stopped") {
+  if (status === "running" && deletingTemplates.size) {
+    const campaign = db.prepare("SELECT template FROM campaigns WHERE id = ?").get(id) as { template: string } | undefined;
+    if (campaign && deletingTemplates.has(campaign.template)) throw new Error("قالب الحملة عم ينحذف، جرّب بعد شوي");
+  }
   db.prepare("UPDATE campaigns SET status = ?, note = '' WHERE id = ? AND status != 'done'").run(status, id);
 }
 
