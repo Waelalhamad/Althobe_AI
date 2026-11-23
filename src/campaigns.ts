@@ -87,10 +87,23 @@ type NumberInfo = {
   health_status?: { can_send_message?: string; entities?: { entity_type: string; id: string; additional_info?: string[] }[] };
 };
 
-async function numberInfo(): Promise<NumberInfo> {
-  const res = await fetch(`${config.whatsapp.dualhook.baseUrl}/${config.whatsapp.phoneNumberId}`, { headers: headers() });
-  if (!res.ok) throw new Error(`number info: ${res.status} ${(await res.text()).slice(0, 200)}`);
-  return (await res.json()) as NumberInfo;
+// Meta limits calls per WhatsApp Business Account (#80008) and the Campaigns page refreshes itself, so the number's
+// info and the template list are kept a few minutes; a template created or deleted here clears the list.
+const INFO_TTL = 5 * 60 * 1000;
+const TEMPLATES_TTL = 2 * 60 * 1000;
+let infoCache: { at: number; value: Promise<NumberInfo> } | undefined;
+let templatesCache: { at: number; value: Promise<Template[]> } | undefined;
+
+function numberInfo(): Promise<NumberInfo> {
+  if (infoCache && Date.now() - infoCache.at < INFO_TTL) return infoCache.value;
+  const value = (async () => {
+    const res = await fetch(`${config.whatsapp.dualhook.baseUrl}/${config.whatsapp.phoneNumberId}`, { headers: headers() });
+    if (!res.ok) throw new Error(`number info: ${res.status} ${(await res.text()).slice(0, 200)}`);
+    return (await res.json()) as NumberInfo;
+  })();
+  infoCache = { at: Date.now(), value };
+  value.catch(() => (infoCache = undefined));
+  return value;
 }
 
 // The number's health as Meta reports it (shown on the page, checked during a run).
@@ -117,7 +130,15 @@ function unsupportedReason(components: Component[]): string {
   return "";
 }
 
-export async function listTemplates(): Promise<Template[]> {
+export function listTemplates(fresh = false): Promise<Template[]> {
+  if (!fresh && templatesCache && Date.now() - templatesCache.at < TEMPLATES_TTL) return templatesCache.value;
+  const value = fetchTemplates();
+  templatesCache = { at: Date.now(), value };
+  value.catch(() => (templatesCache = undefined));
+  return value;
+}
+
+async function fetchTemplates(): Promise<Template[]> {
   const url = `${config.whatsapp.dualhook.baseUrl}/${await waba()}/message_templates?limit=100&fields=name,status,category,language,components,rejected_reason`;
   const res = await fetch(url, { headers: headers() });
   if (!res.ok) throw new Error(`templates: ${res.status} ${(await res.text()).slice(0, 200)}`);
@@ -160,7 +181,9 @@ async function writeTemplate(method: "POST" | "DELETE", query: string, body?: Te
 }
 
 export async function createTemplate(input: unknown) {
-  return writeTemplate("POST", "", buildTemplatePayload(input));
+  const created = await writeTemplate("POST", "", buildTemplatePayload(input));
+  templatesCache = undefined;
+  return created;
 }
 
 // Don't let a campaign start while Meta is processing a deletion by name (across languages).
@@ -175,6 +198,7 @@ export async function deleteTemplate(input: unknown) {
   deletingTemplates.add(name);
   try {
     await writeTemplate("DELETE", `?name=${encodeURIComponent(name)}`);
+    templatesCache = undefined;
   } finally {
     deletingTemplates.delete(name);
   }
