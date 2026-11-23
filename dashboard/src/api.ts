@@ -32,8 +32,11 @@ export type Role = "admin" | "staff";
 
 // The Libya employee's cash log (Libyan dinars) and his own stock (src/staff.ts).
 // undoes: the line this correction cancels; undoneBy: the correction that cancelled this line.
+export type Account = "cash" | "bank";
+export const ACCOUNT_NAME: Record<Account, string> = { cash: "الصندوق", bank: "البنك" };
 export type CashRow = {
   id: number;
+  account: Account; // his cash box or his bank account
   direction: "in" | "out";
   amount: number;
   kind: string;
@@ -43,8 +46,11 @@ export type CashRow = {
   at: number;
   undoes: number | null;
   undoneBy: number | null;
+  pair: number | null; // money moved between box and bank: the other side's line
 };
-export type StaffCash = { balance: number; kinds: { in: string[]; out: string[] }; rows: CashRow[] };
+type Kinds = { in: string[]; out: string[] };
+// moveKinds: the kinds of money moved between his box and his bank (neither money in nor out).
+export type StaffCash = { balances: Record<Account, number>; kinds: Record<Account, Kinds>; moveKinds: string[]; rows: CashRow[] };
 export type StaffStockRow = { product: string; color: string; size: string; quantity: number; updatedAt: number };
 export type StaffStockLogRow = {
   id: number;
@@ -78,7 +84,7 @@ export type StockCountReport = {
   decidedAt: number | null;
   reason: string;
 };
-export type StaffOpening = { cash: CashRow | null; stock: { at: number; byRole: Role; items: OpeningItem[] } | null };
+export type StaffOpening = { cash: CashRow | null; bank: CashRow | null; stock: { at: number; byRole: Role; items: OpeningItem[] } | null };
 
 export type Totals = {
   conversations: number;
@@ -511,14 +517,16 @@ export const api = {
   me: () => request<{ role: Role }>("/me"),
   staffCash: (limit = 100) => request<StaffCash>(`/staff/cash?limit=${limit}`),
   undoStaffCash: (id: number) => post<CashRow>(`/staff/cash/${id}/undo`),
-  addStaffCash: (line: { direction: "in" | "out"; amount: number; kind: string; statement: string; note: string }) => post<CashRow>("/staff/cash", line),
+  addStaffCash: (line: { account: Account; direction: "in" | "out"; amount: number; kind: string; statement: string; note: string }) =>
+    post<CashRow>("/staff/cash", line),
+  moveStaffCash: (move: { to: Account; amount: number; note: string }) => post<[CashRow, CashRow]>("/staff/cash/move", move),
   countSheet: () => request<{ sheet: CountSheetProduct[]; last: CountStatus }>("/staff/count"),
   sendCount: (body: { counts: CountEntry[]; extras: CountExtra[]; note: string; photos: string[] }) => post<{ ok: true; id: number }>("/staff/count", body),
   stockCounts: () => request<StockCountReport[]>("/stock-counts"),
   approveCount: (id: number) => post<{ changed: number }>(`/stock-counts/${id}/approve`),
   rejectCount: (id: number, reason: string) => post<{ ok: true }>(`/stock-counts/${id}/reject`, { reason }),
   staffOpening: () => request<StaffOpening>("/staff/opening"),
-  setOpeningCash: (amount: number) => post<CashRow>("/staff/opening/cash", { amount }),
+  setOpeningCash: (amount: number, account: Account) => post<CashRow>("/staff/opening/cash", { amount, account }),
   setOpeningStock: (items: OpeningItem[]) => post<StaffOpening["stock"]>("/staff/opening/stock", { items }),
   staffStock: (log = 50) => request<{ rows: StaffStockRow[]; log: StaffStockLogRow[] }>(`/staff/stock?log=${log}`),
   setStaffStock: (cell: { product: string; color: string; size: string; quantity: number }) =>

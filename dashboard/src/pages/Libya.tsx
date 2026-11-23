@@ -1,10 +1,10 @@
-// The team's view of the Libya employee: his cash (balance, in and out over a period, Darb's payouts next to what
-// he logged from Darb), the whole log, and his own stock with every change he made.
+// The team's view of the Libya employee: his cash box and his bank account (balances, in and out over a period, Darb's
+// payouts next to what he logged from Darb on either), the whole log, and his own stock with every change he made.
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDownCircle, ArrowUpCircle, Boxes, HandCoins, Wallet } from "lucide-react";
-import { api, OPENING, type CashRow } from "../api";
+import { ArrowDownCircle, ArrowUpCircle, Boxes, HandCoins, Landmark, Wallet } from "lucide-react";
+import { ACCOUNT_NAME, api, OPENING, type Account, type CashRow } from "../api";
 import { Badge, Card, ErrorNote, PageHeader, Stat } from "../components/ui";
 import { CashButtons, CashList, lyd } from "../components/StaffCash";
 import { StaffStock, useStaffStock } from "../components/StaffStock";
@@ -21,25 +21,35 @@ const PERIODS: { id: string; label: string; from: () => number }[] = [
   { id: "7", label: "آخر 7 أيام", from: () => Date.now() - 7 * DAY },
 ];
 const DARB = "درب السبيل";
-const counts = (r: CashRow) => r.undoes === null && r.undoneBy === null && r.kind !== OPENING;
+// A line counts in the totals unless it is the opening, undone, a correction, or money moved between box and bank.
+const counts = (r: CashRow, moves: string[]) => r.undoes === null && r.undoneBy === null && r.kind !== OPENING && !moves.includes(r.kind);
+const ACCOUNTS: [Account | undefined, string][] = [
+  [undefined, "الكل"],
+  ["cash", "الصندوق"],
+  ["bank", "البنك"],
+];
 
 export function Libya() {
   const [period, setPeriod] = useState("month");
   const [direction, setDirection] = useState<"in" | "out">();
   const [kind, setKind] = useState<string>();
+  const [account, setAccount] = useState<Account>();
+  const [formAccount, setFormAccount] = useState<Account>("cash");
   const [tab, setTab] = useState<"cash" | "stock" | "count">("cash");
   const cash = useStaffCash(5000);
   const opening = useOpening();
   const from = PERIODS.find((p) => p.id === period)!.from();
   const c = cash.data;
 
-  const inPeriod = useMemo(() => (c?.rows ?? []).filter((r) => r.at >= from), [c, from]);
+  const moves = c?.moveKinds ?? [];
+  const inPeriod = useMemo(() => (c?.rows ?? []).filter((r) => r.at >= from && (!account || r.account === account)), [c, from, account]);
   // Totals leave out the opening count (money he already had, not money that came in), a line that was undone and the correction that undid it (they cancel each other).
-  const sum = (dir: "in" | "out", k?: string) => inPeriod.filter((r) => counts(r) && r.direction === dir && (!k || r.kind === k)).reduce((n, r) => n + r.amount, 0);
+  const sum = (dir: "in" | "out", k?: string) => inPeriod.filter((r) => counts(r, moves) && r.direction === dir && (!k || r.kind === k)).reduce((n, r) => n + r.amount, 0);
   const shown = inPeriod.filter((r) => (!direction || r.direction === direction) && (!kind || r.kind === kind));
   const kinds = [...new Set(inPeriod.filter((r) => !direction || r.direction === direction).map((r) => r.kind))];
 
-  // Darb's payouts since the log began (older ones were before the employee logged anything).
+  // Darb's payouts since the log began (older ones were before the employee logged anything), against what he logged
+  // from Darb in his box and his bank together (Darb may pay either way).
   const firstAt = c?.rows[c.rows.length - 1]?.at;
   const compareFrom = firstAt === undefined ? undefined : Math.max(from, new Date(firstAt).setHours(0, 0, 0, 0));
   const money = useQuery({
@@ -49,7 +59,7 @@ export function Libya() {
     retry: false,
   });
   const darbPaid = (money.data?.payouts ?? []).filter((p) => compareFrom !== undefined && p.at >= compareFrom).reduce((n, p) => n + p.amount, 0);
-  const darbLogged = (c?.rows ?? []).filter((r) => compareFrom !== undefined && r.at >= compareFrom && r.kind === DARB && counts(r)).reduce(
+  const darbLogged = (c?.rows ?? []).filter((r) => compareFrom !== undefined && r.at >= compareFrom && r.kind === DARB && counts(r, moves)).reduce(
     (n, r) => n + (r.direction === "in" ? r.amount : -r.amount),
     0,
   );
@@ -59,12 +69,12 @@ export function Libya() {
     <div className="mx-auto max-w-5xl">
       <PageHeader
         title="موظف ليبيا"
-        subtitle="صندوقو (شو استلم وشو دفع، بالدينار) وجرد المستودع: بيعدّ مخزوننا بدون ما يشوف أعدادو، وأنتو بتعتمدو الجرد أو بترفضوه. هو بيفوت من تلفونو بكلمة سر STAFF_PASSWORD، وما بيشوف غير هالشي."
+        subtitle="صندوقو وحسابو بالبنك (شو دخل وشو طلع، من وين ولشو، بالدينار) وجرد المستودع: بيعدّ مخزوننا بدون ما يشوف أعدادو، وأنتو بتعتمدو الجرد أو بترفضوه. هو بيفوت من تلفونو بكلمة سر STAFF_PASSWORD، وما بيشوف غير هالشي."
         actions={
           <div className="flex gap-1 rounded-xl bg-card-2 p-1">
             {(
               [
-                ["cash", "الصندوق"],
+                ["cash", "المصاري"],
                 ["count", "الجرد"],
                 ["stock", "مخزونو القديم"],
               ] as const
@@ -89,6 +99,20 @@ export function Libya() {
         <>
           <ErrorNote error={cash.error} />
           <div className="mb-4 flex flex-wrap gap-2">
+            {ACCOUNTS.map(([a, label]) => (
+              <button
+                key={label}
+                onClick={() => {
+                  setAccount(a);
+                  setKind(undefined);
+                  if (a) setFormAccount(a);
+                }}
+                className={clsx("rounded-xl px-3 py-1.5 text-sm", account === a ? "bg-primary text-white" : "bg-card-2 text-muted hover:text-fg")}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="mx-1 h-8 w-px bg-line" />
             {PERIODS.map((p) => (
               <button
                 key={p.id}
@@ -99,15 +123,32 @@ export function Libya() {
               </button>
             ))}
           </div>
-          {opening.data && !opening.data.cash && (
-            <div className="mb-4 max-w-md">
-              <OpeningCash />
+          {opening.data && (!opening.data.cash || !opening.data.bank) && (
+            <div className="mb-4 grid max-w-3xl grid-cols-1 gap-4 sm:grid-cols-2">
+              {!opening.data.cash && <OpeningCash account="cash" />}
+              {!opening.data.bank && <OpeningCash account="bank" />}
             </div>
           )}
           {c && (
             <>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <Stat icon={Wallet} label="معو هلق" value={lyd(c.balance)} tone={c.balance < 0 ? "bad" : "primary"} hint="مجموع كل الحركات" />
+                {account ? (
+                  <Stat
+                    icon={account === "bank" ? Landmark : Wallet}
+                    label={account === "bank" ? "بحسابو بالبنك" : "معو بالصندوق"}
+                    value={lyd(c.balances[account])}
+                    tone={c.balances[account] < 0 ? "bad" : "primary"}
+                    hint="مجموع كل حركاتو"
+                  />
+                ) : (
+                  <Stat
+                    icon={Wallet}
+                    label="معو كلو"
+                    value={lyd(c.balances.cash + c.balances.bank)}
+                    tone={c.balances.cash + c.balances.bank < 0 ? "bad" : "primary"}
+                    hint={`صندوق ${lyd(c.balances.cash)} · بنك ${lyd(c.balances.bank)}`}
+                  />
+                )}
                 <Stat icon={ArrowDownCircle} tone="ok" label="استلم" value={lyd(sum("in"))} hint={`منها من درب ${lyd(sum("in", DARB))}`} />
                 <Stat icon={ArrowUpCircle} tone="bad" label="دفع / سلّم" value={lyd(sum("out"))} hint={`منها للشركة ${lyd(sum("out", "تحويل للشركة"))}`} />
                 <Stat
@@ -129,13 +170,27 @@ export function Libya() {
                 />
               </div>
 
-              <div className="mt-2">
-                <OpeningCashSummary />
+              <div className="mt-2 flex flex-col gap-1">
+                <OpeningCashSummary account="cash" />
+                <OpeningCashSummary account="bank" />
               </div>
               <Card className="mt-4 flex flex-col gap-3">
-                <h3 className="font-semibold">سجّل حركة عنو</h3>
-                <div className="max-w-md">
-                  <CashButtons kinds={c.kinds} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold">سجّل حركة عنو</h3>
+                  <div className="ms-auto flex gap-1 rounded-xl bg-card-2 p-1">
+                    {(["cash", "bank"] as const).map((a) => (
+                      <button
+                        key={a}
+                        onClick={() => setFormAccount(a)}
+                        className={clsx("rounded-lg px-3 py-1 text-sm", formAccount === a ? "bg-primary text-white" : "text-muted hover:text-fg")}
+                      >
+                        {ACCOUNT_NAME[a]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex max-w-md flex-col gap-3">
+                  <CashButtons account={formAccount} kinds={c.kinds} />
                 </div>
               </Card>
 
@@ -173,7 +228,7 @@ export function Libya() {
                     <span className="num">{shown.length}</span> حركة
                   </span>
                 </div>
-                <CashList rows={shown} showWho />
+                <CashList rows={shown} showWho showAccount={!account} />
               </Card>
             </>
           )}

@@ -1,9 +1,10 @@
-// The Libya employee's cash: big "received" / "paid" buttons and the log. Used on his phone page and on the team's page.
+// The Libya employee's money (his cash box and his bank account): big "received" / "paid" buttons, moving money
+// between box and bank, and the log. Used on his phone page and on the team's page.
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowDownCircle, ArrowUpCircle, Undo2, Wallet, X } from "lucide-react";
-import { api, type CashRow, type StaffCash } from "../api";
+import { ArrowDownCircle, ArrowLeftRight, ArrowUpCircle, Landmark, Undo2, Wallet, X } from "lucide-react";
+import { ACCOUNT_NAME, api, type Account, type CashRow, type StaffCash } from "../api";
 import { Badge, Button, Empty, ErrorNote } from "./ui";
 import { time } from "../format";
 
@@ -19,8 +20,10 @@ export const latin = (t: string) =>
     .replace(/[٫,]/g, ".")
     .replace(/[^\d.]/g, "");
 
-export function CashButtons({ kinds }: { kinds: StaffCash["kinds"] }) {
+export function CashButtons({ account, kinds }: { account: Account; kinds: StaffCash["kinds"] }) {
   const [open, setOpen] = useState<"in" | "out">();
+  const [moving, setMoving] = useState(false);
+  const bank = account === "bank";
   return (
     <>
       <div className="grid grid-cols-2 gap-3">
@@ -29,22 +32,37 @@ export function CashButtons({ kinds }: { kinds: StaffCash["kinds"] }) {
           className="flex flex-col items-center gap-1 rounded-2xl bg-ok/15 py-5 text-lg font-bold text-ok active:scale-95"
         >
           <ArrowDownCircle size={30} />
-          استلمت
+          {bank ? "دخل عالبنك" : "استلمت"}
         </button>
         <button
           onClick={() => setOpen("out")}
           className="flex flex-col items-center gap-1 rounded-2xl bg-bad/15 py-5 text-lg font-bold text-bad active:scale-95"
         >
           <ArrowUpCircle size={30} />
-          دفعت / سلّمت
+          {bank ? "طلع من البنك" : "دفعت / سلّمت"}
         </button>
       </div>
-      {open && <CashForm direction={open} kinds={kinds[open].filter((k) => k !== "تصحيح")} onClose={() => setOpen(undefined)} />}
+      <button
+        onClick={() => setMoving(true)}
+        className="flex items-center justify-center gap-2 rounded-2xl bg-card-2 py-3 font-semibold text-fg active:scale-95"
+      >
+        <ArrowLeftRight size={20} />
+        {bank ? "سحبت من البنك للصندوق / أودعت" : "أودعت بالبنك / سحبت منو"}
+      </button>
+      {open && (
+        <CashForm account={account} direction={open} kinds={kinds[account][open].filter((k) => k !== "تصحيح")} onClose={() => setOpen(undefined)} />
+      )}
+      {moving && <MoveForm initial={bank ? "cash" : "bank"} onClose={() => setMoving(false)} />}
     </>
   );
 }
 
-function CashForm({ direction, kinds, onClose }: { direction: "in" | "out"; kinds: string[]; onClose: () => void }) {
+const TITLE = {
+  cash: { in: "استلمت مصاري", out: "دفعت / سلّمت مصاري" },
+  bank: { in: "دخلت مصاري عالبنك", out: "طلعت مصاري من البنك" },
+} as const;
+
+function CashForm({ account, direction, kinds, onClose }: { account: Account; direction: "in" | "out"; kinds: string[]; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [typed, setTyped] = useState("");
   const [kind, setKind] = useState("");
@@ -52,7 +70,7 @@ function CashForm({ direction, kinds, onClose }: { direction: "in" | "out"; kind
   const [note, setNote] = useState("");
   const value = Number(typed);
   const save = useMutation({
-    mutationFn: () => api.addStaffCash({ direction, amount: value, kind, statement, note }),
+    mutationFn: () => api.addStaffCash({ account, direction, amount: value, kind, statement, note }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["staff-cash"] });
       onClose();
@@ -71,7 +89,7 @@ function CashForm({ direction, kinds, onClose }: { direction: "in" | "out"; kind
         className="flex w-full max-w-md flex-col gap-4 rounded-t-3xl bg-card p-5 pb-[max(2rem,env(safe-area-inset-bottom))] sm:rounded-3xl"
       >
         <div className="flex items-center justify-between">
-          <h2 className={clsx("text-xl font-bold", isIn ? "text-ok" : "text-bad")}>{isIn ? "استلمت مصاري" : "دفعت / سلّمت مصاري"}</h2>
+          <h2 className={clsx("text-xl font-bold", isIn ? "text-ok" : "text-bad")}>{TITLE[account][direction]}</h2>
           <button type="button" onClick={onClose} className="text-muted" aria-label="إغلاق">
             <X />
           </button>
@@ -88,7 +106,7 @@ function CashForm({ direction, kinds, onClose }: { direction: "in" | "out"; kind
           />
         </label>
         <div className="flex flex-col gap-2">
-          <span className="text-sm text-muted">{isIn ? "من وين؟" : "لشو؟"}</span>
+          <span className="text-sm text-muted">{isIn ? "من وين؟" : "لوين / لشو؟"}</span>
           <div className="flex flex-wrap gap-2">
             {kinds.map((k) => (
               <button
@@ -107,20 +125,28 @@ function CashForm({ direction, kinds, onClose }: { direction: "in" | "out"; kind
         </div>
         <label className="flex flex-col gap-1">
           <span className="text-sm text-muted">
-            البيان <span className="text-bad">*</span>
+            البيان: {isIn ? "من مين وليش" : "لمين وليش"} <span className="text-bad">*</span>
           </span>
           <input
             value={statement}
             onChange={(e) => setStatement(e.target.value)}
             maxLength={200}
-            placeholder={isIn ? "من مين وعن شو؟ (مثلاً: تحويل درب أسبوع 10/11)" : "وين انصرفت؟ (مثلاً: أجرة توصيل لطرابلس)"}
+            placeholder={
+              account === "bank"
+                ? isIn
+                  ? "مثلاً: تحويل درب أسبوع 10/11"
+                  : "مثلاً: حوالة للشركة، دفعة إيجار المستودع"
+                : isIn
+                  ? "من مين وعن شو؟ (مثلاً: تحويل درب أسبوع 10/11)"
+                  : "وين انصرفت؟ (مثلاً: أجرة توصيل لطرابلس)"
+            }
             className="rounded-xl border border-line bg-card-2 px-4 py-3 text-base outline-none focus:border-primary"
           />
         </label>
         <input
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder={isIn ? "ملاحظة (اختياري): رقم التحويل، اسم الزبون…" : "ملاحظة (اختياري)"}
+          placeholder={account === "bank" ? "ملاحظة (اختياري): رقم العملية بالبنك…" : isIn ? "ملاحظة (اختياري): رقم التحويل، اسم الزبون…" : "ملاحظة (اختياري)"}
           className="rounded-xl border border-line bg-card-2 px-4 py-3 outline-none focus:border-primary"
         />
         <ErrorNote error={save.error} />
@@ -133,9 +159,85 @@ function CashForm({ direction, kinds, onClose }: { direction: "in" | "out"; kind
   );
 }
 
+// Money he moved between his box and his bank: out of one, into the other (neither came in nor went out).
+function MoveForm({ initial, onClose }: { initial: Account; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [to, setTo] = useState<Account>(initial);
+  const [typed, setTyped] = useState("");
+  const [note, setNote] = useState("");
+  const value = Number(typed);
+  const save = useMutation({
+    mutationFn: () => api.moveStaffCash({ to, amount: value, note }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["staff-cash"] });
+      onClose();
+    },
+  });
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/60 sm:items-center" onClick={onClose}>
+      <form
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (value > 0) save.mutate();
+        }}
+        className="flex w-full max-w-md flex-col gap-4 rounded-t-3xl bg-card p-5 pb-[max(2rem,env(safe-area-inset-bottom))] sm:rounded-3xl"
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold">بين الصندوق والبنك</h2>
+          <button type="button" onClick={onClose} className="text-muted" aria-label="إغلاق">
+            <X />
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {(
+            [
+              ["bank", "أودعت بالبنك", "من الصندوق ← للبنك"],
+              ["cash", "سحبت من البنك", "من البنك ← للصندوق"],
+            ] as const
+          ).map(([id, label, hint]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTo(id)}
+              className={clsx("flex flex-col items-center rounded-xl px-3 py-3", to === id ? "bg-primary text-white" : "bg-card-2 text-fg")}
+            >
+              <span className="font-semibold">{label}</span>
+              <span className={clsx("text-xs", to === id ? "text-white/80" : "text-muted")}>{hint}</span>
+            </button>
+          ))}
+        </div>
+        <label className="flex flex-col gap-1">
+          <span className="text-sm text-muted">المبلغ بالدينار</span>
+          <input
+            autoFocus
+            inputMode="decimal"
+            value={typed}
+            onChange={(e) => setTyped(latin(e.target.value))}
+            placeholder="0"
+            className="ltr num rounded-2xl border border-line bg-card-2 px-4 py-4 text-center text-3xl font-bold outline-none focus:border-primary"
+          />
+        </label>
+        <input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="ملاحظة (اختياري): رقم الإيصال…"
+          className="rounded-xl border border-line bg-card-2 px-4 py-3 outline-none focus:border-primary"
+        />
+        <ErrorNote error={save.error} />
+        <Button disabled={!(value > 0) || save.isPending} className="py-4 text-lg">
+          {save.isPending ? "جاري الحفظ…" : `احفظ ${value > 0 ? lyd(value) : ""}`}
+        </Button>
+        <p className="text-center text-xs text-muted">بتنقص من واحد وبتزيد عالتاني، وما بتنحسب لا دخل ولا مصروف.</p>
+      </form>
+    </div>
+  );
+}
+
 // The log, newest first. «اعكسها» cancels a line with a correction (the line stays, crossed out).
 // mineOnly: the employee undoes only the lines he wrote (the team undoes any).
-export function CashList({ rows, showWho, mineOnly }: { rows: CashRow[]; showWho?: boolean; mineOnly?: boolean }) {
+// showAccount: the log mixes box and bank lines, so each says which.
+export function CashList({ rows, showWho, mineOnly, showAccount }: { rows: CashRow[]; showWho?: boolean; mineOnly?: boolean; showAccount?: boolean }) {
   const queryClient = useQueryClient();
   const undo = useMutation({
     mutationFn: (id: number) => api.undoStaffCash(id),
@@ -162,6 +264,14 @@ export function CashList({ rows, showWho, mineOnly }: { rows: CashRow[]; showWho
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2 font-semibold">
                   <span className={clsx(undone && "line-through")}>{r.kind}</span>
+                  {showAccount && (
+                    <Badge tone={r.account === "bank" ? "info" : undefined}>
+                      <span className="flex items-center gap-1">
+                        {r.account === "bank" ? <Landmark size={11} /> : <Wallet size={11} />}
+                        {ACCOUNT_NAME[r.account]}
+                      </span>
+                    </Badge>
+                  )}
                   {undone && <Badge>انعكست</Badge>}
                   {showWho && r.byRole === "admin" && <Badge tone="info">الإدارة</Badge>}
                 </div>
@@ -179,7 +289,11 @@ export function CashList({ rows, showWho, mineOnly }: { rows: CashRow[]; showWho
                 {!correction && !undone && (!mineOnly || r.byRole === "staff") && (
                   <button
                     onClick={() =>
-                      window.confirm(`نعكس «${r.kind}» ${lyd(r.amount)}؟ بتنسجل حركة تصحيح بعكسها والرصيد بيرجع متل قبلها.`) && undo.mutate(r.id)
+                      window.confirm(
+                        r.pair !== null
+                          ? `نعكس «${r.kind}» ${lyd(r.amount)}؟ بتنعكس من الصندوق ومن البنك سوا.`
+                          : `نعكس «${r.kind}» ${lyd(r.amount)}؟ بتنسجل حركة تصحيح بعكسها والرصيد بيرجع متل قبلها.`,
+                      ) && undo.mutate(r.id)
                     }
                     disabled={undo.isPending}
                     className="flex items-center gap-1 py-1 text-xs text-muted hover:text-bad"

@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClipboardList, Minus, Plus, Trash2 } from "lucide-react";
-import { api, type OpeningItem, type StaffStockRow } from "../api";
+import { api, type Account, type OpeningItem, type StaffStockRow } from "../api";
 import { Badge, Button, Card, ErrorNote } from "./ui";
 import { latin, lyd } from "./StaffCash";
 import { num, time } from "../format";
@@ -22,27 +22,32 @@ const refresh = (queryClient: ReturnType<typeof useQueryClient>) => {
   void queryClient.invalidateQueries({ queryKey: ["staff-stock"] });
 };
 
-// "How much money do you hold right now?" — shown until the opening cash is made.
-export function OpeningCash() {
+// "How much money do you hold right now?" (or "have in the bank") — shown until that account's opening is made.
+export function OpeningCash({ account = "cash" }: { account?: Account }) {
+  const bank = account === "bank";
   const queryClient = useQueryClient();
   const [typed, setTyped] = useState("");
   const value = Number(typed);
   const save = useMutation({
-    mutationFn: () => api.setOpeningCash(value),
+    mutationFn: () => api.setOpeningCash(value, account),
     onSuccess: () => refresh(queryClient),
   });
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (typed !== "" && window.confirm(`نعتمد الجرد الافتتاحي: معك هلق ${lyd(value)}؟`)) save.mutate();
+        if (typed !== "" && window.confirm(`نعتمد الجرد الافتتاحي: ${bank ? "بحسابك بالبنك" : "معك"} هلق ${lyd(value)}؟`)) save.mutate();
       }}
       className="glass flex flex-col gap-3 rounded-2xl border border-primary/40 p-4"
     >
       <h2 className="flex items-center gap-2 font-bold">
-        <ClipboardList size={20} className="text-primary" /> الجرد الافتتاحي للمصاري
+        <ClipboardList size={20} className="text-primary" /> {bank ? "رصيد البنك الافتتاحي" : "الجرد الافتتاحي للمصاري"}
       </h2>
-      <p className="text-sm text-muted">عدّ المصاري يلي معك هلق واكتب المجموع. هاد بيكون أول رصيد، وكل حركة بعدها بتنحسب منو. إذا ما معك شي اكتب 0.</p>
+      <p className="text-sm text-muted">
+        {bank
+          ? "افتح تطبيق البنك واكتب الرصيد يلي بحسابك هلق. هاد بيكون أول رصيد، وكل حركة بعدها بتنحسب منو. إذا الحساب فاضي اكتب 0."
+          : "عدّ المصاري يلي معك هلق واكتب المجموع. هاد بيكون أول رصيد، وكل حركة بعدها بتنحسب منو. إذا ما معك شي اكتب 0."}
+      </p>
       <input
         inputMode="decimal"
         value={typed}
@@ -228,13 +233,14 @@ export function OpeningStock({ current }: { current: StaffStockRow[] }) {
 }
 
 // For the team: what the opening count said.
-export function OpeningCashSummary() {
-  const o = useOpening().data;
-  if (!o?.cash) return null;
+export function OpeningCashSummary({ account = "cash" }: { account?: Account }) {
+  const line = useOpening().data?.[account];
+  if (!line) return null;
   return (
     <p className="text-sm text-muted">
-      الجرد الافتتاحي للمصاري: <b className="num text-fg">{lyd(o.cash.amount)}</b> · <span className="ltr num">{time(o.cash.at)}</span>
-      {o.cash.byRole === "admin" && <> · سجّلتو الإدارة</>}
+      {account === "bank" ? "رصيد البنك الافتتاحي" : "الجرد الافتتاحي للمصاري"}: <b className="num text-fg">{lyd(line.amount)}</b> ·{" "}
+      <span className="ltr num">{time(line.at)}</span>
+      {line.byRole === "admin" && <> · سجّلتو الإدارة</>}
     </p>
   );
 }

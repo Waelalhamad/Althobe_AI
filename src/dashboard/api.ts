@@ -25,9 +25,11 @@ import { createCampaign, listCampaigns, listTemplates, numberHealth, SEGMENTS, s
 import { missingStock } from "../stock.js";
 import {
   addCash,
-  cashBalance,
+  balances,
   CASH_KINDS,
   listCash,
+  MOVE_KINDS,
+  moveCash,
   listStaffStock,
   openingCash,
   openingStock,
@@ -1216,7 +1218,19 @@ dashboardApi.post("/playground/followup", async (req, res) => {
 // --- The Libya employee: his cash log and his own stock (he and the team both use these) ----------------------
 
 dashboardApi.get("/staff/cash", (req, res) => {
-  res.json({ balance: cashBalance(), kinds: CASH_KINDS, rows: listCash(intParam(req.query.limit, 100, 5000)) });
+  const b = balances();
+  res.json({ balance: b.cash, balances: b, kinds: CASH_KINDS, moveKinds: MOVE_KINDS, rows: listCash(intParam(req.query.limit, 100, 5000)) });
+});
+
+// Money moved between his cash box and his bank account (both lines at once).
+dashboardApi.post("/staff/cash/move", (req, res) => {
+  const saved = moveCash(req.body ?? {}, roleOf(res));
+  if (typeof saved === "string") {
+    res.status(400).json({ error: saved });
+    return;
+  }
+  log("dashboard", `Libya money moved to ${saved[1].account}: ${saved[0].amount} by ${saved[0].byRole}`);
+  res.json(saved);
 });
 
 dashboardApi.post("/staff/cash", (req, res) => {
@@ -1225,7 +1239,7 @@ dashboardApi.post("/staff/cash", (req, res) => {
     res.status(400).json({ error: saved });
     return;
   }
-  log("dashboard", `Libya cash ${saved.direction} ${saved.amount} (${saved.kind}) by ${saved.byRole}`);
+  log("dashboard", `Libya ${saved.account} ${saved.direction} ${saved.amount} (${saved.kind}) by ${saved.byRole}`);
   res.json(saved);
 });
 
@@ -1241,7 +1255,7 @@ dashboardApi.post("/staff/cash/:id/undo", (req, res) => {
 
 // The opening count (جرد افتتاحي): his cash and his stock when the log starts, each made once.
 dashboardApi.get("/staff/opening", (_req, res) => {
-  res.json({ cash: openingCash() ?? null, stock: openingStock() ?? null });
+  res.json({ cash: openingCash("cash") ?? null, bank: openingCash("bank") ?? null, stock: openingStock() ?? null });
 });
 
 dashboardApi.post("/staff/opening/cash", (req, res) => {
@@ -1250,7 +1264,7 @@ dashboardApi.post("/staff/opening/cash", (req, res) => {
     res.status(400).json({ error: saved });
     return;
   }
-  log("dashboard", `Libya opening cash ${saved.amount} by ${saved.byRole}`);
+  log("dashboard", `Libya opening ${saved.account} ${saved.amount} by ${saved.byRole}`);
   res.json(saved);
 });
 
