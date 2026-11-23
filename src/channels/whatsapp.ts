@@ -157,7 +157,14 @@ export function handleWhatsAppWebhook(payload: WebhookPayload) {
           if (customer && phoneNumberId) setCustomerLine(customer, phoneNumberId);
           onCustomerMessage(message);
         }
-        if (value.statuses?.length) for (const fn of statusListeners) fn(value.statuses);
+        if (value.statuses?.length) {
+          // A message Meta took but couldn't deliver: the reason only ever arrives here (a template refused for one
+          // customer, the marketing limit…), so it goes to the logs.
+          for (const s of value.statuses) {
+            if (s.status === "failed") log("wa", `delivery failed ${s.id ?? ""}: ${(s.errors ?? []).map((e) => `${e.code} ${e.title ?? ""} ${e.message ?? ""}`.trim()).join("; ")}`);
+          }
+          for (const fn of statusListeners) fn(value.statuses);
+        }
       } else if (change.field === "smb_message_echoes") {
         // A team member replied from the WhatsApp Business app on the phone.
         for (const echo of value.message_echoes ?? []) {
