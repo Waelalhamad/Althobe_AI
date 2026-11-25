@@ -75,7 +75,8 @@ type WaMessage = {
   timestamp?: string;
   type: string;
   text?: { body?: string };
-  button?: { text?: string };
+  // A template's quick-reply button: its words, and the payload we put on it when sending (src/sizeOffers.ts).
+  button?: { text?: string; payload?: string };
   interactive?: { button_reply?: { title?: string }; list_reply?: { title?: string } };
   image?: WaMedia;
   video?: WaMedia;
@@ -134,6 +135,22 @@ export function onMessageStatuses(fn: (statuses: MessageStatus[]) => void) {
 const textListeners: ((customer: string, text: string) => void)[] = [];
 export function onCustomerTexts(fn: (customer: string, text: string) => void) {
   textListeners.push(fn);
+}
+// A message the AI would answer, offered first to whoever answers it without the AI (the offer photos' button):
+// true means it's handled there and the AI stays out.
+export type ClaimableMessage = { customer: string; text: string; buttonPayload?: string; isButton?: boolean; replyTo?: string };
+const claimers: ((m: ClaimableMessage) => boolean)[] = [];
+export function onBeforeReply(fn: (m: ClaimableMessage) => boolean) {
+  claimers.push(fn);
+}
+// More lines about the customer for the AI (what other modules know about them).
+const backgroundNotes: ((customer: string) => string | undefined)[] = [];
+export function addBackgroundNote(fn: (customer: string) => string | undefined) {
+  backgroundNotes.push(fn);
+}
+// The AI answers this customer's waiting messages (after something else held them back).
+export function replyLater(customer: string) {
+  scheduleReply(`wa:${customer}`, config.debounceMs, () => respond(customer));
 }
 
 export function handleWhatsAppWebhook(payload: WebhookPayload) {
@@ -195,6 +212,8 @@ function onCustomerMessage(message: WaMessage) {
     isText: message.type === "text",
     reaction: message.type === "reaction" ? { emoji: message.reaction?.emoji, messageId: message.reaction?.message_id } : undefined,
     replyTo: message.context?.id,
+    isButton: message.type === "button" || message.type === "interactive",
+    buttonPayload: message.button?.payload,
     media: waMediaJob(message),
     mediaPrefix: adNote(message),
   });
@@ -210,6 +229,8 @@ export type IncomingMessage = {
   isText?: boolean;
   reaction?: { emoji?: string; messageId?: string };
   replyTo?: string; // the id of the chat message they answered
+  isButton?: boolean; // a tap on a button of ours, not typed
+  buttonPayload?: string;
   media?: MediaJob;
   mediaPrefix?: string;
 };
@@ -270,6 +291,8 @@ ${dashboardLink(`/inbox/${customer}`, "افتح المحادثة")}`);
     log(`wa:${customer}`, message.reaction ? "customer reacted; no reply needed" : "customer only acknowledged; no reply needed");
     return;
   }
+  const claim: ClaimableMessage = { customer, text: message.text, buttonPayload: message.buttonPayload, isButton: message.isButton, replyTo: message.replyTo };
+  if (claimers.some((fn) => fn(claim))) return;
 
   scheduleReply(`wa:${customer}`, config.debounceMs, () => respond(customer));
 }
@@ -620,6 +643,7 @@ async function respond(customer: string) {
         isUserId(customer) && "Writes from a WhatsApp username: we don't have their number, so ask for a phone number when taking the order (not before).",
         isMetaCustomer(customer) && metaNote(channelOf(customer)),
         team.note,
+        ...backgroundNotes.map((fn) => fn(customer)),
       ]
         .filter(Boolean)
         .join("\n"),
@@ -1021,12 +1045,12 @@ async function sendPhotos(customer: string, ids: string[]) {
   }
 }
 
-function sendText(to: string, body: string) {
+export function sendText(to: string, body: string) {
   if (isMetaCustomer(to)) return metaSendText(to, body);
   return sendMessage(to, { type: "text", text: { body, preview_url: false } });
 }
 
-function sendImage(to: string, link: string, caption = "") {
+export function sendImage(to: string, link: string, caption = "") {
   if (isMetaCustomer(to)) return metaSendImage(to, link);
   return sendMessage(to, { type: "image", image: caption ? { link, caption } : { link } });
 }

@@ -499,6 +499,12 @@ export type CampaignsView = {
 };
 export type CampaignInput = { template: string; language: string; segment: string; days: number; dailyCap: number; photo?: string };
 
+// Offer photos by size (src/sizeOffers.ts).
+export type OfferModel = { product: string; color: string; price: number };
+export type OfferPhoto = { id: number; template: string; file: string; sizes: string[]; models: OfferModel[] };
+export type SizeOffer = { template: string; label: string; button: number; active: boolean; photos: OfferPhoto[]; requests: Record<string, number> };
+export type SizeOffersView = { offers: SizeOffer[]; stock: { product: string; color: string; size: string }[] };
+
 export type BlacklistRow = { customer: string; name: string; reason: string; addedAt: number; notifiedAt: number | null };
 export type BlacklistCandidate = { customer: string; name: string; phone: string; city: string; reason: string; orderId: number; amount: number; status: string };
 export type BlacklistView = { list: BlacklistRow[]; candidates: BlacklistCandidate[]; message: string };
@@ -513,6 +519,12 @@ export const api = {
   campaignTest: (input: { template: string; language: string; photo?: string; to: string }) => post<{ ok: true }>("/campaigns/test", input),
   createCampaign: (input: CampaignInput) => post<{ id: number }>("/campaigns", input),
   campaignAction: (id: number, action: "start" | "pause" | "stop") => post(`/campaigns/${id}/${action}`),
+  sizeOffers: () => request<SizeOffersView>("/campaigns/offers"),
+  saveSizeOffer: (input: { template: string; label: string; button: number; active: boolean }) => post<{ ok: true }>("/campaigns/offers", input),
+  deleteSizeOffer: (template: string) => request<{ ok: true }>(`/campaigns/offers/${encodeURIComponent(template)}`, { method: "DELETE" }),
+  addOfferPhoto: (template: string, input: { mime: string; data: string; sizes: string[]; models: OfferModel[] }) =>
+    post<OfferPhoto>(`/campaigns/offers/${encodeURIComponent(template)}/photos`, input),
+  deleteOfferPhoto: (id: number) => request<{ ok: boolean }>(`/campaigns/offer-photos/${id}`, { method: "DELETE" }),
   blacklist: () => request<BlacklistView>("/blacklist"),
   addBlacklist: (customers: string[], reason: string) => post("/blacklist", { customers, reason }),
   removeBlacklist: (customer: string) => request(`/blacklist/${encodeURIComponent(customer)}`, { method: "DELETE" }),

@@ -21,6 +21,7 @@ import {
 } from "../knowledge.js";
 import { addToBlacklist, blacklistCandidates, blacklistMessage, listBlacklist, markNotified, removeFromBlacklist } from "../blacklist.js";
 import { log } from "../scheduler.js";
+import { addOfferPhoto, deleteOffer, deleteOfferPhoto, listOffers, saveOffer } from "../sizeOffers.js";
 import { createCampaign, createTemplate, deleteTemplate, listCampaigns, listTemplates, numberHealth, SEGMENTS, segmentCustomers, setCampaignStatus, testSend, type Segment } from "../campaigns.js";
 import { missingStock } from "../stock.js";
 import {
@@ -86,7 +87,7 @@ export const dashboardApi = express.Router();
 const smallJson = express.json({ limit: "1mb" });
 const uploadJson = express.json({ limit: "12mb" });
 dashboardApi.use((req, res, next) =>
-  (req.method === "POST" && (req.path === "/catalog" || req.path === "/staff/count" || req.path.startsWith("/playground") || req.path.endsWith("/send")) ? uploadJson : smallJson)(req, res, next),
+  (req.method === "POST" && (req.path === "/catalog" || req.path === "/staff/count" || req.path.startsWith("/playground") || req.path.endsWith("/send") || /^\/campaigns\/offers\/[^/]+\/photos$/.test(req.path)) ? uploadJson : smallJson)(req, res, next),
 );
 
 // --- Login: a signed cookie that expires; changing a password logs out whoever logged in with it. ---
@@ -686,6 +687,57 @@ dashboardApi.post("/campaigns", async (req, res) => {
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
   }
+});
+
+// Offer photos by size (src/sizeOffers.ts): a template's button answered with the offer's photos in the customer's size.
+dashboardApi.get("/campaigns/offers", (_req, res) => {
+  const stock = listStock().map((r) => ({ product: r.product, color: r.color, size: r.size }));
+  res.json({ offers: listOffers(), stock });
+});
+
+dashboardApi.post("/campaigns/offers", async (req, res) => {
+  try {
+    // A wrong button index is refused by Meta for every send, and that pauses the whole campaign: checked on switching on.
+    if (req.body?.active === true) {
+      const templates = await listTemplates();
+      const buttons = templates.find((t) => t.name === req.body?.template)?.components.find((c) => c.type === "BUTTONS")?.buttons ?? [];
+      if (buttons[Number(req.body?.button ?? 0)]?.type !== "QUICK_REPLY") throw new Error("القالب ما فيه زر رد سريع بهالمكان: اختار زر طلب الصور");
+    }
+    saveOffer({
+      template: String(req.body?.template ?? ""),
+      label: String(req.body?.label ?? ""),
+      button: Number(req.body?.button ?? 0),
+      active: req.body?.active === true,
+    });
+    log("dashboard", `size offer saved: ${req.body?.template} (${req.body?.active === true ? "on" : "off"})`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+dashboardApi.delete("/campaigns/offers/:template", (req, res) => {
+  deleteOffer(req.params.template);
+  log("dashboard", `size offer deleted: ${req.params.template}`);
+  res.json({ ok: true });
+});
+
+dashboardApi.post("/campaigns/offers/:template/photos", (req, res) => {
+  const { mime, data, sizes, models } = req.body ?? {};
+  const bytes = typeof data === "string" ? Buffer.from(data, "base64") : undefined;
+  if (!PHOTO_TYPES.includes(mime) || !bytes?.length) return void res.status(400).json({ error: "صورة JPG/PNG/WebP" });
+  if (bytes.length > 5 * 1024 * 1024) return void res.status(400).json({ error: "الصورة لازم تكون أقل من 5 MB" });
+  try {
+    const photo = addOfferPhoto({ template: req.params.template, data: bytes, mime, sizes, models });
+    log("dashboard", `size offer photo added: ${req.params.template} #${photo.id}`);
+    res.json(photo);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+dashboardApi.delete("/campaigns/offer-photos/:id", (req, res) => {
+  res.json({ ok: deleteOfferPhoto(Number(req.params.id)) });
 });
 
 dashboardApi.post("/campaigns/:id/:action", (req, res) => {

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, FileText, Megaphone, RefreshCw } from "lucide-react";
 import { api, mediaUrl, type CampaignTemplate } from "../api";
 import { NewTemplate, TemplateRow, TEMPLATE_FOCUS } from "../components/CampaignTemplates";
+import { SizeOffers } from "../components/SizeOffers";
 import { Badge, Button, Card, Empty, ErrorNote, PageHeader } from "../components/ui";
 import { ago } from "../format";
 
@@ -194,6 +195,8 @@ export function Campaigns() {
       </Card>
 
       <NewTemplate refresh={refresh} />
+
+      <SizeOffers templates={templates} />
 
       <Card>
         <h2 className="mb-3 font-semibold">٣. جرّب وابعت</h2>

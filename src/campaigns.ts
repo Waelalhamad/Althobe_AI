@@ -12,6 +12,7 @@ import { asksForDiscount, customerWords, handoffIsComplaint, handoffIsDiscount, 
 import { customerLine, onCustomerTexts, onMessageStatuses, type MessageStatus } from "./channels/whatsapp.js";
 import { isMetaCustomer } from "./channels/meta.js";
 import { inWorkingHours } from "./supervisor.js";
+import { offerButtonComponent } from "./sizeOffers.js";
 import { log } from "./scheduler.js";
 import { notify, esc } from "./telegram.js";
 
@@ -432,6 +433,9 @@ export function templatePayload(c: Pick<CampaignRow, "template" | "language" | "
   const components: Record<string, unknown>[] = [];
   if (c.image) components.push({ type: "header", parameters: [{ type: "image", image: { link: c.image } }] });
   if (/\{\{\s*1\s*\}\}/.test(c.body)) components.push({ type: "body", parameters: [{ type: "text", text: firstName(customer) }] });
+  // A template with offer photos: its button tells us which offer was tapped (src/sizeOffers.ts).
+  const button = offerButtonComponent(c.template);
+  if (button) components.push(button);
   return {
     messaging_product: "whatsapp",
     to: customer,
