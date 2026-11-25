@@ -13,6 +13,10 @@ process.env.KNOWLEDGE_DIR = path.resolve("knowledge");
 process.env.PUBLIC_URL = "https://example.test";
 process.env.DUALHOOK_API_KEY = "test";
 process.env.WA_PHONE_NUMBER_ID = "111";
+// The server's own variables are there when the tests run in its build: replies on, one number, Dualhook.
+process.env.AI_REPLIES = "on";
+process.env.WHATSAPP_PROVIDER = "dualhook";
+process.env.WA_EXTRA_LINES = "";
 process.env.REPLY_DEBOUNCE_MS = "600000"; // the AI never gets to answer in these tests
 
 type Sent = { to: string; type: string; caption?: string; body?: string; link?: string; template?: unknown };
