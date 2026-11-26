@@ -92,7 +92,7 @@ type WaMessage = {
   // The customer swiped to answer one of the chat's messages (often a photo of ours: «هذا»): that message's id.
   context?: { id?: string; from?: string };
   // Set when the customer tapped a click-to-WhatsApp ad: tells us which product they saw.
-  referral?: { headline?: string; body?: string; source_url?: string; source_type?: string };
+  referral?: { headline?: string; body?: string; source_url?: string; source_type?: string; source_id?: string };
 };
 
 type WaMedia = { id?: string; mime_type?: string; caption?: string };
@@ -138,7 +138,7 @@ export function onCustomerTexts(fn: (customer: string, text: string) => void) {
 }
 // A message the AI would answer, offered first to whoever answers it without the AI (the offer photos' button):
 // true means it's handled there and the AI stays out.
-export type ClaimableMessage = { customer: string; text: string; buttonPayload?: string; isButton?: boolean; replyTo?: string };
+export type ClaimableMessage = { customer: string; text: string; buttonPayload?: string; isButton?: boolean; replyTo?: string; adId?: string };
 const claimers: ((m: ClaimableMessage) => boolean)[] = [];
 export function onBeforeReply(fn: (m: ClaimableMessage) => boolean) {
   claimers.push(fn);
@@ -214,6 +214,7 @@ function onCustomerMessage(message: WaMessage) {
     replyTo: message.context?.id,
     isButton: message.type === "button" || message.type === "interactive",
     buttonPayload: message.button?.payload,
+    adId: message.referral?.source_type === "ad" ? message.referral.source_id : undefined,
     media: waMediaJob(message),
     mediaPrefix: adNote(message),
   });
@@ -231,6 +232,7 @@ export type IncomingMessage = {
   replyTo?: string; // the id of the chat message they answered
   isButton?: boolean; // a tap on a button of ours, not typed
   buttonPayload?: string;
+  adId?: string; // the click-to-WhatsApp ad they came from (referral.source_id)
   media?: MediaJob;
   mediaPrefix?: string;
 };
@@ -291,7 +293,7 @@ ${dashboardLink(`/inbox/${customer}`, "افتح المحادثة")}`);
     log(`wa:${customer}`, message.reaction ? "customer reacted; no reply needed" : "customer only acknowledged; no reply needed");
     return;
   }
-  const claim: ClaimableMessage = { customer, text: message.text, buttonPayload: message.buttonPayload, isButton: message.isButton, replyTo: message.replyTo };
+  const claim: ClaimableMessage = { customer, text: message.text, buttonPayload: message.buttonPayload, isButton: message.isButton, replyTo: message.replyTo, adId: message.adId };
   if (claimers.some((fn) => fn(claim))) return;
 
   scheduleReply(`wa:${customer}`, config.debounceMs, () => respond(customer));

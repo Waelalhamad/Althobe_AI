@@ -21,7 +21,7 @@ import {
 } from "../knowledge.js";
 import { addToBlacklist, blacklistCandidates, blacklistMessage, listBlacklist, markNotified, removeFromBlacklist } from "../blacklist.js";
 import { log } from "../scheduler.js";
-import { addOfferPhoto, deleteOffer, deleteOfferPhoto, listOffers, saveOffer } from "../sizeOffers.js";
+import { addOfferPhoto, deleteAdPost, deleteOffer, deleteOfferPhoto, listAdPosts, listOffers, saveAdPost, saveOffer } from "../sizeOffers.js";
 import { createCampaign, createTemplate, deleteTemplate, listCampaigns, listTemplates, numberHealth, SEGMENTS, segmentCustomers, setCampaignStatus, testSend, type Segment } from "../campaigns.js";
 import { missingStock } from "../stock.js";
 import {
@@ -699,15 +699,19 @@ dashboardApi.post("/campaigns/offers", async (req, res) => {
   try {
     // A wrong button index is refused by Meta for every send, and that pauses the whole campaign: checked on switching on.
     if (req.body?.active === true) {
-      const templates = await listTemplates();
-      const buttons = templates.find((t) => t.name === req.body?.template)?.components.find((c) => c.type === "BUTTONS")?.buttons ?? [];
-      if (buttons[Number(req.body?.button ?? 0)]?.type !== "QUICK_REPLY") throw new Error("القالب ما فيه زر رد سريع بهالمكان: اختار زر طلب الصور");
+      // An offer for ads only (no template by its name) has no button to check.
+      const template = (await listTemplates()).find((t) => t.name === req.body?.template);
+      const buttons = template?.components.find((c) => c.type === "BUTTONS")?.buttons ?? [];
+      if (template && buttons[Number(req.body?.button ?? 0)]?.type !== "QUICK_REPLY") throw new Error("القالب ما فيه زر رد سريع بهالمكان: اختار زر طلب الصور");
     }
     saveOffer({
       template: String(req.body?.template ?? ""),
       label: String(req.body?.label ?? ""),
       button: Number(req.body?.button ?? 0),
       active: req.body?.active === true,
+      intro: req.body?.intro === null || typeof req.body?.intro === "string" ? req.body.intro : undefined,
+      outro: req.body?.outro === null || typeof req.body?.outro === "string" ? req.body.outro : undefined,
+      oldPrices: req.body?.oldPrices,
     });
     log("dashboard", `size offer saved: ${req.body?.template} (${req.body?.active === true ? "on" : "off"})`);
     res.json({ ok: true });
@@ -734,6 +738,23 @@ dashboardApi.post("/campaigns/offers/:template/photos", (req, res) => {
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
   }
+});
+
+// Click-to-WhatsApp ads: which ad is which post and which offer it gets.
+dashboardApi.get("/campaigns/ads", (_req, res) => {
+  res.json(listAdPosts());
+});
+dashboardApi.post("/campaigns/ads", (req, res) => {
+  try {
+    saveAdPost(req.body ?? {});
+    log("dashboard", `ad post saved: ${req.body?.adId} «${req.body?.name}» → ${req.body?.offer}`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+dashboardApi.delete("/campaigns/ads/:adId", (req, res) => {
+  res.json({ ok: deleteAdPost(req.params.adId) });
 });
 
 dashboardApi.delete("/campaigns/offer-photos/:id", (req, res) => {

@@ -500,9 +500,29 @@ export type CampaignsView = {
 export type CampaignInput = { template: string; language: string; segment: string; days: number; dailyCap: number; photo?: string };
 
 // Offer photos by size (src/sizeOffers.ts).
-export type OfferModel = { product: string; color: string; price: number };
+export type OfferModel = { product: string; color: string; price: number; oldPrice?: number };
 export type OfferPhoto = { id: number; template: string; file: string; sizes: string[]; models: OfferModel[] };
-export type SizeOffer = { template: string; label: string; button: number; active: boolean; photos: OfferPhoto[]; requests: Record<string, number> };
+export type SizeOffer = {
+  template: string;
+  label: string;
+  button: number;
+  active: boolean;
+  intro: string | null;
+  outro: string | null;
+  oldPrices: Record<string, number>;
+  photos: OfferPhoto[];
+  requests: Record<string, number>;
+};
+export type AdPost = { adId: string; name: string; sizes: string; greeting: string; prefill: string; offer: string };
+export type SizeOfferInput = {
+  template: string;
+  label: string;
+  button: number;
+  active: boolean;
+  intro?: string | null;
+  outro?: string | null;
+  oldPrices?: Record<string, number>;
+};
 export type SizeOffersView = { offers: SizeOffer[]; stock: { product: string; color: string; size: string }[] };
 
 export type BlacklistRow = { customer: string; name: string; reason: string; addedAt: number; notifiedAt: number | null };
@@ -520,7 +540,10 @@ export const api = {
   createCampaign: (input: CampaignInput) => post<{ id: number }>("/campaigns", input),
   campaignAction: (id: number, action: "start" | "pause" | "stop") => post(`/campaigns/${id}/${action}`),
   sizeOffers: () => request<SizeOffersView>("/campaigns/offers"),
-  saveSizeOffer: (input: { template: string; label: string; button: number; active: boolean }) => post<{ ok: true }>("/campaigns/offers", input),
+  saveSizeOffer: (input: SizeOfferInput) => post<{ ok: true }>("/campaigns/offers", input),
+  adPosts: () => request<AdPost[]>("/campaigns/ads"),
+  saveAdPost: (input: AdPost & { was?: string }) => post<{ ok: true }>("/campaigns/ads", input),
+  deleteAdPost: (adId: string) => request<{ ok: boolean }>(`/campaigns/ads/${encodeURIComponent(adId)}`, { method: "DELETE" }),
   deleteSizeOffer: (template: string) => request<{ ok: true }>(`/campaigns/offers/${encodeURIComponent(template)}`, { method: "DELETE" }),
   addOfferPhoto: (template: string, input: { mime: string; data: string; sizes: string[]; models: OfferModel[] }) =>
     post<OfferPhoto>(`/campaigns/offers/${encodeURIComponent(template)}/photos`, input),
