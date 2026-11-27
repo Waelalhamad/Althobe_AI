@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
-import { PackageX, Shuffle, Undo2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { PackageCheck, PackageX, Shuffle, Undo2 } from "lucide-react";
 import { api, type IncomingReturn, type Order } from "../api";
 import { Badge, Card, ErrorNote } from "./ui";
 import { DARB_STATUS } from "./DarbSend";
@@ -9,9 +9,12 @@ import { DarbRedirect } from "./DarbRedirect";
 import { ago, phone } from "../format";
 
 const piece = (i: IncomingReturn["items"][number]) => `${i.quantity > 1 ? `${i.quantity} × ` : ""}${i.color} ${i.size}`.trim();
+export const pieceWithProduct = (i: IncomingReturn["items"][number]) => `${i.product ? `${i.product} · ` : ""}${piece(i)}`;
 
 // Why the goods come back, in a word.
 function why(r: IncomingReturn): { label: string; tone: "warn" | "bad" | "info" | "ok" } {
+  if (r.awaiting) return { label: "رجعت، أكّدوا الاستلام", tone: "warn" };
+  if (r.receivedAt) return { label: `استلمها ${r.receivedBy || "الفريق"}${r.restocked ? "، رجعت للمتاح" : ""}`, tone: "ok" };
   if (r.back) return { label: "رجعت", tone: "ok" };
   if (r.darbStatus === "returning") return { label: "الزبون رفضها، راجعة", tone: "bad" };
   if (r.darbStatus === "cancelled") return { label: "انلغت عند درب", tone: "bad" };
@@ -25,7 +28,18 @@ export function IncomingReturns() {
   const [redirecting, setRedirecting] = useState<Order>();
   const [opening, setOpening] = useState<number>();
   const coming = (q.data ?? []).filter((r) => !r.back);
-  const back = (q.data ?? []).filter((r) => r.back);
+  const awaiting = (q.data ?? []).filter((r) => r.awaiting);
+  const back = (q.data ?? []).filter((r) => r.back && !r.awaiting);
+  const queryClient = useQueryClient();
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["incoming-returns"] });
+    void queryClient.invalidateQueries({ queryKey: ["stock"] });
+  };
+  // Old returns (from before the button) are on the shelf and in the warehouse's count already: let go of the hold
+  // without adding them, and the count puts them back.
+  const [restock, setRestock] = useState(true);
+  const receive = useMutation({ mutationFn: (orderId: number) => api.receiveReturn(orderId, restock), onSuccess: refresh });
+  const undo = useMutation({ mutationFn: (orderId: number) => api.undoReceiveReturn(orderId), onSuccess: refresh });
 
   // The pieces coming back, added up by color and size.
   const totals = new Map<string, number>();
@@ -43,6 +57,42 @@ export function IncomingReturns() {
 
   if (q.isLoading) return null;
   return (
+    <>
+    {awaiting.length > 0 && (
+      <Card className="flex flex-col gap-4 border border-warn/40">
+        <ErrorNote error={receive.error ?? undo.error} />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 font-semibold">
+            <PackageCheck size={18} className="text-warn" />
+            رجعت لعنا حسب درب، أكّدوا الاستلام
+            <Badge tone="warn">
+              <span className="num">{awaiting.reduce((n, r) => n + r.items.reduce((m, i) => m + i.quantity, 0), 0)}</span> قطعة محجوزة
+            </Badge>
+          </h2>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} />
+            ترجع القطع للمتاح
+          </label>
+        </div>
+        <p className="text-xs text-muted">
+          قطع هالطلبات محجوزة لحد ما حدا يأكد إنها وصلت بإيدو، فالمساعد ما بيبيعها. «استلمت الراجع» بيرجّعها للمتاح. للمرتجعات القديمة اللي
+          انعدّت بجرد بعدها، شيلوا علامة «ترجع القطع للمتاح»: بينفك الحجز بس، والجرد الجاي بيرجّعها.
+        </p>
+        <div className="flex flex-col divide-y divide-line">
+          {awaiting.map((r) => (
+            <Row key={r.orderId} r={r} withProduct>
+              <button
+                disabled={receive.isPending}
+                onClick={() => receive.mutate(r.orderId)}
+                className="flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-sm text-white disabled:opacity-50"
+              >
+                <PackageCheck size={15} /> استلمت الراجع
+              </button>
+            </Row>
+          ))}
+        </div>
+      </Card>
+    )}
     <Card className={coming.length ? "flex flex-col gap-4 border border-warn/40" : "flex flex-col gap-4"}>
       <ErrorNote error={q.error} />
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -90,24 +140,31 @@ export function IncomingReturns() {
           <summary className="cursor-pointer text-muted">رجعت آخر 14 يوم ({back.length})</summary>
           <div className="mt-2 flex flex-col divide-y divide-line">
             {back.map((r) => (
-              <Row key={r.orderId} r={r} />
+              <Row key={r.orderId} r={r} withProduct>
+                {r.receivedAt && (
+                  <button disabled={undo.isPending} onClick={() => undo.mutate(r.orderId)} className="text-xs text-muted hover:text-bad">
+                    تراجع عن الاستلام
+                  </button>
+                )}
+              </Row>
             ))}
           </div>
         </details>
       )}
       {redirecting && <DarbRedirect order={redirecting} onClose={() => setRedirecting(undefined)} />}
     </Card>
+    </>
   );
 }
 
-function Row({ r, children }: { r: IncomingReturn; children?: React.ReactNode }) {
+function Row({ r, children, withProduct }: { r: IncomingReturn; children?: React.ReactNode; withProduct?: boolean }) {
   const w = why(r);
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 py-3">
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
           <PackageX size={16} className="text-muted" />
-          <span className="font-medium">{r.items.map(piece).join("، ")}</span>
+          <span className="font-medium">{r.items.map(withProduct ? pieceWithProduct : piece).join("، ")}</span>
           <Badge tone={w.tone}>{w.label}</Badge>
           <Badge>{DARB_STATUS[r.darbStatus] ?? r.darbStatus}</Badge>
         </div>

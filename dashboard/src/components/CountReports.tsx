@@ -92,7 +92,7 @@ function Report({ count: c, open: openFirst }: { count: StockCountReport; open: 
                   <tr className="text-start">
                     <th className="py-1 text-start font-normal">اللون</th>
                     <th className="py-1 text-start font-normal">المقاس</th>
-                    <th className="py-1 text-center font-normal">السيستم</th>
+                    <th className="py-1 text-center font-normal" title="المفروض يكون عالرف: المتاح + قطع الطلبات اللي لسا ما طلعت مع درب + الراجع اللي لسا ما تأكد استلامو">السيستم (عالرف)</th>
                     <th className="py-1 text-center font-normal">الجرد</th>
                     <th className="py-1 text-center font-normal">الفرق</th>
                   </tr>

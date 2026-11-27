@@ -55,6 +55,9 @@ import {
   setProductStock,
   stockName,
   heldStock,
+  onShelfHeld,
+  receiveReturn,
+  undoReceiveReturn,
   listSales,
   setSale,
   renameStockProduct,
@@ -788,6 +791,33 @@ dashboardApi.post("/almost-orders/dismiss", (req, res) => {
 });
 // Goods on their way back (cancelled, refused or cancelled at Darb) and the ones back lately: the stock page.
 dashboardApi.get("/stock/incoming", (_req, res) => darbRoute(res, () => incomingReturns()));
+
+// «استلمت الراجع»: the team (here) or the Libya employee (/staff/returns) has the goods in hand.
+function receive(req: express.Request, res: express.Response) {
+  const id = Number(req.params.id);
+  const restock = roleOf(res) === "staff" ? true : req.body?.restock !== false;
+  const by = roleOf(res) === "staff" ? "موظف ليبيا" : "الإدارة";
+  const done = receiveReturn(id, restock, by);
+  if (typeof done === "string") {
+    res.status(400).json({ error: done });
+    return;
+  }
+  log("dashboard", `return of order #${id} received by ${roleOf(res)}: ${done.pieces} pieces ${restock ? "back in stock" : "no longer held (not added to stock)"}`);
+  res.json(done);
+}
+dashboardApi.post("/stock/returns/:id/receive", receive);
+dashboardApi.post("/stock/returns/:id/undo", (req, res) => {
+  const done = undoReceiveReturn(Number(req.params.id));
+  if (typeof done === "string") {
+    res.status(400).json({ error: done });
+    return;
+  }
+  log("dashboard", `return of order #${req.params.id}: receive undone`);
+  res.json({ ok: true });
+});
+// The Libya employee: the returns Darb says are back, waiting for someone to confirm them, and the button.
+dashboardApi.get("/staff/returns", (_req, res) => darbRoute(res, async () => (await incomingReturns()).filter((r) => r.awaiting)));
+dashboardApi.post("/staff/returns/:id/receive", receive);
 dashboardApi.get("/orders/:id/darb/redirect", (req, res) => darbRoute(res, () => redirectMatches(Number(req.params.id))));
 dashboardApi.post("/orders/:id/darb/redirect", (req, res) =>
   darbRoute(res, () =>
@@ -921,8 +951,13 @@ dashboardApi.delete("/catalog/:id", (req, res) => {
 dashboardApi.get("/stock", (_req, res) => {
   const rows = listStock();
   const held = new Map<string, number>();
+  const back = new Map<string, number>(); // held by returns nobody confirmed yet
   // What each open order took, cell by cell (never re-read from its items' names).
-  for (const h of heldStock()) held.set(`${h.product}|${h.color}|${h.size}`, (held.get(`${h.product}|${h.color}|${h.size}`) ?? 0) + h.quantity);
+  for (const h of heldStock()) {
+    const k = `${h.product}|${h.color}|${h.size}`;
+    const m = h.back ? back : held;
+    m.set(k, (m.get(k) ?? 0) + h.quantity);
+  }
   const details = new Map(listProductDetails().map((d) => [d.product, d.details]));
   const sales = new Map(listSales().map((x) => [x.product, { percent: x.percent, label: x.label }]));
   const clearance = new Map(listClearance().map((c) => [c.product, { price: c.price, cells: c.cells }]));
@@ -935,7 +970,7 @@ dashboardApi.get("/stock", (_req, res) => {
       clearance: clearance.get(product) ?? null,
       colors: [...new Set(mine.map((r) => r.color))],
       sizes: [...new Set(mine.map((r) => r.size))],
-      cells: mine.map((r) => ({ color: r.color, size: r.size, quantity: r.quantity, hidden: r.hidden, held: held.get(`${product}|${r.color}|${r.size}`) ?? 0 })),
+      cells: mine.map((r) => ({ color: r.color, size: r.size, quantity: r.quantity, hidden: r.hidden, held: held.get(`${product}|${r.color}|${r.size}`) ?? 0, back: back.get(`${product}|${r.color}|${r.size}`) ?? 0 })),
       updatedAt: Math.max(...mine.map((r) => r.updatedAt)),
     };
   });
@@ -1425,7 +1460,9 @@ dashboardApi.post("/staff/count", (req, res) => {
 
 // The team's side (outside /staff, so the employee gets 403): the counts with the system's numbers, approve, reject.
 dashboardApi.get("/stock-counts", (req, res) => {
-  const current = new Map(listStock().map((r) => [`${r.product}|${r.color}|${r.size}`, r.quantity]));
+  // On the shelf by the system now (as a count compares it): available + pieces of orders still on the shelf.
+  const held = onShelfHeld();
+  const current = new Map(listStock().map((r) => [`${r.product}|${r.color}|${r.size}`, r.quantity + (held.get(`${r.product}|${r.color}|${r.size}`) ?? 0)]));
   res.json(
     listCounts(intParam(req.query.limit, 10, 100)).map((c) => ({
       ...c,

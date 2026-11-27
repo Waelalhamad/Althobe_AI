@@ -3,12 +3,13 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ClipboardCheck, Landmark, LogOut, Wallet } from "lucide-react";
+import { ClipboardCheck, Landmark, LogOut, PackageCheck, Wallet } from "lucide-react";
 import { api, OPENING, type Account } from "../api";
 import { ErrorNote } from "../components/ui";
 import { amount, CashButtons, CashList, lyd } from "../components/StaffCash";
 import { OpeningCash, useOpening } from "../components/Opening";
 import { StockCount } from "../components/StockCount";
+import { StaffReturns } from "../components/StaffReturns";
 
 export function useStaffCash(limit = 100) {
   return useQuery({ queryKey: ["staff-cash", limit], queryFn: () => api.staffCash(limit), refetchInterval: 30_000 });
@@ -16,7 +17,7 @@ export function useStaffCash(limit = 100) {
 
 export function StaffHome() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<Account | "count">("cash");
+  const [tab, setTab] = useState<Account | "count" | "returns">("cash");
   const logout = async () => {
     await api.logout();
     queryClient.clear();
@@ -36,17 +37,20 @@ export function StaffHome() {
       <main className="flex flex-1 flex-col gap-4 p-4 pb-28">
         {tab === "count" ? (
           <StockCount />
+        ) : tab === "returns" ? (
+          <StaffReturns />
         ) : (
           <AccountView key={tab} account={tab} />
         )}
       </main>
 
       <nav className="fixed inset-x-0 bottom-0 border-t border-line bg-card pb-[env(safe-area-inset-bottom)]">
-        <div className="mx-auto grid max-w-md grid-cols-3">
+        <div className="mx-auto grid max-w-md grid-cols-4">
           {(
             [
               ["cash", "الصندوق", Wallet],
               ["bank", "البنك", Landmark],
+              ["returns", "الراجع", PackageCheck],
               ["count", "الجرد", ClipboardCheck],
             ] as const
           ).map(([id, label, Icon]) => (

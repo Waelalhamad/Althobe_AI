@@ -1,11 +1,12 @@
 // The Libya warehouse count (جرد): the warehouse keeper counts our stock (the `stock` table the assistant sells from)
 // without seeing its numbers, and sends it. Nothing changes until the team approves it: then each counted cell
-// moves by (counted − what the system had when he sent it), so orders saved in between stay counted.
+// moves by (counted − what the shelf should have had when he sent it: available + pieces held by orders still on the
+// shelf), so orders saved in between stay counted.
 // He can't add, rename or delete anything: a piece missing from the list is a free-text line or the note, never a product.
 import crypto from "node:crypto";
 import { listCatalog } from "./catalog.js";
 import { saveFile } from "./media.js";
-import { db, listStock, stockName } from "./store.js";
+import { db, listStock, onShelfHeld, stockName } from "./store.js";
 import { esc, notify } from "./telegram.js";
 import type { Role } from "./staff.js";
 
@@ -140,11 +141,15 @@ export function submitCount(
   const counted = [...given.values()].filter((n) => n !== null).length;
   if (!counted && !extras.length && !note) return "ما في ولا عدد مكتوب";
 
+  // What the shelf should have: what we sell plus the pieces of orders still on it (not picked up by Darb yet, and
+  // returns handed back but not confirmed). Against available alone, a counted piece held for an order would be
+  // added to what we sell and sold twice.
+  const held = onShelfHeld();
   const cells: CountCell[] = stock.map((r) => ({
     product: r.product,
     color: r.color,
     size: r.size,
-    system: r.quantity,
+    system: r.quantity + (held.get(key(r.product, r.color, r.size)) ?? 0),
     counted: given.get(key(r.product, r.color, r.size)) ?? null,
   }));
   const at = Date.now();

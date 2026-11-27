@@ -319,13 +319,17 @@ export type IncomingReturn = {
   name: string;
   phone: string;
   city: string;
-  items: { color: string; size: string; quantity: number }[];
+  items: { product: string; color: string; size: string; quantity: number }[];
   orderStatus: string;
   darbStatus: string;
   reference: string;
   lastEvent: string;
   since: number; // when the shipment last changed at Darb
-  back: boolean; // already back (returned)
+  back: boolean; // already back (returned, or released: handed to us)
+  awaiting: boolean; // back by Darb, its pieces still held until someone confirms it's in hand
+  receivedAt: number | null;
+  receivedBy: string;
+  restocked: boolean;
   matches: number; // orders in the same city that could take it instead (0 once picked up and not redirectable)
 };
 
@@ -338,10 +342,15 @@ export async function incomingReturns(): Promise<IncomingReturn[]> {
        FROM orders o JOIN darb_shipments d ON d.id = o.darb_id
        WHERE (o.status = 'cancelled' AND d.status NOT IN ('completed', 'released'))
           OR d.status IN ('returning', 'cancelled')
-          OR (d.status = 'returned' AND COALESCE(d.last_event_at, d.synced_at) > ?)
+          OR (d.status IN ('returned', 'released') AND o.status != 'cancelled' AND o.stock_applied = 1 AND o.return_received_at IS NULL)
+          OR (d.status IN ('returned', 'released') AND COALESCE(o.return_received_at, d.last_event_at, d.synced_at) > ?)
        ORDER BY COALESCE(d.last_event_at, d.synced_at) DESC`,
     )
     .all(Date.now() - BACK_DAYS * 86_400_000) as (OrderRow & {
+    stock_applied: number;
+    return_received_at: number | null;
+    return_received_by: string;
+    return_restocked: number;
     d_status: string;
     d_reference: string;
     d_city: string;
@@ -349,7 +358,7 @@ export async function incomingReturns(): Promise<IncomingReturn[]> {
     last_event_at: number | null;
     synced_at: number;
   })[];
-  const zones = rows.some((r) => r.d_status !== "returned") ? await darbZones().catch(() => [] as Zone[]) : [];
+  const zones = rows.some((r) => r.d_status !== "returned" && r.d_status !== "released") ? await darbZones().catch(() => [] as Zone[]) : [];
   return rows.map((r) => {
     const shipment = source(r);
     return {
@@ -358,13 +367,18 @@ export async function incomingReturns(): Promise<IncomingReturn[]> {
       name: r.name,
       phone: r.phone,
       city: r.d_city || r.city,
-      items: (JSON.parse(r.items) as OrderItem[]).map((i) => ({ color: i.color ?? "", size: String(i.size ?? ""), quantity: i.quantity || 1 })),
+      items: (JSON.parse(r.items) as OrderItem[]).map((i) => ({ product: i.product ?? "", color: i.color ?? "", size: String(i.size ?? ""), quantity: i.quantity || 1 })),
       orderStatus: r.status,
       darbStatus: r.d_status,
       reference: r.d_reference,
       lastEvent: r.last_event,
       since: r.last_event_at ?? r.synced_at,
-      back: r.d_status === "returned",
+      back: r.d_status === "returned" || r.d_status === "released",
+      // Back with us by Darb, its pieces still held: someone must confirm it's in hand («استلمت الراجع»).
+      awaiting: (r.d_status === "returned" || r.d_status === "released") && r.status !== "cancelled" && r.stock_applied === 1 && r.return_received_at === null,
+      receivedAt: r.return_received_at,
+      receivedBy: r.return_received_by,
+      restocked: r.return_restocked === 1,
       matches: shipment && zones.length ? matchesFor(r, shipment, zones).length : 0,
     };
   });

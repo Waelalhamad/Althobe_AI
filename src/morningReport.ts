@@ -7,6 +7,7 @@ import { dashboardLink, esc, notify } from "./telegram.js";
 // team's confirmation, confirmed ones not sent to Darb, and shipments Darb reports late or coming back.
 export const MORNING_HOUR = 11;
 const WAITING_HOURS = 6;
+const RETURN_DAYS = 3;
 const MAX_LINES = 15;
 const HOUR = 60 * 60 * 1000;
 
@@ -37,6 +38,15 @@ export function morningReport(): string {
     ...section("⏳ متأخرة عند درب", select("status IN ('new', 'confirmed') AND darb_status = 'delayed'")),
     ...section("↩️ راجعة أو ملغية عند درب", select("status != 'cancelled' AND darb_status IN ('returning', 'cancelled')")),
     ...section("⚠️ ملغية عنا وانسلّمت عند درب", select("status = 'cancelled' AND darb_status = 'completed'")),
+    // Darb handed the goods back days ago and nobody pressed «استلمت الراجع»: the pieces are still held, so not sold.
+    ...section(
+      `📥 رجعت لعنا من أكتر من ${RETURN_DAYS} أيام وما حدا أكّد استلامها (القطع محجوزة)`,
+      select(
+        `status != 'cancelled' AND stock_applied = 1 AND return_received_at IS NULL AND darb_status IN ('released', 'returned')
+         AND darb_id IN (SELECT id FROM darb_shipments WHERE COALESCE(last_event_at, synced_at) < ?)`,
+        Date.now() - RETURN_DAYS * 24 * HOUR,
+      ),
+    ),
   ];
   return parts.length ? `☀️ <b>شو واقف اليوم</b>\n${parts.join("\n")}` : "☀️ <b>شو واقف اليوم</b>\n✅ ما في شي واقف.";
 }

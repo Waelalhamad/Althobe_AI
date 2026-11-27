@@ -312,6 +312,7 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
     setDirty(true);
   };
   const held = (color: string, size: string) => saved?.cells.find((c) => c.color === color && c.size === size)?.held ?? 0;
+  const back = (color: string, size: string) => saved?.cells.find((c) => c.color === color && c.size === size)?.back ?? 0;
   const value = (color: string, size: string) => Number(d.q[key(color, size)] || 0);
   // Marked pieces still in the table (a removed color or size drops its marks).
   const offered = (d.offer ?? []).filter((k) => d.colors.some((c) => d.sizes.some((s) => key(c, s) === k)));
@@ -471,6 +472,11 @@ function ProductTable({ initial, saved, onCancel, onSaved }: { initial: Draft; s
                           aria-label={`${color} مقاس ${size}`}
                         />
                         {h > 0 && <div className="mt-0.5 text-[11px] text-muted">+{h} بطلبات</div>}
+                        {back(color, size) > 0 && (
+                          <div className="mt-0.5 text-[11px] text-warn" title="بطلبات رجعت أو راجعة حسب درب، ولسا ما حدا كبس «استلمت الراجع»: محجوزة لهيك ما بتنباع">
+                            +{back(color, size)} راجعة
+                          </div>
+                        )}
                         <button
                           onClick={() => toggleOffer(color, size)}
                           className={clsx(

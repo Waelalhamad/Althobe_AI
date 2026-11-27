@@ -419,10 +419,16 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export function setOrderStatus(id: number, status: OrderStatus): boolean {
   const before = stockState(id);
   const changed = db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(status, Date.now(), id).changes > 0;
-  // A cancelled order gives its pieces back; un-cancelling takes them again.
+  // A cancelled order gives its pieces back; un-cancelling takes them again (not once its return is in our hands:
+  // the pieces are back on the shelf).
   if (changed && before) {
     if (status === "cancelled" && before.applied) returnStock(id);
-    else if (status !== "cancelled" && before.status === "cancelled" && !before.applied) takeStock(id, before.items);
+    else if (status !== "cancelled" && before.status === "cancelled" && !before.applied && !before.received) takeStock(id, before.items);
+    // Delivered after all, though we marked its return received: the pieces are gone again.
+    else if (status === "delivered" && before.received) {
+      if (!before.applied) takeStock(id, before.items);
+      db.prepare("UPDATE orders SET return_received_at = NULL, return_received_by = '', return_restocked = 0, return_pieces = 0 WHERE id = ?").run(id);
+    }
   }
   return changed;
 }
@@ -443,6 +449,14 @@ db.exec(`
 `);
 if (!(db.prepare("PRAGMA table_info(orders)").all() as { name: string }[]).some((c) => c.name === "stock_applied")) {
   db.exec("ALTER TABLE orders ADD COLUMN stock_applied INTEGER NOT NULL DEFAULT 0");
+}
+// A return the warehouse confirmed it has in hand («استلمت الراجع»): when, by whom, and whether its pieces went back to
+// what we can sell (0: the hold was only let go, for pieces a count puts back).
+if (!(db.prepare("PRAGMA table_info(orders)").all() as { name: string }[]).some((c) => c.name === "return_received_at")) {
+  db.exec(`ALTER TABLE orders ADD COLUMN return_received_at INTEGER;
+    ALTER TABLE orders ADD COLUMN return_received_by TEXT NOT NULL DEFAULT '';
+    ALTER TABLE orders ADD COLUMN return_restocked INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN return_pieces INTEGER NOT NULL DEFAULT 0;`);
 }
 
 // When someone of the team marked "we asked the customer" by hand (a call, another phone). Messages the team sends count on their own.
@@ -772,14 +786,18 @@ export function whenStockRunsOut(fn: (row: StockRow) => void) {
   onStockOut = fn;
 }
 
-function stockState(id: number): { items: OrderItem[]; status: OrderStatus; applied: boolean } | undefined {
-  const row = db.prepare("SELECT items, status, stock_applied FROM orders WHERE id = ?").get(id) as
-    | { items: string; status: OrderStatus; stock_applied: number }
+function stockState(id: number): { items: OrderItem[]; status: OrderStatus; applied: boolean; received: boolean } | undefined {
+  const row = db.prepare("SELECT items, status, stock_applied, return_received_at FROM orders WHERE id = ?").get(id) as
+    | { items: string; status: OrderStatus; stock_applied: number; return_received_at: number | null }
     | undefined;
-  return row && { items: JSON.parse(row.items) as OrderItem[], status: row.status, applied: row.stock_applied === 1 };
+  return (
+    row && { items: JSON.parse(row.items) as OrderItem[], status: row.status, applied: row.stock_applied === 1, received: row.return_received_at !== null }
+  );
 }
 
-function takeStock(id: number, items: OrderItem[]) {
+// hold: the order's cells are recorded again without taking them off the shelf (undoing a receive that only let the
+// hold go: those pieces were never added back).
+function takeStock(id: number, items: OrderItem[], hold = false) {
   const rows = listStock();
   const update = db.prepare("UPDATE stock SET quantity = quantity - ?, updated_at = ? WHERE product = ? AND color = ? AND size = ?");
   const record = db.prepare("INSERT OR REPLACE INTO order_stock (order_id, idx, product, color, size, quantity) VALUES (?, ?, ?, ?, ?, ?)");
@@ -787,8 +805,9 @@ function takeStock(id: number, items: OrderItem[]) {
   items.forEach((item, idx) => {
     const row = stockRowFor(item, rows);
     if (!row) return; // not kept in stock, or no such color/size: shown on the stock page
-    update.run(item.quantity, Date.now(), row.product, row.color, row.size);
     record.run(id, idx, row.product, row.color, row.size, item.quantity);
+    if (hold) return;
+    update.run(item.quantity, Date.now(), row.product, row.color, row.size);
     const before = row.quantity;
     row.quantity -= item.quantity;
     if (before > 0 && row.quantity <= 0) onStockOut?.(row);
@@ -807,14 +826,93 @@ function returnStock(id: number) {
 
 type StockCell = { product: string; color: string; size: string; quantity: number };
 
-// What each open order holds, cell by cell (the stock page's "held").
-export function heldStock(): (StockCell & { orderId: number })[] {
-  return db
+// Darb's word for "the goods were handed back to us" (and "back at Darb's office"); "returning" is still on the road.
+export const BACK_WITH_US = ["released", "returned"] as const;
+const RETURN_STATUSES = "('released', 'returned', 'returning')";
+
+// What each open order holds, cell by cell (the stock page's "held"). back: the order's goods are coming or came back
+// (Darb says so) and the warehouse hasn't confirmed them yet: still held, shown apart.
+export function heldStock(): (StockCell & { orderId: number; back: boolean })[] {
+  return (
+    db
+      .prepare(
+        `SELECT s.order_id AS orderId, s.product, s.color, s.size, s.quantity, COALESCE(o.darb_status, '') IN ${RETURN_STATUSES} AS back
+         FROM order_stock s JOIN orders o ON o.id = s.order_id
+         WHERE o.status != 'cancelled' AND o.stock_applied = 1 AND (o.status IN ('new', 'confirmed') OR COALESCE(o.darb_status, '') IN ${RETURN_STATUSES})`,
+      )
+      .all() as (StockCell & { orderId: number; back: number })[]
+  ).map((h) => ({ ...h, back: h.back === 1 }));
+}
+
+// Pieces held by orders that are still on our shelf: not handed to Darb's courier yet (no shipment, or one Darb
+// hasn't picked up), plus returns Darb handed back that nobody confirmed yet. A warehouse count sees them, so it is
+// compared with available + these (never available alone, or the same piece is sold twice).
+export function onShelfHeld(): Map<string, number> {
+  const rows = db
     .prepare(
-      `SELECT s.order_id AS orderId, s.product, s.color, s.size, s.quantity FROM order_stock s JOIN orders o ON o.id = s.order_id
-       WHERE o.status IN ('new', 'confirmed') AND o.stock_applied = 1`,
+      `SELECT s.product, s.color, s.size, SUM(s.quantity) AS quantity FROM order_stock s JOIN orders o ON o.id = s.order_id
+       WHERE o.stock_applied = 1 AND o.status != 'cancelled' AND o.return_received_at IS NULL AND (
+         (o.status IN ('new', 'confirmed') AND (o.darb_id IS NULL OR COALESCE(o.darb_status, '') IN ('', 'pending', 'booked')))
+         OR o.darb_status = 'released')
+       GROUP BY s.product, s.color, s.size`,
     )
-    .all() as (StockCell & { orderId: number })[];
+    .all() as StockCell[];
+  return new Map(rows.map((r) => [`${r.product}|${r.color}|${r.size}`, r.quantity]));
+}
+
+// «استلمت الراجع»: the warehouse has the order's goods in hand. Its pieces stop being held; restock puts them back in
+// what we sell (a return that came in today), otherwise the hold is only let go (old returns a count puts back).
+// Once only: a second press changes nothing. Returns the pieces let go, or an error in Arabic.
+export function receiveReturn(id: number, restock: boolean, by: string): { pieces: number } | string {
+  const o = db.prepare("SELECT status, darb_status, stock_applied, return_received_at FROM orders WHERE id = ?").get(id) as
+    | { status: OrderStatus; darb_status: string | null; stock_applied: number; return_received_at: number | null }
+    | undefined;
+  if (!o) return "الطلب مو موجود";
+  if (o.return_received_at !== null) return "هالراجع متأكد استلامو من قبل";
+  if (!(BACK_WITH_US as readonly string[]).includes(o.darb_status ?? "")) return "درب لسا ما قالت إنو هالشحنة رجعت";
+  const pieces = (db.prepare("SELECT COALESCE(SUM(quantity), 0) AS n FROM order_stock WHERE order_id = ?").get(id) as { n: number }).n;
+  db.exec("BEGIN");
+  try {
+    const claimed = db
+      .prepare("UPDATE orders SET return_received_at = ?, return_received_by = ?, return_restocked = ?, return_pieces = ?, updated_at = ? WHERE id = ? AND return_received_at IS NULL")
+      .run(Date.now(), by, restock && o.stock_applied === 1 ? 1 : 0, o.stock_applied === 1 ? pieces : 0, Date.now(), id).changes;
+    if (!claimed) {
+      db.exec("ROLLBACK");
+      return "هالراجع متأكد استلامو من قبل";
+    }
+    if (o.stock_applied === 1) {
+      if (restock) returnStock(id);
+      else {
+        db.prepare("DELETE FROM order_stock WHERE order_id = ?").run(id);
+        db.prepare("UPDATE orders SET stock_applied = 0 WHERE id = ?").run(id);
+      }
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return { pieces: o.stock_applied === 1 ? pieces : 0 };
+}
+
+// Undo a receive pressed by mistake: the pieces are held again (taken off what we sell if they had been put back).
+export function undoReceiveReturn(id: number): true | string {
+  const o = db.prepare("SELECT status, items, stock_applied, return_received_at, return_restocked, return_pieces FROM orders WHERE id = ?").get(id) as
+    | { status: OrderStatus; items: string; stock_applied: number; return_received_at: number | null; return_restocked: number; return_pieces: number }
+    | undefined;
+  if (!o) return "الطلب مو موجود";
+  if (o.return_received_at === null) return "هالراجع ما كان متأكد استلامو";
+  db.exec("BEGIN");
+  try {
+    db.prepare("UPDATE orders SET return_received_at = NULL, return_received_by = '', return_restocked = 0, return_pieces = 0, updated_at = ? WHERE id = ?").run(Date.now(), id);
+    // Only what the receive let go (a cancelled order holds nothing).
+    if (o.status !== "cancelled" && o.stock_applied === 0 && o.return_pieces > 0) takeStock(id, JSON.parse(o.items) as OrderItem[], o.return_restocked !== 1);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return true;
 }
 
 // Items of open orders that took no stock: a name that fits no product (or more than one), or a color/size that

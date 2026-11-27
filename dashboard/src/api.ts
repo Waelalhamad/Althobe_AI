@@ -225,7 +225,7 @@ export type StockProduct = {
   product: string;
   colors: string[];
   sizes: string[];
-  cells: { color: string; size: string; quantity: number; held: number; hidden?: boolean }[]; // hidden: sold only to who names it
+  cells: { color: string; size: string; quantity: number; held: number; back?: number; hidden?: boolean }[]; // hidden: sold only to who names it
   details: string; // what the team wrote about it for the assistant (fabric, material…)
   sale: { percent: number | null; label: string } | null; // «تنزيلات 20%»: said with the price, no «before» price
   clearance: { price: number; cells: { color: string; size: string }[] } | null; // pieces on a special price
@@ -243,13 +243,17 @@ export type IncomingReturn = {
   name: string;
   phone: string;
   city: string;
-  items: { color: string; size: string; quantity: number }[];
+  items: { product: string; color: string; size: string; quantity: number }[];
   orderStatus: string;
   darbStatus: string;
   reference: string;
   lastEvent: string;
   since: number;
   back: boolean;
+  awaiting: boolean; // back by Darb, pieces still held until someone presses «استلمت الراجع»
+  receivedAt: number | null;
+  receivedBy: string;
+  restocked: boolean;
   matches: number;
 };
 export type RedirectMatch = {
@@ -635,6 +639,10 @@ export const api = {
   // A cancelled or refused shipment given to another order in the same city.
   darbRedirects: () => request<RedirectCandidate[]>("/darb/redirects"),
   incomingReturns: () => request<IncomingReturn[]>("/stock/incoming"),
+  receiveReturn: (orderId: number, restock: boolean) => post<{ pieces: number }>(`/stock/returns/${orderId}/receive`, { restock }),
+  undoReceiveReturn: (orderId: number) => post<{ ok: true }>(`/stock/returns/${orderId}/undo`),
+  staffReturns: () => request<IncomingReturn[]>("/staff/returns"),
+  staffReceiveReturn: (orderId: number) => post<{ pieces: number }>(`/staff/returns/${orderId}/receive`),
   almostOrders: () => request<AlmostOrder[]>("/almost-orders"),
   dismissAlmostOrder: (customer: string, summaryAt: number) => post<{ ok: boolean }>("/almost-orders/dismiss", { customer, summaryAt }),
   darbCounts: () => request<{ total: number; byStatus: Record<string, number> }>("/darb/counts"),
