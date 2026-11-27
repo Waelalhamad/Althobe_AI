@@ -15,6 +15,7 @@ export const pieceWithProduct = (i: IncomingReturn["items"][number]) => `${i.pro
 function why(r: IncomingReturn): { label: string; tone: "warn" | "bad" | "info" | "ok" } {
   if (r.awaiting) return { label: "رجعت، أكّدوا الاستلام", tone: "warn" };
   if (r.receivedAt) return { label: `استلمها ${r.receivedBy || "الفريق"}${r.restocked ? "، رجعت للمتاح" : ""}`, tone: "ok" };
+  if (r.darbStatus === "returned") return { label: "بمكتب رواجع درب، لسا ما وصلت", tone: "info" };
   if (r.back) return { label: "رجعت", tone: "ok" };
   if (r.darbStatus === "returning") return { label: "الزبون رفضها، راجعة", tone: "bad" };
   if (r.darbStatus === "cancelled") return { label: "انلغت عند درب", tone: "bad" };
@@ -35,10 +36,10 @@ export function IncomingReturns() {
     void queryClient.invalidateQueries({ queryKey: ["incoming-returns"] });
     void queryClient.invalidateQueries({ queryKey: ["stock"] });
   };
-  // Old returns (from before the button) are on the shelf and in the warehouse's count already: let go of the hold
-  // without adding them, and the count puts them back.
-  const [restock, setRestock] = useState(true);
-  const receive = useMutation({ mutationFn: (orderId: number) => api.receiveReturn(orderId, restock), onSuccess: refresh });
+  // Old returns (from before the button) are on the shelf and in the warehouse's count already: their hold is only
+  // let go, and the next count sets the numbers. A new one goes back to what we sell.
+  const receive = useMutation({ mutationFn: (r: IncomingReturn) => api.receiveReturn(r.orderId, !r.old), onSuccess: refresh });
+  const oldOnes = awaiting.filter((r) => r.old);
   const undo = useMutation({ mutationFn: (orderId: number) => api.undoReceiveReturn(orderId), onSuccess: refresh });
 
   // The pieces coming back, added up by color and size.
@@ -69,24 +70,30 @@ export function IncomingReturns() {
               <span className="num">{awaiting.reduce((n, r) => n + r.items.reduce((m, i) => m + i.quantity, 0), 0)}</span> قطعة محجوزة
             </Badge>
           </h2>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} />
-            ترجع القطع للمتاح
-          </label>
         </div>
         <p className="text-xs text-muted">
-          قطع هالطلبات محجوزة لحد ما حدا يأكد إنها وصلت بإيدو، فالمساعد ما بيبيعها. «استلمت الراجع» بيرجّعها للمتاح. للمرتجعات القديمة اللي
-          انعدّت بجرد بعدها، شيلوا علامة «ترجع القطع للمتاح»: بينفك الحجز بس، والجرد الجاي بيرجّعها.
+          قطع هالطلبات محجوزة لحد ما حدا يأكد إنها وصلت بإيدو، فالمساعد ما بيبيعها. «استلمت الراجع» بيرجّعها للمتاح.
         </p>
+        {oldOnes.length > 0 && (
+          <p className="rounded-xl bg-warn/10 p-3 text-xs">
+            <b className="num">{oldOnes.length}</b> منهن رجعوا قبل ما ينعمل هالزر: قطعهن عالرف ويمكن انحسبوا بالمخزون من قبل. «فكّ الحجز» بيشيل الحجز
+            بس وما بيزيد المتاح. بعد ما تفكّوهن كلهن، خلّوا أمين المستودع يبعت جرد من صفحة الجرد، والجرد بيضبط الأرقام.
+          </p>
+        )}
         <div className="flex flex-col divide-y divide-line">
           {awaiting.map((r) => (
             <Row key={r.orderId} r={r} withProduct>
               <button
                 disabled={receive.isPending}
-                onClick={() => receive.mutate(r.orderId)}
-                className="flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                onClick={() => receive.mutate(r)}
+                className={
+                  r.old
+                    ? "flex items-center gap-1 rounded-xl bg-card-2 px-3 py-1.5 text-sm disabled:opacity-50"
+                    : "flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                }
+                title={r.old ? "بيشيل الحجز بس، بلا ما يزيد المتاح (الجرد بيضبطها)" : "بيرجّع القطع للمتاح"}
               >
-                <PackageCheck size={15} /> استلمت الراجع
+                <PackageCheck size={15} /> {r.old ? "فكّ الحجز" : "استلمت الراجع"}
               </button>
             </Row>
           ))}

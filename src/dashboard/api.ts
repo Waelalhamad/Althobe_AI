@@ -57,6 +57,8 @@ import {
   heldStock,
   onShelfHeld,
   receiveReturn,
+  returnedAt,
+  returnsButtonFrom,
   undoReceiveReturn,
   listSales,
   setSale,
@@ -795,8 +797,15 @@ dashboardApi.get("/stock/incoming", (_req, res) => darbRoute(res, () => incoming
 // «استلمت الراجع»: the team (here) or the Libya employee (/staff/returns) has the goods in hand.
 function receive(req: express.Request, res: express.Response) {
   const id = Number(req.params.id);
-  const restock = roleOf(res) === "staff" ? true : req.body?.restock !== false;
-  const by = roleOf(res) === "staff" ? "موظف ليبيا" : "الإدارة";
+  const staff = roleOf(res) === "staff";
+  // An old return (back before the button) only lets its hold go, and only the team decides that.
+  const old = (returnedAt(id) ?? 0) < returnsButtonFrom();
+  if (staff && old) {
+    res.status(400).json({ error: "هالراجع قديم، الإدارة بتأكدو" });
+    return;
+  }
+  const restock = staff ? true : req.body?.restock === true;
+  const by = staff ? "موظف ليبيا" : "الإدارة";
   const done = receiveReturn(id, restock, by);
   if (typeof done === "string") {
     res.status(400).json({ error: done });
@@ -816,7 +825,7 @@ dashboardApi.post("/stock/returns/:id/undo", (req, res) => {
   res.json({ ok: true });
 });
 // The Libya employee: the returns Darb says are back, waiting for someone to confirm them, and the button.
-dashboardApi.get("/staff/returns", (_req, res) => darbRoute(res, async () => (await incomingReturns()).filter((r) => r.awaiting)));
+dashboardApi.get("/staff/returns", (_req, res) => darbRoute(res, async () => (await incomingReturns()).filter((r) => r.awaiting && !r.old)));
 dashboardApi.post("/staff/returns/:id/receive", receive);
 dashboardApi.get("/orders/:id/darb/redirect", (req, res) => darbRoute(res, () => redirectMatches(Number(req.params.id))));
 dashboardApi.post("/orders/:id/darb/redirect", (req, res) =>

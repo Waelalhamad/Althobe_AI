@@ -826,8 +826,20 @@ function returnStock(id: number) {
 
 type StockCell = { product: string; color: string; size: string; quantity: number };
 
-// Darb's word for "the goods were handed back to us" (and "back at Darb's office"); "returning" is still on the road.
-export const BACK_WITH_US = ["released", "returned"] as const;
+// Darb's word for "the goods were handed back to us". ("returned" is still in Darb's returns box, "returning" on the road.)
+export const BACK_WITH_US = ["released"] as const;
+
+// Returns Darb handed back before the button existed are on the shelf and in the warehouse's counts already: they
+// only let their hold go (restocking them would sell pieces twice). Set once, when this code first runs.
+if (!getSetting("returns_button_from")) setSetting("returns_button_from", String(Date.now()));
+export const returnsButtonFrom = () => Number(getSetting("returns_button_from"));
+// When Darb handed the order's goods back (its last change at Darb), or undefined.
+export function returnedAt(id: number): number | undefined {
+  const row = db
+    .prepare("SELECT COALESCE(d.last_event_at, d.synced_at) AS at FROM orders o JOIN darb_shipments d ON d.id = o.darb_id WHERE o.id = ?")
+    .get(id) as { at: number | null } | undefined;
+  return row?.at ?? undefined;
+}
 const RETURN_STATUSES = "('released', 'returned', 'returning')";
 
 // What each open order holds, cell by cell (the stock page's "held"). back: the order's goods are coming or came back

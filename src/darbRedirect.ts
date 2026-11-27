@@ -24,7 +24,7 @@ import {
 } from "./darb.js";
 import { fetchShipmentById, fetchShipmentByNumber, onShipmentStatus, syncDarb, type DarbShipmentRow } from "./darbTrack.js";
 import { carryNotices, forgetNotices } from "./tracking.js";
-import { db, stockName, type OrderItem, type Payment } from "./store.js";
+import { db, returnsButtonFrom, stockName, type OrderItem, type Payment } from "./store.js";
 import { log } from "./scheduler.js";
 import { esc, notify } from "./telegram.js";
 
@@ -327,6 +327,7 @@ export type IncomingReturn = {
   since: number; // when the shipment last changed at Darb
   back: boolean; // already back (returned, or released: handed to us)
   awaiting: boolean; // back by Darb, its pieces still held until someone confirms it's in hand
+  old: boolean; // handed back before the button existed: only the team lets its hold go (no restock)
   receivedAt: number | null;
   receivedBy: string;
   restocked: boolean;
@@ -342,7 +343,7 @@ export async function incomingReturns(): Promise<IncomingReturn[]> {
        FROM orders o JOIN darb_shipments d ON d.id = o.darb_id
        WHERE (o.status = 'cancelled' AND d.status NOT IN ('completed', 'released'))
           OR d.status IN ('returning', 'cancelled')
-          OR (d.status IN ('returned', 'released') AND o.status != 'cancelled' AND o.stock_applied = 1 AND o.return_received_at IS NULL)
+          OR (d.status = 'released' AND o.status != 'cancelled' AND o.stock_applied = 1 AND o.return_received_at IS NULL)
           OR (d.status IN ('returned', 'released') AND COALESCE(o.return_received_at, d.last_event_at, d.synced_at) > ?)
        ORDER BY COALESCE(d.last_event_at, d.synced_at) DESC`,
     )
@@ -373,9 +374,11 @@ export async function incomingReturns(): Promise<IncomingReturn[]> {
       reference: r.d_reference,
       lastEvent: r.last_event,
       since: r.last_event_at ?? r.synced_at,
-      back: r.d_status === "returned" || r.d_status === "released",
-      // Back with us by Darb, its pieces still held: someone must confirm it's in hand («استلمت الراجع»).
-      awaiting: (r.d_status === "returned" || r.d_status === "released") && r.status !== "cancelled" && r.stock_applied === 1 && r.return_received_at === null,
+      back: r.d_status === "released" || r.d_status === "returned",
+      // Handed back to us by Darb, its pieces still held: someone must confirm it's in hand («استلمت الراجع»).
+      awaiting: r.d_status === "released" && r.status !== "cancelled" && r.stock_applied === 1 && r.return_received_at === null,
+      // Handed back before the button: on the shelf and counted already, so it only lets its hold go.
+      old: (r.last_event_at ?? r.synced_at) < returnsButtonFrom(),
       receivedAt: r.return_received_at,
       receivedBy: r.return_received_by,
       restocked: r.return_restocked === 1,

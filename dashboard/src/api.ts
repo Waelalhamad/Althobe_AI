@@ -251,6 +251,7 @@ export type IncomingReturn = {
   since: number;
   back: boolean;
   awaiting: boolean; // back by Darb, pieces still held until someone presses «استلمت الراجع»
+  old: boolean; // back before the button: on the shelf and counted already, its hold is only let go
   receivedAt: number | null;
   receivedBy: string;
   restocked: boolean;

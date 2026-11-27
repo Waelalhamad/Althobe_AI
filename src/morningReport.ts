@@ -42,7 +42,7 @@ export function morningReport(): string {
     ...section(
       `📥 رجعت لعنا من أكتر من ${RETURN_DAYS} أيام وما حدا أكّد استلامها (القطع محجوزة)`,
       select(
-        `status != 'cancelled' AND stock_applied = 1 AND return_received_at IS NULL AND darb_status IN ('released', 'returned')
+        `status != 'cancelled' AND stock_applied = 1 AND return_received_at IS NULL AND darb_status = 'released'
          AND darb_id IN (SELECT id FROM darb_shipments WHERE COALESCE(last_event_at, synced_at) < ?)`,
         Date.now() - RETURN_DAYS * 24 * HOUR,
       ),

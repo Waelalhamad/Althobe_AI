@@ -57,7 +57,9 @@ test("a return is held until received, then put back once", () => {
 
 test("an old return can let its hold go without adding the pieces (the count puts them back); undo holds again", () => {
   const id = order("فضي", "60");
-  darb(id, "returned");
+  darb(id, "returned"); // in Darb's returns box: not with us yet
+  assert.match(String(receiveReturn(id, false, "x")), /لسا ما قالت/);
+  darb(id, "released");
   assert.equal(qty("فضي", "60"), 4);
   assert.deepEqual(receiveReturn(id, false, "الإدارة"), { pieces: 1 });
   assert.equal(qty("فضي", "60"), 4);
@@ -102,4 +104,31 @@ test("the count compares the shelf with available + pieces of orders still on it
   assert.ok(typeof again === "object", String(again));
   approveCount(again.id);
   assert.equal(qty("أسود", "56"), -1);
+});
+
+test("the returns list: handed back and held → awaiting; before the button → old (the hold is only let go)", async () => {
+  const { incomingReturns } = await import("../src/darbRedirect.ts");
+  setProductStock(SET, [{ color: "كريمي", size: "56", quantity: 4 }]);
+  const ship = (id: number, status: string, at: number) => {
+    db.prepare("INSERT INTO darb_shipments (id, reference, status, created_at, synced_at, last_event_at) VALUES (?, ?, ?, ?, ?, ?)").run(`d${id}`, `SH${id}`, status, at, at, at);
+    db.prepare("UPDATE orders SET darb_id = ?, darb_ref = ?, darb_status = ? WHERE id = ?").run(`d${id}`, `SH${id}`, status, id);
+  };
+  const fresh = order("كريمي", "56");
+  ship(fresh, "released", Date.now() + 1000);
+  const old = order("كريمي", "56");
+  ship(old, "released", 1);
+  const atDarb = order("كريمي", "56");
+  ship(atDarb, "returned", Date.now());
+  const list = await incomingReturns();
+  const row = (id: number) => list.find((r) => r.orderId === id);
+  assert.equal(row(fresh)?.awaiting, true);
+  assert.equal(row(fresh)?.old, false);
+  assert.equal(row(old)?.awaiting, true);
+  assert.equal(row(old)?.old, true);
+  assert.equal(row(atDarb)?.awaiting, false);
+  assert.equal(row(fresh)?.items[0]?.product, SET);
+  receiveReturn(fresh, true, "x");
+  const after = await incomingReturns();
+  assert.equal(after.find((r) => r.orderId === fresh)?.awaiting, false);
+  assert.ok(after.find((r) => r.orderId === fresh)?.receivedAt);
 });
