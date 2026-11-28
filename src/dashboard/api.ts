@@ -21,6 +21,7 @@ import {
 } from "../knowledge.js";
 import { addToBlacklist, blacklistCandidates, blacklistMessage, listBlacklist, markNotified, removeFromBlacklist } from "../blacklist.js";
 import { log } from "../scheduler.js";
+import { messengerConversation, messengerConversations } from "../chatwoot.js";
 import { addOfferPhoto, deleteAdPost, deleteOffer, deleteOfferPhoto, listAdPosts, listOffers, saveAdPost, saveOffer } from "../sizeOffers.js";
 import { createCampaign, createTemplate, deleteTemplate, listCampaigns, listTemplates, numberHealth, SEGMENTS, segmentCustomers, setCampaignStatus, testSend, type Segment } from "../campaigns.js";
 import { missingStock } from "../stock.js";
@@ -236,11 +237,31 @@ dashboardApi.get("/overview", (req, res) => {
 });
 
 const FILTERS = ["all", "unanswered", "ai", "paused", "handoff"] as const;
+const CHANNELS = ["whatsapp", "messenger", "instagram"] as const;
 
 dashboardApi.get("/conversations", (req, res) => {
   const filter = FILTERS.find((f) => f === req.query.filter) ?? "all";
   const q = String(req.query.q ?? "").trim().slice(0, 100);
-  res.json(queries.conversations({ filter, q, limit: intParam(req.query.limit, 100, 5000) }));
+  const limit = intParam(req.query.limit, 100, 5000);
+  const channel = CHANNELS.find((c) => c === req.query.channel) ?? "whatsapp";
+  const local = queries.conversations({ filter, q, limit, channel });
+  if (channel !== "messenger" || !config.chatwoot.enabled) {
+    res.json(local);
+    return;
+  }
+  // Messenger goes through Chatwoot (the page «الثوب العربي»): its chats live there, read live.
+  messengerConversations(filter, limit)
+    .then((cw) => {
+      const found = q ? cw.filter((c) => c.name.includes(q) || c.lastText.includes(q) || c.customer === `cw:${q.replace(/^#/, "")}`) : cw;
+      res.json([...local, ...found].sort((x, y) => y.lastAt - x.lastAt).slice(0, limit));
+    })
+    .catch((error) => res.status(502).json({ error: `Chatwoot: ${errorMessage(error)}` }));
+});
+
+dashboardApi.get("/messenger/:id", (req, res) => {
+  messengerConversation(Number(req.params.id))
+    .then((c) => res.json(c))
+    .catch((error) => res.status(502).json({ error: `Chatwoot: ${errorMessage(error)}` }));
 });
 
 dashboardApi.get("/conversations/:customer", (req, res) => {

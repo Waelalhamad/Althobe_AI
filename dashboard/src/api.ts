@@ -158,6 +158,19 @@ export type ConversationSummary = {
   pauseReason: string | null;
   // Which product they're about: from their orders, the ad they came from, or their own words (empty: not known).
   interest?: ("fur" | "set")[];
+  // Messenger chats read from Chatwoot: its status (pending = the assistant has it, open = the team), unread count
+  // and where to open it there.
+  status?: "open" | "pending" | "resolved" | "snoozed";
+  unread?: number;
+  url?: string;
+};
+
+export type InboxChannel = "whatsapp" | "messenger" | "instagram";
+export type MessengerConversation = {
+  name: string;
+  status: "open" | "pending" | "resolved" | "snoozed";
+  url: string;
+  messages: Message[]; // mediaFile here is Chatwoot's own link
 };
 
 export type Message = {
@@ -581,8 +594,9 @@ export const api = {
     request<Overview>(
       `/overview?${new URLSearchParams({ from: q.from, to: q.to, ...(q.hourFrom !== undefined && q.hourTo !== undefined ? { hourFrom: String(q.hourFrom), hourTo: String(q.hourTo) } : {}) })}`,
     ),
-  conversations: (filter: ConversationFilter, q: string, limit = PAGE) =>
-    request<ConversationSummary[]>(`/conversations?filter=${filter}&q=${encodeURIComponent(q)}&limit=${limit}`),
+  conversations: (filter: ConversationFilter, q: string, limit = PAGE, channel: InboxChannel = "whatsapp") =>
+    request<ConversationSummary[]>(`/conversations?filter=${filter}&q=${encodeURIComponent(q)}&limit=${limit}&channel=${channel}`),
+  messenger: (id: string) => request<MessengerConversation>(`/messenger/${encodeURIComponent(id)}`),
   conversation: (customer: string) => request<ConversationDetail>(`/conversations/${encodeURIComponent(customer)}`),
   pause: (customer: string, hours?: number) => post(`/conversations/${encodeURIComponent(customer)}/pause`, { hours }),
   answerWaiting: () => post<{ queued: number; withTeam: number }>("/answer-waiting"),

@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams, useSearch } from "wouter";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { ArrowRight, Bot, History, ImagePlus, ShoppingBag, Inbox as InboxIcon, Pause, Play, Search, Send, User, UserRound, X } from "lucide-react";
-import { api, PAGE, CHANNEL_LABEL, channelOf, mediaUrl, type ConversationFilter, type ConversationSummary, type Message } from "../api";
+import { ArrowRight, Bot, ExternalLink, History, ImagePlus, ShoppingBag, Inbox as InboxIcon, Pause, Play, Search, Send, User, UserRound, X } from "lucide-react";
+import { api, PAGE, CHANNEL_LABEL, channelOf, mediaUrl, type ConversationFilter, type ConversationSummary, type InboxChannel, type Message } from "../api";
 import { Badge, Button, Empty, ErrorNote } from "../components/ui";
 import { ago, country, pauseLabel, phone, time, until } from "../format";
 import { prepareImage } from "../image";
@@ -22,6 +22,15 @@ const FILTERS: { id: ConversationFilter; label: string }[] = [
   { id: "handoff", label: "محوّلة" },
 ];
 
+// Each channel on its own tab. Messenger (the page «الثوب العربي») is read live from Chatwoot, where it's answered.
+const CHANNEL_TABS: { id: InboxChannel; label: string }[] = [
+  { id: "whatsapp", label: "واتساب" },
+  { id: "messenger", label: "ماسنجر" },
+  { id: "instagram", label: "إنستغرام" },
+];
+const tabOf = (customer?: string): InboxChannel =>
+  customer?.startsWith("cw:") || customer?.startsWith("fb:") ? "messenger" : customer?.startsWith("ig:") ? "instagram" : "whatsapp";
+
 // Which product a chat is about: from its ad, its words or its order (of the chats loaded).
 const PRODUCTS: { id?: "set" | "fur"; label: string }[] = [
   { label: "كل المنتجات" },
@@ -32,6 +41,7 @@ const PRODUCTS: { id?: "set" | "fur"; label: string }[] = [
 export function Inbox() {
   const params = useParams<{ customer?: string }>();
   const selected = params.customer;
+  const [channel, setChannel] = useState<InboxChannel>(() => tabOf(selected));
   const [filter, setFilter] = useState<ConversationFilter>("all");
   const [product, setProduct] = useState<"set" | "fur">();
   const [q,setQ] = useState("");
@@ -44,10 +54,10 @@ export function Inbox() {
 
   // A busy day has hundreds of chats: the list grows by a page as the team scrolls down, so none is out of reach.
   const [limit, setLimit] = useState(PAGE);
-  useEffect(() => setLimit(PAGE), [filter, search]);
+  useEffect(() => setLimit(PAGE), [filter, search, channel]);
   const list = useQuery({
-    queryKey: ["conversations", filter, search, limit],
-    queryFn: () => api.conversations(filter, search, limit),
+    queryKey: ["conversations", channel, filter, search, limit],
+    queryFn: () => api.conversations(filter, search, limit, channel),
     refetchInterval: 8_000,
     placeholderData: keepPreviousData,
   });
@@ -64,6 +74,20 @@ export function Inbox() {
           <div className="flex items-center justify-between gap-2">
             <h1 className="text-xl font-bold">المحادثات</h1>
             <AnswerWaiting />
+          </div>
+          <div className="grid grid-cols-3 gap-1 rounded-xl bg-card-2 p-1">
+            {CHANNEL_TABS.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setChannel(t.id)}
+                className={clsx(
+                  "rounded-lg py-1.5 text-sm font-semibold",
+                  channel === t.id ? "bg-primary text-white" : "text-muted hover:text-fg",
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
           <label className="flex items-center gap-2 rounded-xl border border-line bg-card-2 px-3 py-2 focus-within:border-primary">
             <Search size={16} className="text-muted" />
@@ -122,7 +146,9 @@ export function Inbox() {
       </section>
 
       <section className={clsx("min-w-0 flex-1 flex-col", selected ? "flex" : "hidden md:flex")}>
-        {selected ? (
+        {selected?.startsWith("cw:") ? (
+          <MessengerThread id={selected.slice(3)} />
+        ) : selected ? (
           <Thread customer={selected} />
         ) : (
           <div className="grid flex-1 place-items-center">
@@ -156,14 +182,67 @@ function Row({ c, active }: { c: ConversationSummary; active: boolean }) {
         <span className="line-clamp-1 flex-1 text-sm text-muted">{c.lastText}</span>
       </div>
       <div className="flex flex-wrap gap-1">
-        {channelOf(c.customer) !== "whatsapp" && <Badge tone="info">{CHANNEL_LABEL[channelOf(c.customer)]}</Badge>}
+        {channelOf(c.customer) !== "whatsapp" && channelOf(c.customer) !== "chatwoot" && <Badge tone="info">{CHANNEL_LABEL[channelOf(c.customer)]}</Badge>}
         {country(c.customer) && <Badge>{country(c.customer)}</Badge>}
         {c.interest?.includes("set") && <Badge>👔 طقم</Badge>}
         {c.interest?.includes("fur") && <Badge tone="warn">🧥 فروة</Badge>}
-        {c.pausedUntil ? <Badge tone="warn">{pauseLabel(c.pauseReason)}</Badge> : <Badge tone="primary">المساعد</Badge>}
+        {c.status ? (
+          <Badge tone={c.status === "pending" ? "primary" : c.status === "open" ? "warn" : undefined}>{CW_STATUS[c.status]}</Badge>
+        ) : c.pausedUntil ? (
+          <Badge tone="warn">{pauseLabel(c.pauseReason)}</Badge>
+        ) : (
+          <Badge tone="primary">المساعد</Badge>
+        )}
+        {c.unread ? <Badge tone="info"><span className="num">{c.unread}</span> جديدة</Badge> : null}
         {c.lastSource === "customer" && <Badge tone="info">بلا رد</Badge>}
       </div>
     </Link>
+  );
+}
+
+const CW_STATUS: Record<string, string> = { pending: "المساعد", open: "مع الفريق", resolved: "محلولة", snoozed: "مأجّلة" };
+
+// A Messenger chat (through Chatwoot): read here, answered by the assistant there or by the team in Chatwoot.
+function MessengerThread({ id }: { id: string }) {
+  const [, navigate] = useLocation();
+  const detail = useQuery({ queryKey: ["messenger", id], queryFn: () => api.messenger(id), refetchInterval: 8_000 });
+  const d = detail.data;
+  const bottom = useRef<HTMLDivElement>(null);
+  const count = d?.messages.length ?? 0;
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ block: "end" });
+  }, [count, id]);
+  return (
+    <>
+      <header className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3">
+        <button onClick={() => navigate("/inbox")} className="text-muted md:hidden" aria-label="رجوع">
+          <ArrowRight />
+        </button>
+        <div className="flex-1">
+          <div className="font-semibold">
+            {d?.name && <span className="me-2">{d.name}</span>}
+            <span className="ltr num text-xs font-normal text-muted">Chatwoot #{id}</span>
+          </div>
+          <div className="text-xs text-muted">ماسنجر · صفحة الثوب العربي{d && ` · آخر ${d.messages.length} رسالة`}</div>
+        </div>
+        {d && <Badge tone={d.status === "pending" ? "primary" : d.status === "open" ? "warn" : undefined}>{CW_STATUS[d.status]}</Badge>}
+        {d && (
+          <a href={d.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-sm text-white hover:brightness-110">
+            <ExternalLink size={15} /> افتح بـChatwoot
+          </a>
+        )}
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <ErrorNote error={detail.error} />
+        <div className="mx-auto flex max-w-3xl flex-col gap-2">
+          {d?.messages.map((m) => <Bubble key={m.id} m={m} showHistoryDivider={false} />)}
+          <div ref={bottom} />
+        </div>
+      </div>
+      <p className="border-t border-line p-3 text-xs text-muted">
+        محادثات الماسنجر بتنرد من Chatwoot: المساعد بيرد عالمحادثات «المساعد»، والفريق بيرد من Chatwoot.
+      </p>
+    </>
   );
 }
 
@@ -458,7 +537,7 @@ function caption(m: Message) {
 
 function Media({ m }: { m: Message }) {
   if (!m.mediaFile) return null;
-  const url = mediaUrl(m.mediaFile);
+  const url = /^https?:/.test(m.mediaFile) ? m.mediaFile : mediaUrl(m.mediaFile);
   if (m.mediaType === "image" || m.mediaType === "sticker") {
     return (
       <a href={url} target="_blank" rel="noreferrer" className="mb-1 block">

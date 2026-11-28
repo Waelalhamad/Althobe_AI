@@ -284,10 +284,14 @@ export function overview(range: Range) {
 export type ConversationFilter = "all" | "unanswered" | "ai" | "paused" | "handoff";
 
 // Conversations (WhatsApp, Messenger, Instagram), newest activity first (urgent handoffs before them).
-export function conversations(opts: { filter: ConversationFilter; q: string; limit: number }) {
+export function conversations(opts: { filter: ConversationFilter; q: string; limit: number; channel?: "whatsapp" | "messenger" | "instagram" }) {
   const now = Date.now();
   const where: string[] = [];
   const params: (string | number)[] = [];
+  // Each channel on its own tab ("fb:" Messenger, "ig:" Instagram, the rest WhatsApp).
+  if (opts.channel === "messenger") where.push("c.customer LIKE 'fb:%'");
+  else if (opts.channel === "instagram") where.push("c.customer LIKE 'ig:%'");
+  else if (opts.channel === "whatsapp") where.push("c.customer NOT LIKE 'fb:%' AND c.customer NOT LIKE 'ig:%' AND c.customer NOT LIKE 'cw:%'");
   if (opts.q) {
     // A number in any form ("+218 91 234 5678", "0912345678", "218912345678") matches the stored "218…".
     const digits = /^[\d\s+()-]+$/.test(opts.q) ? opts.q.replace(/\D/g, "").replace(/^(00)?218|^0/, "") : "";
